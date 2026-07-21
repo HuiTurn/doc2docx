@@ -98,10 +98,11 @@ _CHARACTER_TOGGLES = {
     0x083A: "small_caps",
     0x083B: "caps",
     0x083C: "hidden",
-    0x0855: "no_proof",
+    0x0855: "special",
     0x085C: "complex_script_bold",
     0x085D: "complex_script_italic",
     0x0868: "snap_to_grid",
+    0x0875: "no_proof",
     0x2A53: "double_strike",
 }
 
@@ -632,11 +633,17 @@ def apply_character_modifiers(
         opcode = modifier.opcode
         operand = modifier.operand
         if opcode == 0x2A33:  # sprmCPlain
-            properties = CharacterProperties()
+            # sprmCPlain resets ordinary direct formatting but MS-DOC
+            # explicitly preserves the special-character state.
+            properties = CharacterProperties(special=properties.special)
             style_baseline = paragraph_style_properties
         elif opcode == 0x4A30:  # sprmCIstd
             style_id = struct.unpack("<H", operand)[0]
-            properties = CharacterProperties(style_id=style_id)
+            # sprmCIstd likewise preserves sprmCFSpec across the style reset.
+            properties = CharacterProperties(
+                style_id=style_id,
+                special=properties.special,
+            )
             style_baseline = paragraph_style_properties
             if style_properties_at is not None:
                 style_baseline = merge_character_properties(

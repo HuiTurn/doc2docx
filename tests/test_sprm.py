@@ -10,6 +10,19 @@ from doc2docx.msdoc.sprm import (
 
 
 class SprmTests(unittest.TestCase):
+    def test_special_character_state_survives_character_style_resets(self) -> None:
+        properties, unsupported, _ = apply_character_modifiers(
+            parse_grpprl(
+                struct.pack("<HB", 0x0855, 1)
+                + struct.pack("<HH", 0x4A30, 16)
+                + struct.pack("<HB", 0x2A33, 0),
+                label="special-style-reset.grpprl",
+            )
+        )
+
+        self.assertFalse(unsupported)
+        self.assertTrue(properties.special)
+
     def test_modern_table_borders_widths_and_colors_are_parsed(self) -> None:
         border = bytes((0x11, 0x22, 0x33, 0, 4, 1, 0x22, 0))
         table_borders = bytes((48,)) + border * 6
@@ -145,6 +158,7 @@ class SprmTests(unittest.TestCase):
                 + struct.pack("<HH", 0x4A61, 24)
                 + struct.pack("<Hh", 0x484B, 2)
                 + struct.pack("<HB", 0x0855, 1)
+                + struct.pack("<HB", 0x0875, 1)
                 + struct.pack("<HB", 0x085C, 1)
                 + struct.pack("<HB", 0x085D, 0),
                 label="character-grid.grpprl",
@@ -158,6 +172,7 @@ class SprmTests(unittest.TestCase):
         self.assertEqual(character.complex_script_language, "ar")
         self.assertEqual(character.complex_script_size_half_points, 24)
         self.assertEqual(character.kerning_half_points, 2)
+        self.assertTrue(character.special)
         self.assertTrue(character.no_proof)
         self.assertTrue(character.complex_script_bold)
         self.assertFalse(character.complex_script_italic)

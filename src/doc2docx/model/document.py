@@ -44,6 +44,7 @@ class CharacterProperties:
     small_caps: bool | None = None
     caps: bool | None = None
     hidden: bool | None = None
+    special: bool | None = None
     no_proof: bool | None = None
     underline: str | None = None
     color: str | None = None
@@ -306,6 +307,14 @@ class Field:
 
 
 @dataclass(slots=True, frozen=True)
+class FootnoteReference:
+    """A main-story reference to one footnote body."""
+
+    footnote_id: int
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+
+
+@dataclass(slots=True, frozen=True)
 class ShapeStyle:
     """Basic OfficeArt appearance retained for a floating shape."""
 
@@ -348,7 +357,7 @@ class FloatingTextBox:
         return self.blocks or self.paragraphs
 
 
-Inline = TextRun | Symbol | Tab | Break | Field | FloatingTextBox
+Inline = TextRun | Symbol | Tab | Break | Field | FootnoteReference | FloatingTextBox
 
 
 @dataclass(slots=True, frozen=True)
@@ -424,6 +433,19 @@ Block = Paragraph | Table
 
 
 @dataclass(slots=True, frozen=True)
+class Footnote:
+    """One parsed footnote story range, excluding its guard paragraph."""
+
+    footnote_id: int
+    paragraphs: tuple[Paragraph, ...]
+    blocks: tuple[Block, ...] = ()
+
+    @property
+    def body_blocks(self) -> tuple[Block, ...]:
+        return self.blocks or self.paragraphs
+
+
+@dataclass(slots=True, frozen=True)
 class HeaderFooterStory:
     """One non-empty header/footer story after removing its guard paragraph."""
 
@@ -444,6 +466,7 @@ class Document:
     styles: StyleSheet = field(default_factory=StyleSheet)
     blocks: tuple[Block, ...] = ()
     sections: tuple[SectionProperties, ...] = ()
+    footnotes: tuple[Footnote, ...] = ()
     even_and_odd_headers: bool = False
     adjust_line_height_in_table: bool | None = None
 
@@ -726,6 +749,7 @@ def parse_main_story(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
+    footnote_reference_at: Callable[[int], FootnoteReference | None] | None = None,
     sections: Sequence[SectionProperties] = (),
     story_name: str = "main",
 ) -> Document:
@@ -870,6 +894,17 @@ def parse_main_story(
                 if not context.has_separator:
                     context.instruction.append(character)
                     break
+            continue
+
+        footnote_reference = (
+            footnote_reference_at(cp_offset)
+            if footnote_reference_at is not None
+            else None
+        )
+        if footnote_reference is not None:
+            flush_text()
+            current_inlines().append(footnote_reference)
+            last_was_terminator = False
             continue
 
         if character == "\r":

@@ -72,6 +72,8 @@ def _build_fib(
     ccp_headers: int = 0,
     ccp_header_textboxes: int = 0,
     section_plc: tuple[int, int] = (0, 0),
+    footnote_ref_plc: tuple[int, int] = (0, 0),
+    footnote_text_plc: tuple[int, int] = (0, 0),
     header_plc: tuple[int, int] = (0, 0),
     header_shape_plc: tuple[int, int] = (0, 0),
     dgg_info: tuple[int, int] = (0, 0),
@@ -113,6 +115,8 @@ def _build_fib(
     struct.pack_into("<H", fib, position, 93)
     position += 2
     pairs = [(0, 0)] * 93
+    pairs[2] = footnote_ref_plc
+    pairs[3] = footnote_text_plc
     pairs[6] = section_plc
     pairs[11] = header_plc
     pairs[12] = chpx_plc
@@ -727,6 +731,95 @@ def build_formatted_word_cfb() -> bytes:
     struct.pack_into("<128I", sectors[17], 0, *fat)
 
     return _header(fat_sector=17, directory_sector=16) + b"".join(sectors)
+
+
+def build_footnote_word_cfb(
+    *,
+    missing_special: bool = False,
+    malformed_reference_character: bool = False,
+    malformed_text_end: bool = False,
+    custom_mark: bool = False,
+) -> bytes:
+    """A one-footnote DOC with strict PlcffndRef/PlcffndTxt structures."""
+
+    reference_character = b"*" if custom_mark else b"\x02"
+    if malformed_reference_character:
+        reference_character = b"!"
+    main_text = b"Body" + reference_character + b" text\r"
+    reference_cp = 4
+    footnote_content = b"\x02Footnote text\r"
+    if malformed_text_end:
+        footnote_content = b"\x02Footnote textX"
+    # The final footnote-document character is outside every PlcffndTxt range.
+    footnote_document = footnote_content + b"\r"
+    # A secondary document also requires one paragraph mark beyond all parts.
+    all_text = main_text + footnote_document + b"\r"
+
+    text_fc = 1024
+    text_fc_end = text_fc + len(all_text)
+    compressed_fc = (text_fc * 2) | 0x40000000
+    plc_pcd = struct.pack("<2I", 0, len(all_text))
+    plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
+    clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
+
+    footnote_ref_offset = 128
+    footnote_text_offset = 160
+    chpx_plc_offset = 192
+    footnote_ref = struct.pack(
+        "<2IH",
+        reference_cp,
+        len(main_text),
+        0 if custom_mark else 1,
+    )
+    footnote_text = struct.pack(
+        "<3I",
+        0,
+        len(footnote_document) - 1,
+        len(footnote_document),
+    )
+    chpx_plc = struct.pack("<3I", text_fc, text_fc_end, 4)
+
+    chpx_fkp = bytearray(SECTOR_SIZE)
+    footnote_marker_cp = len(main_text)
+    boundaries = (
+        text_fc,
+        text_fc + reference_cp,
+        text_fc + reference_cp + 1,
+        text_fc + footnote_marker_cp,
+        text_fc + footnote_marker_cp + 1,
+        text_fc_end,
+    )
+    struct.pack_into("<6I", chpx_fkp, 0, *boundaries)
+    if not missing_special and not custom_mark:
+        chpx_fkp[24:29] = bytes((0, 32, 0, 32, 0))
+        special_grpprl = struct.pack("<HB", 0x0855, 1)
+        chpx_fkp[64] = len(special_grpprl)
+        chpx_fkp[65 : 65 + len(special_grpprl)] = special_grpprl
+    chpx_fkp[-1] = 5
+
+    word_document = bytearray(4096)
+    word_document[:1024] = _build_fib(
+        ccp_text=len(main_text),
+        ccp_footnotes=len(footnote_document),
+        clx_size=len(clx),
+        footnote_ref_plc=(footnote_ref_offset, len(footnote_ref)),
+        footnote_text_plc=(footnote_text_offset, len(footnote_text)),
+        chpx_plc=(chpx_plc_offset, len(chpx_plc)),
+        cb_mac=5 * SECTOR_SIZE,
+    )
+    word_document[text_fc:text_fc_end] = all_text
+    word_document[4 * SECTOR_SIZE : 5 * SECTOR_SIZE] = chpx_fkp
+
+    table_stream = bytearray(4096)
+    table_stream[: len(clx)] = clx
+    table_stream[
+        footnote_ref_offset : footnote_ref_offset + len(footnote_ref)
+    ] = footnote_ref
+    table_stream[
+        footnote_text_offset : footnote_text_offset + len(footnote_text)
+    ] = footnote_text
+    table_stream[chpx_plc_offset : chpx_plc_offset + len(chpx_plc)] = chpx_plc
+    return _wrap_regular_word_streams(word_document, table_stream)
 
 
 def build_table_word_cfb() -> bytes:

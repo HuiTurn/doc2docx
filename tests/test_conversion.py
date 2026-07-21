@@ -14,6 +14,7 @@ from doc2docx.errors import (
 
 from .fixtures import (
     build_formatted_word_cfb,
+    build_footnote_word_cfb,
     build_header_footer_word_cfb,
     build_header_textbox_word_cfb,
     build_nested_table_word_cfb,
@@ -30,6 +31,89 @@ V = "{urn:schemas-microsoft-com:vml}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_automatic_footnote_is_linked_and_packaged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "footnote.doc"
+            destination = temporary / "footnote.docx"
+            source.write_bytes(build_footnote_word_cfb())
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.warnings, [])
+            self.assertEqual(result.report.statistics["footnote_count"], 1)
+            self.assertEqual(
+                result.report.statistics["footnote_reference_count"],
+                1,
+            )
+            self.assertEqual(
+                result.report.statistics["custom_footnote_mark_count"],
+                0,
+            )
+            inspected = inspect_doc(source)
+            self.assertGreater(inspected["fib"]["ccpFtn"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcffndRef"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcffndTxt"], 0)
+
+            with zipfile.ZipFile(destination) as package:
+                names = set(package.namelist())
+                self.assertIn("word/footnotes.xml", names)
+                document_root = ET.fromstring(package.read("word/document.xml"))
+                footnotes_root = ET.fromstring(package.read("word/footnotes.xml"))
+                relationships_root = ET.fromstring(
+                    package.read("word/_rels/document.xml.rels")
+                )
+                content_types = package.read("[Content_Types].xml").decode()
+
+            reference = document_root.find(f".//{W}footnoteReference")
+            assert reference is not None
+            self.assertEqual(reference.get(f"{W}id"), "1")
+            self.assertNotIn("\uFFFC", "".join(document_root.itertext()))
+            footnotes = {
+                value.get(f"{W}id"): value
+                for value in footnotes_root.findall(f"{W}footnote")
+            }
+            self.assertEqual(set(footnotes), {"-1", "0", "1"})
+            self.assertEqual("".join(footnotes["1"].itertext()), "Footnote text")
+            self.assertIsNotNone(footnotes["1"].find(f".//{W}footnoteRef"))
+            relationship = next(
+                value
+                for value in relationships_root.findall(f"{REL}Relationship")
+                if value.get("Target") == "footnotes.xml"
+            )
+            self.assertTrue(relationship.get("Type", "").endswith("/footnotes"))
+            self.assertIn("/word/footnotes.xml", content_types)
+
+    def test_malformed_automatic_footnotes_are_rejected(self) -> None:
+        fixtures = (
+            build_footnote_word_cfb(missing_special=True),
+            build_footnote_word_cfb(malformed_reference_character=True),
+            build_footnote_word_cfb(malformed_text_end=True),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for index, payload in enumerate(fixtures):
+                with self.subTest(index=index):
+                    source = Path(directory) / f"bad-footnote-{index}.doc"
+                    source.write_bytes(payload)
+                    with self.assertRaises(InvalidWordDocument):
+                        convert(source)
+
+    def test_custom_footnote_mark_is_explicitly_approximated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "custom-footnote.doc"
+            source.write_bytes(build_footnote_word_cfb(custom_mark=True))
+
+            result = convert(source)
+
+            self.assertEqual(
+                [warning.code for warning in result.report.warnings],
+                ["CUSTOM_FOOTNOTE_MARK_APPROXIMATED"],
+            )
+            self.assertEqual(
+                result.report.statistics["custom_footnote_mark_count"],
+                1,
+            )
+
     def test_header_textbox_field_table_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "bad-header-textbox.doc"

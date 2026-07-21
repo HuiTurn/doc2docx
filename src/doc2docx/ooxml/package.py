@@ -17,6 +17,7 @@ from ..model import (
     Document,
     Field,
     FloatingTextBox,
+    FootnoteReference,
     FontDefinition,
     HeaderFooterStory,
     Paragraph,
@@ -59,6 +60,9 @@ FOOTER_CONTENT_TYPE = (
 SETTINGS_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"
 )
+FOOTNOTES_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"
+)
 STYLES_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
 )
@@ -73,6 +77,9 @@ FOOTER_REL = (
 )
 SETTINGS_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings"
+)
+FOOTNOTES_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes"
 )
 XML_NS = "http://www.w3.org/XML/1998/namespace"
 VML_NS = "urn:schemas-microsoft-com:vml"
@@ -109,6 +116,7 @@ def _content_types_xml(
     has_styles: bool,
     has_fonts: bool,
     has_settings: bool,
+    has_footnotes: bool,
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
     # OPC consumers in the wild are more interoperable with the conventional
@@ -153,6 +161,13 @@ def _content_types_xml(
             PartName="/word/settings.xml",
             ContentType=SETTINGS_CONTENT_TYPE,
         )
+    if has_footnotes:
+        ET.SubElement(
+            root,
+            "Override",
+            PartName="/word/footnotes.xml",
+            ContentType=FOOTNOTES_CONTENT_TYPE,
+        )
     for part in header_footer_parts:
         ET.SubElement(
             root,
@@ -182,6 +197,7 @@ def _document_relationships_xml(
     has_styles: bool,
     has_fonts: bool,
     has_settings: bool,
+    has_footnotes: bool,
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
     root = ET.Element("Relationships", xmlns=REL_NS)
@@ -212,6 +228,15 @@ def _document_relationships_xml(
             Type=SETTINGS_REL,
             Target="settings.xml",
         )
+        relationship_id += 1
+    if has_footnotes:
+        ET.SubElement(
+            root,
+            "Relationship",
+            Id=f"rId{relationship_id}",
+            Type=FOOTNOTES_REL,
+            Target="footnotes.xml",
+        )
     for part in header_footer_parts:
         ET.SubElement(
             root,
@@ -229,8 +254,11 @@ def _build_header_footer_parts(
     has_styles: bool,
     has_fonts: bool,
     has_settings: bool,
+    has_footnotes: bool,
 ) -> tuple[_HeaderFooterPart, ...]:
-    relationship_number = 1 + sum((has_styles, has_fonts, has_settings))
+    relationship_number = 1 + sum(
+        (has_styles, has_fonts, has_settings, has_footnotes)
+    )
     header_number = 0
     footer_number = 0
     parts: list[_HeaderFooterPart] = []
@@ -817,7 +845,7 @@ def _append_floating_textbox(
 
 def _append_inline(
     paragraph_element: ET.Element,
-    inline: TextRun | Symbol | Tab | Break | Field | FloatingTextBox,
+    inline: TextRun | Symbol | Tab | Break | Field | FootnoteReference | FloatingTextBox,
     *,
     valid_paragraph_style_ids: set[int],
     valid_character_style_ids: set[int],
@@ -862,6 +890,27 @@ def _append_inline(
             inline,
             valid_paragraph_style_ids=valid_paragraph_style_ids,
             valid_character_style_ids=valid_character_style_ids,
+        )
+    elif isinstance(inline, FootnoteReference):
+        run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+        _append_run_properties(
+            run,
+            inline.properties,
+            valid_style_ids=valid_character_style_ids,
+        )
+        run_properties = run.find(_qn(W_NS, "rPr"))
+        if run_properties is None:
+            run_properties = ET.Element(_qn(W_NS, "rPr"))
+            run.insert(0, run_properties)
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "vertAlign"),
+            {_qn(W_NS, "val"): "superscript"},
+        )
+        ET.SubElement(
+            run,
+            _qn(W_NS, "footnoteReference"),
+            {_qn(W_NS, "id"): str(inline.footnote_id)},
         )
     elif isinstance(inline, FloatingTextBox):
         _append_floating_textbox(
@@ -1374,6 +1423,95 @@ def _header_footer_xml(
     return _xml_bytes(root)
 
 
+def _footnote_marker_run() -> ET.Element:
+    run = ET.Element(_qn(W_NS, "r"))
+    run_properties = ET.SubElement(run, _qn(W_NS, "rPr"))
+    ET.SubElement(
+        run_properties,
+        _qn(W_NS, "vertAlign"),
+        {_qn(W_NS, "val"): "superscript"},
+    )
+    ET.SubElement(run, _qn(W_NS, "footnoteRef"))
+    return run
+
+
+def _footnotes_xml(document: Document) -> bytes:
+    valid_paragraph_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "paragraph"
+    }
+    valid_character_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "character"
+    }
+    valid_table_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "table"
+    }
+    root = ET.Element(_qn(W_NS, "footnotes"))
+    for footnote_id, note_type, marker_name in (
+        (-1, "separator", "separator"),
+        (0, "continuationSeparator", "continuationSeparator"),
+    ):
+        footnote = ET.SubElement(
+            root,
+            _qn(W_NS, "footnote"),
+            {
+                _qn(W_NS, "id"): str(footnote_id),
+                _qn(W_NS, "type"): note_type,
+            },
+        )
+        paragraph = ET.SubElement(footnote, _qn(W_NS, "p"))
+        run = ET.SubElement(paragraph, _qn(W_NS, "r"))
+        ET.SubElement(run, _qn(W_NS, marker_name))
+
+    for value in document.footnotes:
+        footnote = ET.SubElement(
+            root,
+            _qn(W_NS, "footnote"),
+            {_qn(W_NS, "id"): str(value.footnote_id)},
+        )
+        blocks = value.body_blocks
+        marker_added = False
+        for block in blocks:
+            if isinstance(block, Paragraph):
+                _append_paragraph(
+                    footnote,
+                    block,
+                    valid_paragraph_style_ids=valid_paragraph_style_ids,
+                    valid_character_style_ids=valid_character_style_ids,
+                )
+                if not marker_added:
+                    paragraph = footnote[-1]
+                    insert_at = (
+                        1
+                        if len(paragraph)
+                        and paragraph[0].tag == _qn(W_NS, "pPr")
+                        else 0
+                    )
+                    paragraph.insert(insert_at, _footnote_marker_run())
+                    marker_added = True
+            elif isinstance(block, Table):
+                if not marker_added:
+                    paragraph = ET.SubElement(footnote, _qn(W_NS, "p"))
+                    paragraph.append(_footnote_marker_run())
+                    marker_added = True
+                _append_table(
+                    footnote,
+                    block,
+                    valid_paragraph_style_ids=valid_paragraph_style_ids,
+                    valid_character_style_ids=valid_character_style_ids,
+                    valid_table_style_ids=valid_table_style_ids,
+                )
+        if not marker_added:
+            paragraph = ET.SubElement(footnote, _qn(W_NS, "p"))
+            paragraph.append(_footnote_marker_run())
+    return _xml_bytes(root)
+
+
 def _settings_xml(
     *,
     even_and_odd_headers: bool,
@@ -1560,11 +1698,13 @@ def write_docx(document: Document, destination: str | Path) -> None:
         document.even_and_odd_headers
         or document.adjust_line_height_in_table is True
     )
+    has_footnotes = bool(document.footnotes)
     header_footer_parts = _build_header_footer_parts(
         document,
         has_styles=has_styles,
         has_fonts=has_fonts,
         has_settings=has_settings,
+        has_footnotes=has_footnotes,
     )
     try:
         with zipfile.ZipFile(output, mode="w") as package:
@@ -1575,6 +1715,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     has_styles=has_styles,
                     has_fonts=has_fonts,
                     has_settings=has_settings,
+                    has_footnotes=has_footnotes,
                     header_footer_parts=header_footer_parts,
                 ),
             )
@@ -1584,7 +1725,13 @@ def write_docx(document: Document, destination: str | Path) -> None:
                 "word/document.xml",
                 _document_xml(document, header_footer_parts),
             )
-            if has_styles or has_fonts or has_settings or header_footer_parts:
+            if (
+                has_styles
+                or has_fonts
+                or has_settings
+                or has_footnotes
+                or header_footer_parts
+            ):
                 _write_part(
                     package,
                     "word/_rels/document.xml.rels",
@@ -1592,6 +1739,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                         has_styles=has_styles,
                         has_fonts=has_fonts,
                         has_settings=has_settings,
+                        has_footnotes=has_footnotes,
                         header_footer_parts=header_footer_parts,
                     ),
                 )
@@ -1613,6 +1761,12 @@ def write_docx(document: Document, destination: str | Path) -> None:
                             document.adjust_line_height_in_table
                         ),
                     ),
+                )
+            if has_footnotes:
+                _write_part(
+                    package,
+                    "word/footnotes.xml",
+                    _footnotes_xml(document),
                 )
             for part in header_footer_parts:
                 _write_part(

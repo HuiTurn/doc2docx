@@ -23,6 +23,7 @@ from .msdoc import (
     read_document_settings,
     read_font_table,
     read_formatting,
+    read_footnotes,
     read_header_footer_stories,
     read_header_textboxes,
     read_officeart_shapes,
@@ -150,6 +151,21 @@ def convert(
         fonts=fonts,
         style_sheet=style_sheet,
     )
+    footnote_reference_table = fib.plcf_fnd_ref
+    footnote_text_table = fib.plcf_fnd_txt
+    footnotes = read_footnotes(
+        table_stream,
+        piece_table,
+        ccp_text=fib.ccp_text,
+        ccp_footnotes=fib.ccp_footnotes,
+        reference_offset=footnote_reference_table.fc,
+        reference_size=footnote_reference_table.lcb,
+        text_offset=footnote_text_table.fc,
+        text_size=footnote_text_table.lcb,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+        paragraph_properties_at=formatting.paragraph_properties_at,
+    )
     spa_headers = fib.plc_spa_hdr
     dgg_info = fib.dgg_info
     officeart_shapes = read_officeart_shapes(
@@ -206,6 +222,7 @@ def convert(
         report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
+        footnote_reference_at=footnotes.reference_at,
         sections=sections,
     )
     document = Document(
@@ -214,6 +231,7 @@ def convert(
         styles=style_sheet,
         blocks=parsed_document.blocks,
         sections=sections,
+        footnotes=footnotes.footnotes,
         even_and_odd_headers=document_settings.even_and_odd_headers,
         adjust_line_height_in_table=(
             document_settings.adjust_line_height_in_table
@@ -280,6 +298,9 @@ def convert(
             "styled_header_textbox_count": (
                 header_textboxes.styled_textbox_count
             ),
+            "footnote_count": len(footnotes.footnotes),
+            "footnote_reference_count": footnotes.reference_count,
+            "custom_footnote_mark_count": footnotes.custom_mark_count,
             "symbol_character_count": sum(
                 isinstance(inline, Symbol)
                 for paragraph in document.paragraphs
@@ -302,12 +323,13 @@ def convert(
             "the FIB reports pictures; picture conversion is not yet supported",
         )
     secondary_stories = fib.secondary_story_character_counts
+    secondary_stories.pop("footnotes", None)
     secondary_stories.pop("headers", None)
     secondary_stories.pop("header_textboxes", None)
     if secondary_stories:
         report.warning(
             "SECONDARY_STORIES_DEFERRED",
-            "some secondary document stories remain unsupported after M6d",
+            "some secondary document stories remain unsupported after M7a",
             stories=secondary_stories,
         )
 
@@ -338,7 +360,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M6d conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M7a conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -381,10 +403,15 @@ def inspect_doc(
             "obfuscated": fib.base.is_obfuscated,
             "table_stream": fib.base.table_stream_name,
             "ccpText": fib.ccp_text,
+            "ccpFtn": fib.ccp_footnotes,
             "ccpHdd": fib.ccp_headers,
             "ccpHdrTxbx": fib.ccp_header_textboxes,
             "fcClx": fib.clx.fc,
             "lcbClx": fib.clx.lcb,
+            "fcPlcffndRef": fib.plcf_fnd_ref.fc,
+            "lcbPlcffndRef": fib.plcf_fnd_ref.lcb,
+            "fcPlcffndTxt": fib.plcf_fnd_txt.fc,
+            "lcbPlcffndTxt": fib.plcf_fnd_txt.lcb,
             "fcPlcfBteChpx": fib.plcf_bte_chpx.fc,
             "lcbPlcfBteChpx": fib.plcf_bte_chpx.lcb,
             "fcPlcfBtePapx": fib.plcf_bte_papx.fc,
