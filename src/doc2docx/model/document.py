@@ -653,6 +653,10 @@ class SectionProperties:
     footer_distance_twips: int = 720
     gutter_twips: int = 0
     title_page: bool = False
+    revision_save_id: int | None = None
+    column_count: int | None = None
+    column_spacing_twips: int | None = None
+    columns_evenly_spaced: bool | None = None
     page_number_format: str | None = None
     footnote_number_format: str | None = None
     footnote_number_restart: str | None = None

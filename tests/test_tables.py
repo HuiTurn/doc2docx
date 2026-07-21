@@ -33,6 +33,7 @@ class TableConversionTests(unittest.TestCase):
         row = TableRowProperties(
             preferred_width=2200,
             preferred_width_type="dxa",
+            left_indent_twips=-360,
             cell_boundaries_twips=(0, 1000, 2200),
             cell_definitions=(TableCellDefinition(), TableCellDefinition()),
             borders=TableBorders(
@@ -70,6 +71,10 @@ class TableConversionTests(unittest.TestCase):
         assert table_width is not None
         self.assertEqual(table_width.get(f"{W}w"), "2200")
         self.assertEqual(table_width.get(f"{W}type"), "dxa")
+        table_indent = root.find(f".//{W}tblPr/{W}tblInd")
+        assert table_indent is not None
+        self.assertEqual(table_indent.get(f"{W}w"), "-360")
+        self.assertEqual(table_indent.get(f"{W}type"), "dxa")
         cell_widths = root.findall(f".//{W}tr/{W}tc/{W}tcPr/{W}tcW")
         self.assertEqual([value.get(f"{W}w") for value in cell_widths], ["900", "1200"])
         first_top = root.find(f".//{W}tr/{W}tc[1]/{W}tcPr/{W}tcBorders/{W}top")

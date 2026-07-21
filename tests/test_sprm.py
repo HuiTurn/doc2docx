@@ -308,6 +308,28 @@ class SprmTests(unittest.TestCase):
         assert properties.table_row is not None
         self.assertEqual(properties.table_row.table_style_id, 11)
 
+    def test_table_preferred_indent_is_parsed(self) -> None:
+        properties, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(
+                struct.pack("<HBh", 0xF661, 3, -360),
+                label="table-indent.grpprl",
+            ),
+            style_id=0,
+        )
+
+        self.assertFalse(unsupported)
+        assert properties.table_row is not None
+        self.assertEqual(properties.table_row.left_indent_twips, -360)
+
+        with self.assertRaises(InvalidWordDocument):
+            apply_paragraph_modifiers(
+                parse_grpprl(
+                    struct.pack("<HBh", 0xF661, 1, 12),
+                    label="invalid-table-indent.grpprl",
+                ),
+                style_id=0,
+            )
+
     def test_large_tdef_table_uses_its_16_bit_length(self) -> None:
         column_count = 12
         boundaries = struct.pack(

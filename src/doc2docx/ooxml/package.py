@@ -1494,7 +1494,16 @@ def _append_section_properties(
     include_break_type: bool,
     header_footer_parts: tuple[_HeaderFooterPart, ...] = (),
 ) -> None:
-    section_properties = ET.SubElement(parent, _qn(W_NS, "sectPr"))
+    section_attributes = {}
+    if section.revision_save_id is not None:
+        section_attributes[_qn(W_NS, "rsidSect")] = (
+            f"{section.revision_save_id:08X}"
+        )
+    section_properties = ET.SubElement(
+        parent,
+        _qn(W_NS, "sectPr"),
+        section_attributes,
+    )
     for part in header_footer_parts:
         ET.SubElement(
             section_properties,
@@ -1577,6 +1586,23 @@ def _append_section_properties(
             section_properties,
             _qn(W_NS, "pgNumType"),
             {_qn(W_NS, "fmt"): section.page_number_format},
+        )
+    column_attributes: dict[str, str] = {}
+    if section.column_count is not None:
+        column_attributes[_qn(W_NS, "num")] = str(section.column_count)
+    if section.column_spacing_twips is not None:
+        column_attributes[_qn(W_NS, "space")] = str(
+            section.column_spacing_twips
+        )
+    if section.columns_evenly_spaced is not None:
+        column_attributes[_qn(W_NS, "equalWidth")] = (
+            "1" if section.columns_evenly_spaced else "0"
+        )
+    if column_attributes:
+        ET.SubElement(
+            section_properties,
+            _qn(W_NS, "cols"),
+            column_attributes,
         )
     if section.title_page:
         ET.SubElement(section_properties, _qn(W_NS, "titlePg"))

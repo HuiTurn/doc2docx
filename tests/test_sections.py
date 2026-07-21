@@ -58,12 +58,16 @@ class SectionParsingTests(unittest.TestCase):
         grpprl = b"".join(
             (
                 struct.pack("<HB", 0x300E, 1),
+                struct.pack("<HB", 0x3005, 1),
                 struct.pack("<HB", 0x303C, 1),
                 struct.pack("<HB", 0x303E, 1),
                 struct.pack("<HB", 0x3228, 1),
                 struct.pack("<HH", 0x5033, 1),
+                struct.pack("<HH", 0x500B, 2),
+                struct.pack("<HH", 0x900C, 720),
                 struct.pack("<HH", 0x5040, 4),
                 struct.pack("<HH", 0x5042, 1),
+                struct.pack("<HI", 0x703A, 0x12345678),
                 struct.pack("<HH", 0xB021, 1000),
                 struct.pack("<HH", 0xB022, 1100),
                 struct.pack("<Hh", 0x9023, 1200),
@@ -89,6 +93,10 @@ class SectionParsingTests(unittest.TestCase):
 
         section = sections[0]
         self.assertEqual(section.page_number_format, "upperRoman")
+        self.assertEqual(section.column_count, 3)
+        self.assertEqual(section.column_spacing_twips, 720)
+        self.assertTrue(section.columns_evenly_spaced)
+        self.assertEqual(section.revision_save_id, 0x12345678)
         self.assertEqual(section.footnote_number_format, "lowerLetter")
         self.assertEqual(section.footnote_number_restart, "eachSect")
         self.assertEqual(section.endnote_number_format, "upperRoman")
@@ -117,6 +125,7 @@ class SectionParsingTests(unittest.TestCase):
                 f"{W}pgSz",
                 f"{W}pgMar",
                 f"{W}pgNumType",
+                f"{W}cols",
                 f"{W}textDirection",
                 f"{W}bidi",
             ],
@@ -141,6 +150,12 @@ class SectionParsingTests(unittest.TestCase):
             section_element.find(f"{W}textDirection").get(f"{W}val"),  # type: ignore[union-attr]
             "tbRl",
         )
+        columns = section_element.find(f"{W}cols")
+        assert columns is not None
+        self.assertEqual(columns.get(f"{W}num"), "3")
+        self.assertEqual(columns.get(f"{W}space"), "720")
+        self.assertEqual(columns.get(f"{W}equalWidth"), "1")
+        self.assertEqual(section_element.get(f"{W}rsidSect"), "12345678")
         self.assertIsNotNone(section_element.find(f"{W}bidi"))
 
     def test_incomplete_document_grid_is_reported_and_omitted(self) -> None:

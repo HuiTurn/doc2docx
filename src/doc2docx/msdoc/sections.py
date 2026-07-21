@@ -101,6 +101,10 @@ def _i32(operand: bytes) -> int:
     return struct.unpack("<i", operand)[0]
 
 
+def _u32(operand: bytes) -> int:
+    return struct.unpack("<I", operand)[0]
+
+
 def _number_format(operand: bytes) -> str | None:
     value = operand[0] if len(operand) == 1 else _u16(operand)
     return NUMBER_FORMATS.get(value)
@@ -127,6 +131,25 @@ def _apply_section_modifiers(
                 unsupported.add(opcode)
             else:
                 section = replace(section, title_page=bool(operand[0]))
+        elif opcode == 0x3005:  # sprmSFEvenlySpaced
+            if operand[0] == 0x01:
+                section = replace(section, columns_evenly_spaced=True)
+            else:
+                # Uneven columns also require the per-column width and
+                # spacing operands, which are not modeled yet.
+                unsupported.add(opcode)
+        elif opcode == 0x500B:  # sprmSCcolumns
+            column_count_minus_one = _u16(operand)
+            if column_count_minus_one > 43:
+                raise InvalidWordDocument(
+                    "section column count exceeds the MS-DOC limit of 44"
+                )
+            section = replace(
+                section,
+                column_count=column_count_minus_one + 1,
+            )
+        elif opcode == 0x900C:  # sprmSDxaColumns
+            section = replace(section, column_spacing_twips=_u16(operand))
         elif opcode == 0x300E:  # sprmSNfcPgn
             number_format = _number_format(operand)
             if number_format in (None, "bullet", "none"):
@@ -243,6 +266,8 @@ def _apply_section_modifiers(
                 unsupported.add(opcode)
             else:
                 section = replace(section, endnote_number_format=number_format)
+        elif opcode == 0x703A:  # sprmSRsid
+            section = replace(section, revision_save_id=_u32(operand))
         else:
             unsupported.add(opcode)
     return section, unsupported, seen

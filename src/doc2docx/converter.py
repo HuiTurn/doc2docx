@@ -814,7 +814,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M13a conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M13b conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

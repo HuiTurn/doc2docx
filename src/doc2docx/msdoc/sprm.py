@@ -476,6 +476,21 @@ def _parse_table_part_width(operand: bytes) -> tuple[str, int]:
     return width_type, width
 
 
+def _parse_table_indent(operand: bytes) -> int | None:
+    if len(operand) != 3:
+        raise InvalidWordDocument("FtsWWidth_Indent must contain three bytes")
+    width_type, width = struct.unpack("<Bh", operand)
+    if width_type in (0x00, 0x01):
+        if width:
+            raise InvalidWordDocument("automatic table indents must be zero")
+        return None
+    if width_type != 0x03:
+        raise InvalidWordDocument("table indent has an invalid width type")
+    if not -31560 <= width <= 31680:
+        raise InvalidWordDocument("table indent is outside the MS-DOC range")
+    return width
+
+
 def _parse_cell_width(operand: bytes) -> TableCellWidthOverride | None:
     if len(operand) != 6 or operand[0] != 5:
         raise InvalidWordDocument("TableCellWidthOperand must contain five data bytes")
@@ -947,6 +962,15 @@ def apply_paragraph_modifiers(
                     row,
                     preferred_width=width,
                     preferred_width_type=width_type,
+                ),
+            )
+        elif opcode == 0xF661:  # sprmTWidthIndent
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    left_indent_twips=_parse_table_indent(operand),
                 ),
             )
         elif opcode in (0xF617, 0xF618):

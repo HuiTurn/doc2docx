@@ -7,10 +7,23 @@ current capabilities without release-by-release notes.
 
 - Continue expanding MS-DOC compatibility with specification-backed parsers,
   focused tests, and real Word 97 sample rendering.
+
+## 0.29.0 - 2026-07-22 (M13a-M13b)
+
 - Preserve signed character spacing from `sprmCDxaSpace` in direct and style
   formatting as native WordprocessingML character pitch adjustments.
 - Preserve contextual paragraph spacing and automatic spacing before/after,
   and serialize paragraph properties in WordprocessingML schema order.
+- Preserve evenly spaced section column counts and spacing, section revision
+  save identifiers, and signed preferred table indents from direct and style
+  formatting.
+- Validate with 143 focused tests and a 42-file real-DOC regression batch: the
+  high-frequency style-character and style-paragraph warnings fell from nine
+  files each to one and zero, table-style warnings fell from five to zero, and
+  section warnings fell from five to one implementation-dependent property.
+- Inspect and render real floating-picture and legacy sample documents after
+  package validation to confirm that the added layout properties do not
+  regress visible content.
 
 ## 0.28.0 - 2026-07-22 (M12a-M12b)
 
