@@ -256,6 +256,9 @@ class ParagraphProperties:
     page_break_before: bool | None = None
     outline_level: int | None = None
     widow_control: bool | None = None
+    suppress_line_numbers: bool | None = None
+    suppress_auto_hyphens: bool | None = None
+    bidirectional: bool | None = None
     kinsoku: bool | None = None
     word_wrap: bool | None = None
     overflow_punctuation: bool | None = None
@@ -646,6 +649,13 @@ class SectionProperties:
     footer_distance_twips: int = 720
     gutter_twips: int = 0
     title_page: bool = False
+    page_number_format: str | None = None
+    footnote_number_format: str | None = None
+    footnote_number_restart: str | None = None
+    endnote_number_format: str | None = None
+    endnote_number_restart: str | None = None
+    text_direction: str | None = None
+    bidirectional: bool | None = None
     document_grid_type: str | None = None
     document_grid_line_pitch_twips: int | None = None
     document_grid_character_space: int | None = None

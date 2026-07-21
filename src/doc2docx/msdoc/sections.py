@@ -8,6 +8,7 @@ import struct
 from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
 from ..model import SectionBreakType, SectionProperties
+from .number_formats import NUMBER_FORMATS
 from .sprm import PropertyModifier, parse_grpprl
 
 
@@ -24,6 +25,22 @@ _DOCUMENT_GRID_TYPES = {
     0x0001: "linesAndChars",
     0x0002: "lines",
     0x0003: "snapToChars",
+}
+
+_NUMBER_RESTARTS = {
+    0x00: "continuous",
+    0x01: "eachSect",
+    0x02: "eachPage",
+}
+
+# MSOTXFL values 0, 1, 3, and 5 have direct section-level equivalents.
+# Values 2 and 4 require glyph rotation/flow behavior that w:sectPr cannot
+# preserve faithfully, so they remain diagnosed instead of being mislabeled.
+_TEXT_DIRECTIONS = {
+    0x0000: "lrTb",
+    0x0001: "tbRl",
+    0x0003: "tbRl",
+    0x0005: "tbRl",
 }
 
 _HEADER_DISTANCE_708_LCIDS = {
@@ -84,6 +101,11 @@ def _i32(operand: bytes) -> int:
     return struct.unpack("<i", operand)[0]
 
 
+def _number_format(operand: bytes) -> str | None:
+    value = operand[0] if len(operand) == 1 else _u16(operand)
+    return NUMBER_FORMATS.get(value)
+
+
 def _apply_section_modifiers(
     section: SectionProperties,
     modifiers: tuple[PropertyModifier, ...],
@@ -105,6 +127,24 @@ def _apply_section_modifiers(
                 unsupported.add(opcode)
             else:
                 section = replace(section, title_page=bool(operand[0]))
+        elif opcode == 0x300E:  # sprmSNfcPgn
+            number_format = _number_format(operand)
+            if number_format in (None, "bullet", "none"):
+                unsupported.add(opcode)
+            else:
+                section = replace(section, page_number_format=number_format)
+        elif opcode == 0x303C:  # sprmSRncFtn
+            restart = _NUMBER_RESTARTS.get(operand[0])
+            if restart is None:
+                unsupported.add(opcode)
+            else:
+                section = replace(section, footnote_number_restart=restart)
+        elif opcode == 0x303E:  # sprmSRncEdn
+            restart = _NUMBER_RESTARTS.get(operand[0])
+            if restart not in ("continuous", "eachSect"):
+                unsupported.add(opcode)
+            else:
+                section = replace(section, endnote_number_restart=restart)
         elif opcode == 0xB017:  # sprmSDyaHdrTop
             section = replace(section, header_distance_twips=_u16(operand))
         elif opcode == 0xB018:  # sprmSDyaHdrBottom
@@ -115,6 +155,11 @@ def _apply_section_modifiers(
                 unsupported.add(opcode)
             else:
                 section = replace(section, orientation=orientation)
+        elif opcode == 0x3228:  # sprmSFBiDi
+            if operand[0] not in (0x00, 0x01):
+                unsupported.add(opcode)
+            else:
+                section = replace(section, bidirectional=bool(operand[0]))
         elif opcode == 0xB01F:  # sprmSXaPage
             width = _u16(operand)
             if not 144 <= width <= 31680:
@@ -180,6 +225,24 @@ def _apply_section_modifiers(
                     section,
                     document_grid_type=_DOCUMENT_GRID_TYPES[grid_mode],
                 )
+        elif opcode == 0x5033:  # sprmSTextFlow
+            text_direction = _TEXT_DIRECTIONS.get(_u16(operand))
+            if text_direction is None:
+                unsupported.add(opcode)
+            else:
+                section = replace(section, text_direction=text_direction)
+        elif opcode == 0x5040:  # sprmSNfcFtnRef
+            number_format = _number_format(operand)
+            if number_format is None:
+                unsupported.add(opcode)
+            else:
+                section = replace(section, footnote_number_format=number_format)
+        elif opcode == 0x5042:  # sprmSNfcEdnRef
+            number_format = _number_format(operand)
+            if number_format is None:
+                unsupported.add(opcode)
+            else:
+                section = replace(section, endnote_number_format=number_format)
         else:
             unsupported.add(opcode)
     return section, unsupported, seen

@@ -15,6 +15,7 @@ from ..model import (
     NumberingLevel,
     NumberingLevelOverride,
 )
+from .number_formats import NUMBER_FORMATS
 from .sprm import (
     apply_character_modifiers,
     apply_paragraph_modifiers,
@@ -26,71 +27,6 @@ _LSTF_SIZE = 28
 _LVLF_SIZE = 28
 _LFO_SIZE = 16
 _LFOLVL_SIZE = 8
-
-# [MS-OSHARED] 2.2.1.3 maps MSONFC values directly to ST_NumberFormat.
-_NUMBER_FORMATS = {
-    0x00: "decimal",
-    0x01: "upperRoman",
-    0x02: "lowerRoman",
-    0x03: "upperLetter",
-    0x04: "lowerLetter",
-    0x05: "ordinal",
-    0x06: "cardinalText",
-    0x07: "ordinalText",
-    0x08: "hex",
-    0x09: "chicago",
-    0x0A: "ideographDigital",
-    0x0B: "japaneseCounting",
-    0x0C: "aiueo",
-    0x0D: "iroha",
-    0x0E: "decimalFullWidth",
-    0x0F: "decimalHalfWidth",
-    0x10: "japaneseLegal",
-    0x11: "japaneseDigitalTenThousand",
-    0x12: "decimalEnclosedCircle",
-    0x13: "decimalFullWidth2",
-    0x14: "aiueoFullWidth",
-    0x15: "irohaFullWidth",
-    0x16: "decimalZero",
-    0x17: "bullet",
-    0x18: "ganada",
-    0x19: "chosung",
-    0x1A: "decimalEnclosedFullstop",
-    0x1B: "decimalEnclosedParen",
-    0x1C: "decimalEnclosedCircleChinese",
-    0x1D: "ideographEnclosedCircle",
-    0x1E: "ideographTraditional",
-    0x1F: "ideographZodiac",
-    0x20: "ideographZodiacTraditional",
-    0x21: "taiwaneseCounting",
-    0x22: "ideographLegalTraditional",
-    0x23: "taiwaneseCountingThousand",
-    0x24: "taiwaneseDigital",
-    0x25: "chineseCounting",
-    0x26: "chineseLegalSimplified",
-    0x27: "chineseCountingThousand",
-    0x28: "decimal",
-    0x29: "koreanDigital",
-    0x2A: "koreanCounting",
-    0x2B: "koreanLegal",
-    0x2C: "koreanDigital2",
-    0x2D: "hebrew1",
-    0x2E: "arabicAlpha",
-    0x2F: "hebrew2",
-    0x30: "arabicAbjad",
-    0x31: "hindiVowels",
-    0x32: "hindiConsonants",
-    0x33: "hindiNumbers",
-    0x34: "hindiCounting",
-    0x35: "thaiLetters",
-    0x36: "thaiNumbers",
-    0x37: "thaiCounting",
-    0x38: "vietnameseCounting",
-    0x39: "numberInDash",
-    0x3A: "russianLower",
-    0x3B: "russianUpper",
-    0xFF: "none",
-}
 
 _JUSTIFICATIONS = {0: "left", 1: "center", 2: "right"}
 _SUFFIXES = {0: "tab", 1: "space", 2: "nothing"}
@@ -284,7 +220,7 @@ def _parse_level(
         raise InvalidWordDocument(f"{label}.LVLF has invalid ixchFollow {follow}")
     if format_code not in (0x17, 0xFF) and not 0 <= start <= 0x7FFF:
         raise InvalidWordDocument(f"{label}.LVLF has invalid iStartAt {start}")
-    number_format = _NUMBER_FORMATS.get(format_code)
+    number_format = NUMBER_FORMATS.get(format_code)
     if number_format is None:
         number_format = "decimal"
         approximated_formats.add(format_code)

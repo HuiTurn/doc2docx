@@ -107,6 +107,8 @@ _CHARACTER_TOGGLES = {
 }
 
 _PARAGRAPH_TOGGLES = {
+    0x240C: "suppress_line_numbers",
+    0x242A: "suppress_auto_hyphens",
     0x2431: "widow_control",
     0x2433: "kinsoku",
     0x2434: "word_wrap",
@@ -114,6 +116,7 @@ _PARAGRAPH_TOGGLES = {
     0x2436: "top_line_punctuation",
     0x2437: "auto_space_east_asian_latin",
     0x2438: "auto_space_east_asian_numbers",
+    0x2441: "bidirectional",
     0x2447: "snap_to_grid",
     0x2448: "adjust_right_indent",
 }

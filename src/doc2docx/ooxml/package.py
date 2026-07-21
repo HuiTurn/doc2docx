@@ -664,6 +664,9 @@ def _append_paragraph_properties(
         or properties.page_break_before is not None
         or properties.outline_level is not None
         or properties.widow_control is not None
+        or properties.suppress_line_numbers is not None
+        or properties.suppress_auto_hyphens is not None
+        or properties.bidirectional is not None
         or properties.kinsoku is not None
         or properties.word_wrap is not None
         or properties.overflow_punctuation is not None
@@ -756,6 +759,21 @@ def _append_paragraph_properties(
         paragraph_properties,
         "widowControl",
         properties.widow_control,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "suppressLineNumbers",
+        properties.suppress_line_numbers,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "suppressAutoHyphens",
+        properties.suppress_auto_hyphens,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "bidi",
+        properties.bidirectional,
     )
     _append_boolean_property(paragraph_properties, "kinsoku", properties.kinsoku)
     _append_boolean_property(paragraph_properties, "wordWrap", properties.word_wrap)
@@ -1464,6 +1482,46 @@ def _append_section_properties(
                 _qn(R_NS, "id"): part.relationship_id,
             },
         )
+    if (
+        section.footnote_number_format is not None
+        or section.footnote_number_restart is not None
+    ):
+        footnote_properties = ET.SubElement(
+            section_properties,
+            _qn(W_NS, "footnotePr"),
+        )
+        if section.footnote_number_format is not None:
+            ET.SubElement(
+                footnote_properties,
+                _qn(W_NS, "numFmt"),
+                {_qn(W_NS, "val"): section.footnote_number_format},
+            )
+        if section.footnote_number_restart is not None:
+            ET.SubElement(
+                footnote_properties,
+                _qn(W_NS, "numRestart"),
+                {_qn(W_NS, "val"): section.footnote_number_restart},
+            )
+    if (
+        section.endnote_number_format is not None
+        or section.endnote_number_restart is not None
+    ):
+        endnote_properties = ET.SubElement(
+            section_properties,
+            _qn(W_NS, "endnotePr"),
+        )
+        if section.endnote_number_format is not None:
+            ET.SubElement(
+                endnote_properties,
+                _qn(W_NS, "numFmt"),
+                {_qn(W_NS, "val"): section.endnote_number_format},
+            )
+        if section.endnote_number_restart is not None:
+            ET.SubElement(
+                endnote_properties,
+                _qn(W_NS, "numRestart"),
+                {_qn(W_NS, "val"): section.endnote_number_restart},
+            )
     if include_break_type:
         ET.SubElement(
             section_properties,
@@ -1492,8 +1550,25 @@ def _append_section_properties(
             _qn(W_NS, "gutter"): str(section.gutter_twips),
         },
     )
+    if section.page_number_format is not None:
+        ET.SubElement(
+            section_properties,
+            _qn(W_NS, "pgNumType"),
+            {_qn(W_NS, "fmt"): section.page_number_format},
+        )
     if section.title_page:
         ET.SubElement(section_properties, _qn(W_NS, "titlePg"))
+    if section.text_direction is not None:
+        ET.SubElement(
+            section_properties,
+            _qn(W_NS, "textDirection"),
+            {_qn(W_NS, "val"): section.text_direction},
+        )
+    _append_boolean_property(
+        section_properties,
+        "bidi",
+        section.bidirectional,
+    )
     if (
         section.document_grid_type is not None
         and section.document_grid_line_pitch_twips is not None

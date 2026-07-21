@@ -8,6 +8,22 @@ current capabilities without release-by-release notes.
 - Continue expanding MS-DOC compatibility with specification-backed parsers,
   focused tests, and real Word 97 sample rendering.
 
+## 0.28.0 - 2026-07-22 (M12a-M12b)
+
+- Preserve paragraph and paragraph-style controls for line-number suppression,
+  automatic-hyphenation suppression, and bidirectional layout.
+- Parse section page-number formats, footnote and endnote number formats and
+  restart rules, section bidirectional layout, and representable MSOTXFL text
+  directions, then emit them in schema order in `w:sectPr`.
+- Share the specification-backed MSONFC mapping between native list levels and
+  section numbering controls, while keeping unrepresentable section text-flow
+  values explicitly diagnosed.
+- Expose section numbering, bidirectional, and vertical-text counts in the
+  conversion report.
+- Validate with 142 focused tests and a real Word 97 DOC whose previously
+  unsupported paragraph, style, and section modifiers now convert without
+  compatibility warnings, followed by package and rendered visual checks.
+
 ## 0.27.0 - 2026-07-22 (M11c)
 
 - Parse the extended UTF-16 `SttbListNames` table parallel to `PlfLst`, with

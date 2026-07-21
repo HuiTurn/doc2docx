@@ -133,12 +133,15 @@ class SprmTests(unittest.TestCase):
             struct.pack("<HB", opcode, value)
             for opcode, value in (
                 (0x2431, 0),
+                (0x240C, 1),
+                (0x242A, 1),
                 (0x2433, 1),
                 (0x2434, 0),
                 (0x2435, 1),
                 (0x2436, 1),
                 (0x2437, 0),
                 (0x2438, 1),
+                (0x2441, 1),
                 (0x2447, 0),
                 (0x2448, 1),
             )
@@ -150,6 +153,9 @@ class SprmTests(unittest.TestCase):
 
         self.assertFalse(unsupported)
         self.assertFalse(properties.widow_control)
+        self.assertTrue(properties.suppress_line_numbers)
+        self.assertTrue(properties.suppress_auto_hyphens)
+        self.assertTrue(properties.bidirectional)
         self.assertTrue(properties.kinsoku)
         self.assertFalse(properties.word_wrap)
         self.assertTrue(properties.overflow_punctuation)

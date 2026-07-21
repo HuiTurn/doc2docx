@@ -170,6 +170,9 @@ class FontAndStyleTests(unittest.TestCase):
                     (TextRun("Outlined"),),
                     ParagraphProperties(
                         outline_level=2,
+                        suppress_line_numbers=True,
+                        suppress_auto_hyphens=True,
+                        bidirectional=True,
                         borders=TableBorders(
                             top=BorderProperties("single", 4, "112233"),
                         ),
@@ -185,10 +188,14 @@ class FontAndStyleTests(unittest.TestCase):
 
         outline = root.find(f".//{W}pPr/{W}outlineLvl")
         border = root.find(f".//{W}pPr/{W}pBdr/{W}top")
+        paragraph_properties = root.find(f".//{W}pPr")
         assert outline is not None
         assert border is not None
+        assert paragraph_properties is not None
         self.assertEqual(outline.get(f"{W}val"), "2")
         self.assertEqual(border.get(f"{W}color"), "112233")
+        for name in ("suppressLineNumbers", "suppressAutoHyphens", "bidi"):
+            self.assertIsNotNone(paragraph_properties.find(f"{W}{name}"))
 
     def test_writes_custom_tab_stops(self) -> None:
         document = Document(

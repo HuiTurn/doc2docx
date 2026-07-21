@@ -666,6 +666,28 @@ def convert(
             "document_grid_section_count": sum(
                 section.document_grid_type is not None for section in sections
             ),
+            "section_page_number_format_count": sum(
+                section.page_number_format is not None for section in sections
+            ),
+            "section_note_numbering_override_count": sum(
+                any(
+                    value is not None
+                    for value in (
+                        section.footnote_number_format,
+                        section.footnote_number_restart,
+                        section.endnote_number_format,
+                        section.endnote_number_restart,
+                    )
+                )
+                for section in sections
+            ),
+            "bidirectional_section_count": sum(
+                section.bidirectional is True for section in sections
+            ),
+            "vertical_text_section_count": sum(
+                section.text_direction not in (None, "lrTb")
+                for section in sections
+            ),
             "adjust_line_height_in_table": (
                 document.adjust_line_height_in_table is True
             ),
@@ -792,7 +814,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M11c conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M12b conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
