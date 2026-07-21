@@ -315,6 +315,14 @@ class FootnoteReference:
 
 
 @dataclass(slots=True, frozen=True)
+class EndnoteReference:
+    """A main-story reference to one endnote body."""
+
+    endnote_id: int
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+
+
+@dataclass(slots=True, frozen=True)
 class ShapeStyle:
     """Basic OfficeArt appearance retained for a floating shape."""
 
@@ -357,7 +365,16 @@ class FloatingTextBox:
         return self.blocks or self.paragraphs
 
 
-Inline = TextRun | Symbol | Tab | Break | Field | FootnoteReference | FloatingTextBox
+Inline = (
+    TextRun
+    | Symbol
+    | Tab
+    | Break
+    | Field
+    | FootnoteReference
+    | EndnoteReference
+    | FloatingTextBox
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -446,6 +463,19 @@ class Footnote:
 
 
 @dataclass(slots=True, frozen=True)
+class Endnote:
+    """One parsed endnote story range, excluding its guard paragraph."""
+
+    endnote_id: int
+    paragraphs: tuple[Paragraph, ...]
+    blocks: tuple[Block, ...] = ()
+
+    @property
+    def body_blocks(self) -> tuple[Block, ...]:
+        return self.blocks or self.paragraphs
+
+
+@dataclass(slots=True, frozen=True)
 class HeaderFooterStory:
     """One non-empty header/footer story after removing its guard paragraph."""
 
@@ -467,6 +497,7 @@ class Document:
     blocks: tuple[Block, ...] = ()
     sections: tuple[SectionProperties, ...] = ()
     footnotes: tuple[Footnote, ...] = ()
+    endnotes: tuple[Endnote, ...] = ()
     even_and_odd_headers: bool = False
     adjust_line_height_in_table: bool | None = None
 
@@ -750,6 +781,7 @@ def parse_main_story(
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
     footnote_reference_at: Callable[[int], FootnoteReference | None] | None = None,
+    endnote_reference_at: Callable[[int], EndnoteReference | None] | None = None,
     sections: Sequence[SectionProperties] = (),
     story_name: str = "main",
 ) -> Document:
@@ -901,9 +933,14 @@ def parse_main_story(
             if footnote_reference_at is not None
             else None
         )
-        if footnote_reference is not None:
+        note_reference: FootnoteReference | EndnoteReference | None = (
+            footnote_reference
+        )
+        if note_reference is None and endnote_reference_at is not None:
+            note_reference = endnote_reference_at(cp_offset)
+        if note_reference is not None:
             flush_text()
-            current_inlines().append(footnote_reference)
+            current_inlines().append(note_reference)
             last_was_terminator = False
             continue
 

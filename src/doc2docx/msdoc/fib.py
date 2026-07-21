@@ -23,6 +23,8 @@ FCLCB97_PLCF_FLD_HDR_INDEX = 17
 FCLCB97_DOP_INDEX = 31
 FCLCB97_CLX_INDEX = 33
 FCLCB97_PLC_SPA_HDR_INDEX = 41
+FCLCB97_PLCF_END_REF_INDEX = 46
+FCLCB97_PLCF_END_TXT_INDEX = 47
 FCLCB97_DGG_INFO_INDEX = 50
 FCLCB97_PLCF_HDR_TXBX_TXT_INDEX = 58
 FCLCB97_PLCF_FLD_HDR_TXBX_INDEX = 59
@@ -105,6 +107,15 @@ class FileInformationBlock:
     @property
     def ccp_headers(self) -> int:
         return self.fib_rg_lw[5] if len(self.fib_rg_lw) > 5 else 0
+
+    @property
+    def ccp_endnotes(self) -> int:
+        return self.fib_rg_lw[8] if len(self.fib_rg_lw) > 8 else 0
+
+    @property
+    def endnote_story_cp_start(self) -> int:
+        # Main, footnote, header, macro and comment documents precede endnotes.
+        return sum(self.fib_rg_lw[3:8])
 
     @property
     def header_story_cp_start(self) -> int:
@@ -201,6 +212,18 @@ class FileInformationBlock:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_DGG_INFO_INDEX:
             return FcLcb(0, 0)
         return self.fib_rg_fc_lcb[FCLCB97_DGG_INFO_INDEX]
+
+    @property
+    def plcf_end_ref(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_END_REF_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_END_REF_INDEX]
+
+    @property
+    def plcf_end_txt(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_END_TXT_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_END_TXT_INDEX]
 
     @property
     def plcf_hdr_txbx_txt(self) -> FcLcb:

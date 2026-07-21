@@ -1,4 +1,4 @@
-"""Footnote reference and story extraction from PlcffndRef/PlcffndTxt."""
+"""Endnote reference and story extraction from PlcfendRef/PlcfendTxt."""
 
 from __future__ import annotations
 
@@ -9,35 +9,36 @@ from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
 from ..model import (
     CharacterProperties,
-    Footnote,
-    FootnoteReference,
+    Endnote,
+    EndnoteReference,
     ParagraphProperties,
     parse_main_story,
 )
-from .pieces import PieceTable
 from .notes import read_note_references, read_note_text_ranges
+from .pieces import PieceTable
 
 
 @dataclass(slots=True, frozen=True)
-class FootnoteCollection:
-    footnotes: tuple[Footnote, ...] = ()
-    references_by_cp: dict[int, FootnoteReference] | None = None
+class EndnoteCollection:
+    endnotes: tuple[Endnote, ...] = ()
+    references_by_cp: dict[int, EndnoteReference] | None = None
     custom_mark_count: int = 0
 
     @property
     def reference_count(self) -> int:
         return len(self.references_by_cp or {})
 
-    def reference_at(self, cp: int) -> FootnoteReference | None:
+    def reference_at(self, cp: int) -> EndnoteReference | None:
         return (self.references_by_cp or {}).get(cp)
 
 
-def read_footnotes(
+def read_endnotes(
     table_stream: bytes,
     piece_table: PieceTable,
     *,
     ccp_text: int,
-    ccp_footnotes: int,
+    ccp_endnotes: int,
+    endnote_story_cp_start: int,
     reference_offset: int,
     reference_size: int,
     text_offset: int,
@@ -45,21 +46,20 @@ def read_footnotes(
     report: ConversionReport,
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
-) -> FootnoteCollection:
-    """Parse footnote bodies and map their main-story reference CPs."""
+) -> EndnoteCollection:
+    """Parse endnote bodies and map their main-story reference CPs."""
 
-    if ccp_footnotes == 0 and reference_size == 0 and text_size == 0:
-        return FootnoteCollection()
-    if ccp_footnotes == 0 or reference_size == 0 or text_size == 0:
+    if ccp_endnotes == 0 and reference_size == 0 and text_size == 0:
+        return EndnoteCollection()
+    if ccp_endnotes == 0 or reference_size == 0 or text_size == 0:
         raise InvalidWordDocument(
-            "footnote document, PlcffndRef, and PlcffndTxt must all exist together"
+            "endnote document, PlcfendRef, and PlcfendTxt must all exist together"
         )
-    footnote_cp_start = ccp_text
-    footnote_cp_end = footnote_cp_start + ccp_footnotes
-    if footnote_cp_end > piece_table.cp_end:
+    endnote_story_cp_end = endnote_story_cp_start + ccp_endnotes
+    if endnote_story_cp_end > piece_table.cp_end:
         raise InvalidWordDocument(
-            f"footnote story range [{footnote_cp_start}, {footnote_cp_end}) "
-            f"exceeds Piece Table CP {piece_table.cp_end}"
+            f"endnote story range [{endnote_story_cp_start}, "
+            f"{endnote_story_cp_end}) exceeds Piece Table CP {piece_table.cp_end}"
         )
 
     references = read_note_references(
@@ -67,25 +67,28 @@ def read_footnotes(
         offset=reference_offset,
         size=reference_size,
         ccp_text=ccp_text,
-        label="PlcffndRef",
+        label="PlcfendRef",
     )
     text_ranges = read_note_text_ranges(
         table_stream,
         offset=text_offset,
         size=text_size,
-        story_length=ccp_footnotes,
-        story_length_name="ccpFtn",
-        label="PlcffndTxt",
-        story_kind="footnote",
+        story_length=ccp_endnotes,
+        story_length_name="ccpEdn",
+        label="PlcfendTxt",
+        story_kind="endnote",
     )
     if len(references) != len(text_ranges):
         raise InvalidWordDocument(
-            "PlcffndRef reference count does not match PlcffndTxt footnote count"
+            "PlcfendRef reference count does not match PlcfendTxt endnote count"
         )
 
-    reference_map: dict[int, FootnoteReference] = {}
+    reference_map: dict[int, EndnoteReference] = {}
     custom_mark_count = 0
-    for footnote_id, (reference_cp, numbering_index) in enumerate(references, start=1):
+    for endnote_id, (reference_cp, numbering_index) in enumerate(
+        references,
+        start=1,
+    ):
         properties = (
             character_properties_at(reference_cp)
             if character_properties_at is not None
@@ -96,36 +99,36 @@ def read_footnotes(
                 reference_cp,
                 reference_cp + 1,
                 report,
-                story="main-footnote-reference",
+                story="main-endnote-reference",
             )
             if len(units) != 1 or units[0].text != "\x02":
                 raise InvalidWordDocument(
-                    f"automatic footnote reference at CP {reference_cp} is not 0x02"
+                    f"automatic endnote reference at CP {reference_cp} is not 0x02"
                 )
             if properties.special is not True:
                 raise InvalidWordDocument(
-                    f"automatic footnote reference at CP {reference_cp} has no sprmCFSpec"
+                    f"automatic endnote reference at CP {reference_cp} has no sprmCFSpec"
                 )
         else:
             custom_mark_count += 1
-        reference_map[reference_cp] = FootnoteReference(footnote_id, properties)
+        reference_map[reference_cp] = EndnoteReference(endnote_id, properties)
 
     if custom_mark_count:
         report.warning(
-            "CUSTOM_FOOTNOTE_MARK_APPROXIMATED",
-            "custom footnote symbols were converted to automatic numbering",
+            "CUSTOM_ENDNOTE_MARK_APPROXIMATED",
+            "custom endnote symbols were converted to automatic numbering",
             location=SourceLocation(story="main"),
             reference_count=custom_mark_count,
         )
 
-    footnotes: list[Footnote] = []
-    for footnote_id, (relative_start, relative_end) in enumerate(
+    endnotes: list[Endnote] = []
+    for endnote_id, (relative_start, relative_end) in enumerate(
         text_ranges,
         start=1,
     ):
-        cp_start = footnote_cp_start + relative_start
-        cp_end = footnote_cp_start + relative_end
-        story_name = f"footnote-{footnote_id}"
+        cp_start = endnote_story_cp_start + relative_start
+        cp_end = endnote_story_cp_start + relative_end
+        story_name = f"endnote-{endnote_id}"
         units = piece_table.extract_characters(
             cp_start,
             cp_end,
@@ -134,11 +137,8 @@ def read_footnotes(
         )
         if not units or units[-1].text != "\r" or units[-1].cp_end != cp_end:
             raise InvalidWordDocument(
-                f"PlcffndTxt footnote {footnote_id} does not end in a paragraph mark"
+                f"PlcfendTxt endnote {endnote_id} does not end in a paragraph mark"
             )
-        # Word stores the automatically generated local reference mark as a
-        # leading U+0002 in the footnote range. OOXML represents the same mark
-        # structurally as w:footnoteRef, which the package writer adds.
         if units[0].text == "\x02":
             units = units[1:]
         parsed = parse_main_story(
@@ -148,16 +148,16 @@ def read_footnotes(
             paragraph_properties_at=paragraph_properties_at,
             story_name=story_name,
         )
-        footnotes.append(
-            Footnote(
-                footnote_id=footnote_id,
+        endnotes.append(
+            Endnote(
+                endnote_id=endnote_id,
                 paragraphs=parsed.paragraphs,
                 blocks=parsed.blocks,
             )
         )
 
-    return FootnoteCollection(
-        footnotes=tuple(footnotes),
+    return EndnoteCollection(
+        endnotes=tuple(endnotes),
         references_by_cp=reference_map,
         custom_mark_count=custom_mark_count,
     )

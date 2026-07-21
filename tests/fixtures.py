@@ -69,11 +69,14 @@ def _build_fib(
     ccp_text: int,
     clx_size: int,
     ccp_footnotes: int = 0,
+    ccp_endnotes: int = 0,
     ccp_headers: int = 0,
     ccp_header_textboxes: int = 0,
     section_plc: tuple[int, int] = (0, 0),
     footnote_ref_plc: tuple[int, int] = (0, 0),
     footnote_text_plc: tuple[int, int] = (0, 0),
+    endnote_ref_plc: tuple[int, int] = (0, 0),
+    endnote_text_plc: tuple[int, int] = (0, 0),
     header_plc: tuple[int, int] = (0, 0),
     header_shape_plc: tuple[int, int] = (0, 0),
     dgg_info: tuple[int, int] = (0, 0),
@@ -109,6 +112,7 @@ def _build_fib(
     fib_rg_lw[3] = ccp_text
     fib_rg_lw[4] = ccp_footnotes
     fib_rg_lw[5] = ccp_headers
+    fib_rg_lw[8] = ccp_endnotes
     fib_rg_lw[10] = ccp_header_textboxes
     struct.pack_into("<22I", fib, position, *fib_rg_lw)
     position += 22 * 4
@@ -124,6 +128,8 @@ def _build_fib(
     pairs[31] = dop
     pairs[33] = (0, clx_size)
     pairs[41] = header_shape_plc
+    pairs[46] = endnote_ref_plc
+    pairs[47] = endnote_text_plc
     pairs[50] = dgg_info
     pairs[58] = header_textbox_plc
     pairs[59] = header_textbox_field_plc
@@ -818,6 +824,93 @@ def build_footnote_word_cfb(
     table_stream[
         footnote_text_offset : footnote_text_offset + len(footnote_text)
     ] = footnote_text
+    table_stream[chpx_plc_offset : chpx_plc_offset + len(chpx_plc)] = chpx_plc
+    return _wrap_regular_word_streams(word_document, table_stream)
+
+
+def build_endnote_word_cfb(
+    *,
+    missing_special: bool = False,
+    malformed_reference_character: bool = False,
+    malformed_text_end: bool = False,
+    custom_mark: bool = False,
+) -> bytes:
+    """A one-endnote DOC with strict PlcfendRef/PlcfendTxt structures."""
+
+    reference_character = b"*" if custom_mark else b"\x02"
+    if malformed_reference_character:
+        reference_character = b"!"
+    main_text = b"Body" + reference_character + b" text\r"
+    reference_cp = 4
+    endnote_content = b"\x02Endnote text\r"
+    if malformed_text_end:
+        endnote_content = b"\x02Endnote textX"
+    endnote_document = endnote_content + b"\r"
+    all_text = main_text + endnote_document + b"\r"
+
+    text_fc = 1024
+    text_fc_end = text_fc + len(all_text)
+    compressed_fc = (text_fc * 2) | 0x40000000
+    plc_pcd = struct.pack("<2I", 0, len(all_text))
+    plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
+    clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
+
+    endnote_ref_offset = 128
+    endnote_text_offset = 160
+    chpx_plc_offset = 192
+    endnote_ref = struct.pack(
+        "<2IH",
+        reference_cp,
+        len(main_text),
+        0 if custom_mark else 1,
+    )
+    endnote_text = struct.pack(
+        "<3I",
+        0,
+        len(endnote_document) - 1,
+        len(endnote_document),
+    )
+    chpx_plc = struct.pack("<3I", text_fc, text_fc_end, 4)
+
+    chpx_fkp = bytearray(SECTOR_SIZE)
+    endnote_marker_cp = len(main_text)
+    boundaries = (
+        text_fc,
+        text_fc + reference_cp,
+        text_fc + reference_cp + 1,
+        text_fc + endnote_marker_cp,
+        text_fc + endnote_marker_cp + 1,
+        text_fc_end,
+    )
+    struct.pack_into("<6I", chpx_fkp, 0, *boundaries)
+    if not missing_special and not custom_mark:
+        chpx_fkp[24:29] = bytes((0, 32, 0, 32, 0))
+        special_grpprl = struct.pack("<HB", 0x0855, 1)
+        chpx_fkp[64] = len(special_grpprl)
+        chpx_fkp[65 : 65 + len(special_grpprl)] = special_grpprl
+    chpx_fkp[-1] = 5
+
+    word_document = bytearray(4096)
+    word_document[:1024] = _build_fib(
+        ccp_text=len(main_text),
+        ccp_endnotes=len(endnote_document),
+        clx_size=len(clx),
+        endnote_ref_plc=(endnote_ref_offset, len(endnote_ref)),
+        endnote_text_plc=(endnote_text_offset, len(endnote_text)),
+        chpx_plc=(chpx_plc_offset, len(chpx_plc)),
+        cb_mac=5 * SECTOR_SIZE,
+    )
+    word_document[text_fc:text_fc_end] = all_text
+    word_document[4 * SECTOR_SIZE : 5 * SECTOR_SIZE] = chpx_fkp
+
+    table_stream = bytearray(4096)
+    table_stream[: len(clx)] = clx
+    table_stream[
+        endnote_ref_offset : endnote_ref_offset + len(endnote_ref)
+    ] = endnote_ref
+    table_stream[
+        endnote_text_offset : endnote_text_offset + len(endnote_text)
+    ] = endnote_text
     table_stream[chpx_plc_offset : chpx_plc_offset + len(chpx_plc)] = chpx_plc
     return _wrap_regular_word_streams(word_document, table_stream)
 

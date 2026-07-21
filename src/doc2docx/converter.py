@@ -21,6 +21,7 @@ from .model import Document, Paragraph, Symbol, Table, parse_main_story
 from .msdoc import (
     FileInformationBlock,
     read_document_settings,
+    read_endnotes,
     read_font_table,
     read_formatting,
     read_footnotes,
@@ -166,6 +167,22 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
     )
+    endnote_reference_table = fib.plcf_end_ref
+    endnote_text_table = fib.plcf_end_txt
+    endnotes = read_endnotes(
+        table_stream,
+        piece_table,
+        ccp_text=fib.ccp_text,
+        ccp_endnotes=fib.ccp_endnotes,
+        endnote_story_cp_start=fib.endnote_story_cp_start,
+        reference_offset=endnote_reference_table.fc,
+        reference_size=endnote_reference_table.lcb,
+        text_offset=endnote_text_table.fc,
+        text_size=endnote_text_table.lcb,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+        paragraph_properties_at=formatting.paragraph_properties_at,
+    )
     spa_headers = fib.plc_spa_hdr
     dgg_info = fib.dgg_info
     officeart_shapes = read_officeart_shapes(
@@ -223,6 +240,7 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         footnote_reference_at=footnotes.reference_at,
+        endnote_reference_at=endnotes.reference_at,
         sections=sections,
     )
     document = Document(
@@ -232,6 +250,7 @@ def convert(
         blocks=parsed_document.blocks,
         sections=sections,
         footnotes=footnotes.footnotes,
+        endnotes=endnotes.endnotes,
         even_and_odd_headers=document_settings.even_and_odd_headers,
         adjust_line_height_in_table=(
             document_settings.adjust_line_height_in_table
@@ -301,6 +320,9 @@ def convert(
             "footnote_count": len(footnotes.footnotes),
             "footnote_reference_count": footnotes.reference_count,
             "custom_footnote_mark_count": footnotes.custom_mark_count,
+            "endnote_count": len(endnotes.endnotes),
+            "endnote_reference_count": endnotes.reference_count,
+            "custom_endnote_mark_count": endnotes.custom_mark_count,
             "symbol_character_count": sum(
                 isinstance(inline, Symbol)
                 for paragraph in document.paragraphs
@@ -324,12 +346,13 @@ def convert(
         )
     secondary_stories = fib.secondary_story_character_counts
     secondary_stories.pop("footnotes", None)
+    secondary_stories.pop("endnotes", None)
     secondary_stories.pop("headers", None)
     secondary_stories.pop("header_textboxes", None)
     if secondary_stories:
         report.warning(
             "SECONDARY_STORIES_DEFERRED",
-            "some secondary document stories remain unsupported after M7a",
+            "some secondary document stories remain unsupported after M7b",
             stories=secondary_stories,
         )
 
@@ -360,7 +383,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M7a conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M7b conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -404,6 +427,7 @@ def inspect_doc(
             "table_stream": fib.base.table_stream_name,
             "ccpText": fib.ccp_text,
             "ccpFtn": fib.ccp_footnotes,
+            "ccpEdn": fib.ccp_endnotes,
             "ccpHdd": fib.ccp_headers,
             "ccpHdrTxbx": fib.ccp_header_textboxes,
             "fcClx": fib.clx.fc,
@@ -412,6 +436,10 @@ def inspect_doc(
             "lcbPlcffndRef": fib.plcf_fnd_ref.lcb,
             "fcPlcffndTxt": fib.plcf_fnd_txt.fc,
             "lcbPlcffndTxt": fib.plcf_fnd_txt.lcb,
+            "fcPlcfendRef": fib.plcf_end_ref.fc,
+            "lcbPlcfendRef": fib.plcf_end_ref.lcb,
+            "fcPlcfendTxt": fib.plcf_end_txt.fc,
+            "lcbPlcfendTxt": fib.plcf_end_txt.lcb,
             "fcPlcfBteChpx": fib.plcf_bte_chpx.fc,
             "lcbPlcfBteChpx": fib.plcf_bte_chpx.lcb,
             "fcPlcfBtePapx": fib.plcf_bte_papx.fc,

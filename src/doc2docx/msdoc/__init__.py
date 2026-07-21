@@ -1,4 +1,5 @@
 from .document_properties import WordDocumentSettings, read_document_settings
+from .endnotes import EndnoteCollection, read_endnotes
 from .fib import FileInformationBlock
 from .fonts import read_font_table
 from .formatting import FormattingMap, read_formatting
@@ -12,6 +13,7 @@ from .styles import read_style_sheet
 
 __all__ = [
     "FileInformationBlock",
+    "EndnoteCollection",
     "FormattingMap",
     "FootnoteCollection",
     "HeaderFooterCollection",
@@ -21,6 +23,7 @@ __all__ = [
     "PieceTable",
     "WordDocumentSettings",
     "read_document_settings",
+    "read_endnotes",
     "read_font_table",
     "read_formatting",
     "read_footnotes",

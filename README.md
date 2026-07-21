@@ -4,7 +4,7 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M7a implementation supports unencrypted CFB/OLE Word documents,
+The current M0–M7b implementation supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
 UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
 preserves a useful first set of direct character and paragraph properties. It
@@ -38,11 +38,11 @@ are also carried into the DOCX package. Paragraph-mark formatting, spacing in
 hundredths of a line, and `sprmCSymbol` characters are preserved as native
 WordprocessingML run and symbol elements. Paragraph borders, outline levels, and
 custom tab additions/deletions are retained as native paragraph properties.
-Automatic footnotes are resolved through `PlcffndRef` and `PlcffndTxt`, linked
-to their main-story reference CPs, and emitted as native `footnotes.xml`
-content with package relationships and automatic reference marks. Malformed
-PLC layouts, invalid automatic reference characters, and missing `sprmCFSpec`
-formatting are rejected instead of being guessed.
+Automatic footnotes and endnotes are resolved through their reference/text
+PLCs, linked to main-story reference CPs, and emitted as native
+`footnotes.xml`/`endnotes.xml` content with package relationships and automatic
+reference marks. Malformed PLC layouts, invalid automatic reference characters,
+and missing `sprmCFSpec` formatting are rejected instead of being guessed.
 
 ## Usage
 
@@ -64,7 +64,7 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-M7a currently preserves bold, italic, strike, double strike, capitalization,
+M7b currently preserves bold, italic, strike, double strike, capitalization,
 hidden text, underline, text color, highlight, font size, vertical alignment,
 paragraph justification, indents, spacing, line spacing, and keep/page-break
 flags, font names, paragraph/character style references, style inheritance,
@@ -75,8 +75,9 @@ properties and preserves East Asian document-grid pagination controls. Paragraph
 borders, outline levels, and custom tab stops are preserved. Basic unconditional
 table styles are emitted as `w:style` definitions and selected by `w:tblStyle`;
 conditional cell/band/corner variants remain deferred.
-Custom footnote symbols currently fall back to automatic numbering with an
-explicit diagnostic. Conditional table styles, newer color-based table shading, cell spacing,
+Custom footnote and endnote symbols currently fall back to automatic numbering
+with an explicit diagnostic. Conditional table styles, newer color-based table
+shading, cell spacing,
 numbering styles, multi-column layout, page-number settings, header/footer
 non-textbox shapes and advanced OfficeArt effects, main-story textboxes, other
 secondary stories, images, fields beyond the supported page-number family,
@@ -100,8 +101,8 @@ parsing, nested table reconstruction, grids, cell margins and shading, PlcfSed a
 Sepx page-layout parsing, multi-section break placement, PlcfHdd guard and story
 mapping, header textbox/shape/field PLC validation, live PAGE-field output,
 basic OfficeArt record/property validation and VML shape styling, header/footer
-OPC relationships, automatic footnote PLC validation and package output, East
-Asian document grids and paragraph controls, script-specific language/font
+OPC relationships, automatic footnote/endnote PLC validation and package
+output, East Asian document grids and paragraph controls, script-specific language/font
 properties, malformed input checks, CLI
 coverage, symbol characters, paragraph-mark formatting, paragraph borders and
 outline levels, custom tab stops, unconditional table-style inheritance, modern

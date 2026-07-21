@@ -13,6 +13,7 @@ from doc2docx.errors import (
 )
 
 from .fixtures import (
+    build_endnote_word_cfb,
     build_formatted_word_cfb,
     build_footnote_word_cfb,
     build_header_footer_word_cfb,
@@ -31,6 +32,81 @@ V = "{urn:schemas-microsoft-com:vml}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_automatic_endnote_is_linked_and_packaged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "endnote.doc"
+            destination = temporary / "endnote.docx"
+            source.write_bytes(build_endnote_word_cfb())
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.warnings, [])
+            self.assertEqual(result.report.statistics["endnote_count"], 1)
+            self.assertEqual(result.report.statistics["endnote_reference_count"], 1)
+            inspected = inspect_doc(source)
+            self.assertGreater(inspected["fib"]["ccpEdn"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcfendRef"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcfendTxt"], 0)
+
+            with zipfile.ZipFile(destination) as package:
+                names = set(package.namelist())
+                self.assertIn("word/endnotes.xml", names)
+                document_root = ET.fromstring(package.read("word/document.xml"))
+                endnotes_root = ET.fromstring(package.read("word/endnotes.xml"))
+                relationships_root = ET.fromstring(
+                    package.read("word/_rels/document.xml.rels")
+                )
+                content_types = package.read("[Content_Types].xml").decode()
+
+            reference = document_root.find(f".//{W}endnoteReference")
+            assert reference is not None
+            self.assertEqual(reference.get(f"{W}id"), "1")
+            endnotes = {
+                value.get(f"{W}id"): value
+                for value in endnotes_root.findall(f"{W}endnote")
+            }
+            self.assertEqual(set(endnotes), {"-1", "0", "1"})
+            self.assertEqual("".join(endnotes["1"].itertext()), "Endnote text")
+            self.assertIsNotNone(endnotes["1"].find(f".//{W}endnoteRef"))
+            relationship = next(
+                value
+                for value in relationships_root.findall(f"{REL}Relationship")
+                if value.get("Target") == "endnotes.xml"
+            )
+            self.assertTrue(relationship.get("Type", "").endswith("/endnotes"))
+            self.assertIn("/word/endnotes.xml", content_types)
+
+    def test_malformed_automatic_endnotes_are_rejected(self) -> None:
+        fixtures = (
+            build_endnote_word_cfb(missing_special=True),
+            build_endnote_word_cfb(malformed_reference_character=True),
+            build_endnote_word_cfb(malformed_text_end=True),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for index, payload in enumerate(fixtures):
+                with self.subTest(index=index):
+                    source = Path(directory) / f"bad-endnote-{index}.doc"
+                    source.write_bytes(payload)
+                    with self.assertRaises(InvalidWordDocument):
+                        convert(source)
+
+    def test_custom_endnote_mark_is_explicitly_approximated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "custom-endnote.doc"
+            source.write_bytes(build_endnote_word_cfb(custom_mark=True))
+
+            result = convert(source)
+
+            self.assertEqual(
+                [warning.code for warning in result.report.warnings],
+                ["CUSTOM_ENDNOTE_MARK_APPROXIMATED"],
+            )
+            self.assertEqual(
+                result.report.statistics["custom_endnote_mark_count"],
+                1,
+            )
+
     def test_automatic_footnote_is_linked_and_packaged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)

@@ -1,14 +1,66 @@
 import struct
+from pathlib import Path
+import tempfile
 import unittest
+import zipfile
+from xml.etree import ElementTree as ET
 
 from doc2docx.diagnostics import ConversionReport
 from doc2docx.errors import InvalidWordDocument
-from doc2docx.model import CharacterProperties
+from doc2docx.model import (
+    CharacterProperties,
+    Document,
+    Endnote,
+    EndnoteReference,
+    Footnote,
+    FootnoteReference,
+    Paragraph,
+    TextRun,
+)
 from doc2docx.msdoc.footnotes import read_footnotes
 from doc2docx.msdoc.pieces import Piece, PieceTable
+from doc2docx.ooxml import write_docx
+
+
+REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
 
 class FootnoteParsingTests(unittest.TestCase):
+    def test_footnote_and_endnote_relationship_ids_do_not_collide(self) -> None:
+        document = Document(
+            paragraphs=(
+                Paragraph((FootnoteReference(1), EndnoteReference(1))),
+            ),
+            footnotes=(
+                Footnote(1, (Paragraph((TextRun("Footnote"),)),)),
+            ),
+            endnotes=(
+                Endnote(1, (Paragraph((TextRun("Endnote"),)),)),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "both-notes.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                relationships = ET.fromstring(
+                    package.read("word/_rels/document.xml.rels")
+                )
+                names = set(package.namelist())
+
+        note_relationships = [
+            value
+            for value in relationships.findall(f"{REL}Relationship")
+            if value.get("Target") in {"footnotes.xml", "endnotes.xml"}
+        ]
+        self.assertEqual(
+            {value.get("Target") for value in note_relationships},
+            {"footnotes.xml", "endnotes.xml"},
+        )
+        self.assertEqual(len({value.get("Id") for value in note_relationships}), 2)
+        self.assertTrue(
+            {"word/footnotes.xml", "word/endnotes.xml"}.issubset(names)
+        )
+
     @staticmethod
     def _piece_table() -> PieceTable:
         data = b"\x02\rA\r\r\r"
