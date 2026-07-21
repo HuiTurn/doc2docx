@@ -489,6 +489,20 @@ class SoftHyphen:
 
 
 @dataclass(slots=True, frozen=True)
+class SeparatorMark:
+    """A short note-separator line stored as a special U+0003 character."""
+
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+
+
+@dataclass(slots=True, frozen=True)
+class ContinuationSeparatorMark:
+    """A full-width note-separator line stored as a special U+0004 character."""
+
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+
+
+@dataclass(slots=True, frozen=True)
 class Break:
     kind: BreakType
     properties: CharacterProperties = field(default_factory=CharacterProperties)
@@ -662,6 +676,8 @@ Inline = (
     | Tab
     | NoBreakHyphen
     | SoftHyphen
+    | SeparatorMark
+    | ContinuationSeparatorMark
     | Break
     | Field
     | BookmarkStart
@@ -816,6 +832,20 @@ class HeaderFooterStory:
 
 
 @dataclass(slots=True, frozen=True)
+class NoteSeparatorStory:
+    """One footnote/endnote separator or continuation-notice story."""
+
+    cp_start: int
+    cp_end: int
+    paragraphs: tuple[Paragraph, ...]
+    blocks: tuple[Block, ...] = ()
+
+    @property
+    def body_blocks(self) -> tuple[Block, ...]:
+        return self.blocks or self.paragraphs
+
+
+@dataclass(slots=True, frozen=True)
 class CoreProperties:
     """Document metadata carried by OLE SummaryInformation/docProps/core.xml."""
 
@@ -851,6 +881,12 @@ class Document:
     sections: tuple[SectionProperties, ...] = ()
     footnotes: tuple[Footnote, ...] = ()
     endnotes: tuple[Endnote, ...] = ()
+    footnote_separator: NoteSeparatorStory | None = None
+    footnote_continuation_separator: NoteSeparatorStory | None = None
+    footnote_continuation_notice: NoteSeparatorStory | None = None
+    endnote_separator: NoteSeparatorStory | None = None
+    endnote_continuation_separator: NoteSeparatorStory | None = None
+    endnote_continuation_notice: NoteSeparatorStory | None = None
     comments: tuple[Comment, ...] = ()
     core_properties: CoreProperties = field(default_factory=CoreProperties)
     numbering: NumberingDefinitions = field(default_factory=NumberingDefinitions)
@@ -1156,6 +1192,7 @@ def parse_main_story(
     ) = None,
     sections: Sequence[SectionProperties] = (),
     story_name: str = "main",
+    note_separator_story: bool = False,
 ) -> Document:
     if isinstance(text, str):
         characters = tuple(
@@ -1606,6 +1643,18 @@ def parse_main_story(
         elif value == 0x1F:
             flush_text()
             inlines.append(SoftHyphen(character_properties))
+            last_was_terminator = False
+        elif (
+            note_separator_story
+            and character_properties.special is True
+            and value in (0x03, 0x04)
+        ):
+            flush_text()
+            inlines.append(
+                SeparatorMark(character_properties)
+                if value == 0x03
+                else ContinuationSeparatorMark(character_properties)
+            )
             last_was_terminator = False
         elif character in ("\n", "\v"):
             flush_text()

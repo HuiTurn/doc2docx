@@ -5,6 +5,20 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+### M16a
+
+- Preserve all six `PlcfHdd` footnote/endnote separator, continuation
+  separator, and continuation-notice stories instead of discarding them.
+- Map special MS-DOC U+0003/U+0004 line characters to native
+  `w:separator`/`w:continuationSeparator` run content while retaining custom
+  text, paragraph formatting, and story structure in the note parts.
+- Create footnote or endnote package parts when custom separator stories exist
+  even if the document has no note references, and expose the preserved story
+  count in conversion statistics.
+- Validate with 162 focused tests and a real Word 97 Unicode header/footer
+  sample containing four default separator stories; both note parts reopen and
+  the two-page document renders without layout or Unicode regressions.
+
 ## 0.31.0 - 2026-07-22 (M15a-M15c)
 
 ### M15c

@@ -20,12 +20,14 @@ from ..model import (
     CommentRangeStart,
     CoreProperties,
     CommentReference,
+    ContinuationSeparatorMark,
     Document,
     Endnote,
     EndnoteReference,
     Field,
     FloatingPicture,
     FloatingTextBox,
+    Footnote,
     FootnoteReference,
     FontDefinition,
     HeaderFooterStory,
@@ -33,9 +35,11 @@ from ..model import (
     NumberingDefinitions,
     NumberingLevel,
     NoBreakHyphen,
+    NoteSeparatorStory,
     Paragraph,
     ParagraphProperties,
     SectionProperties,
+    SeparatorMark,
     ShadingProperties,
     SoftHyphen,
     StyleSheet,
@@ -185,6 +189,22 @@ def _pictures_in_blocks(
                 pictures.extend(_pictures_in_blocks(cell.body_blocks))
     # One relationship per target is sufficient even when a drawing is reused.
     return tuple({picture.picture_id: picture for picture in pictures}.values())
+
+
+def _pictures_in_note_part(
+    values: tuple[Footnote, ...] | tuple[Endnote, ...],
+    separator_stories: tuple[NoteSeparatorStory | None, ...],
+) -> tuple[InlinePicture | FloatingPicture, ...]:
+    pictures: dict[int, InlinePicture | FloatingPicture] = {}
+    for value in values:
+        for picture in _pictures_in_blocks(value.body_blocks):
+            pictures[picture.picture_id] = picture
+    for story in separator_stories:
+        if story is None:
+            continue
+        for picture in _pictures_in_blocks(story.body_blocks):
+            pictures[picture.picture_id] = picture
+    return tuple(pictures.values())
 
 
 def _qn(namespace: str, local_name: str) -> str:
@@ -1384,6 +1404,8 @@ def _append_inline(
         | Tab
         | NoBreakHyphen
         | SoftHyphen
+        | SeparatorMark
+        | ContinuationSeparatorMark
         | Break
         | Field
         | BookmarkStart
@@ -1448,6 +1470,22 @@ def _append_inline(
                 "noBreakHyphen"
                 if isinstance(inline, NoBreakHyphen)
                 else "softHyphen",
+            ),
+        )
+    elif isinstance(inline, (SeparatorMark, ContinuationSeparatorMark)):
+        run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+        _append_run_properties(
+            run,
+            inline.properties,
+            valid_style_ids=valid_character_style_ids,
+        )
+        ET.SubElement(
+            run,
+            _qn(
+                W_NS,
+                "separator"
+                if isinstance(inline, SeparatorMark)
+                else "continuationSeparator",
             ),
         )
     elif isinstance(inline, Break):
@@ -2209,6 +2247,9 @@ def _notes_xml(
     note_name: str,
     id_attribute: str,
     marker_name: str,
+    separator_stories: tuple[
+        tuple[int, str, str | None, NoteSeparatorStory | None], ...
+    ],
 ) -> bytes:
     valid_paragraph_style_ids = {
         style.index
@@ -2226,10 +2267,9 @@ def _notes_xml(
         if style is not None and style.kind == "table"
     }
     root = ET.Element(_qn(W_NS, root_name))
-    for note_id, note_type, separator_name in (
-        (-1, "separator", "separator"),
-        (0, "continuationSeparator", "continuationSeparator"),
-    ):
+    for note_id, note_type, default_mark_name, story in separator_stories:
+        if story is None and default_mark_name is None:
+            continue
         footnote = ET.SubElement(
             root,
             _qn(W_NS, note_name),
@@ -2238,9 +2278,30 @@ def _notes_xml(
                 _qn(W_NS, "type"): note_type,
             },
         )
-        paragraph = ET.SubElement(footnote, _qn(W_NS, "p"))
-        run = ET.SubElement(paragraph, _qn(W_NS, "r"))
-        ET.SubElement(run, _qn(W_NS, separator_name))
+        if story is None:
+            paragraph = ET.SubElement(footnote, _qn(W_NS, "p"))
+            run = ET.SubElement(paragraph, _qn(W_NS, "r"))
+            assert default_mark_name is not None
+            ET.SubElement(run, _qn(W_NS, default_mark_name))
+            continue
+        for block in story.body_blocks:
+            if isinstance(block, Paragraph):
+                _append_paragraph(
+                    footnote,
+                    block,
+                    valid_paragraph_style_ids=valid_paragraph_style_ids,
+                    valid_character_style_ids=valid_character_style_ids,
+                )
+            elif isinstance(block, Table):
+                _append_table(
+                    footnote,
+                    block,
+                    valid_paragraph_style_ids=valid_paragraph_style_ids,
+                    valid_character_style_ids=valid_character_style_ids,
+                    valid_table_style_ids=valid_table_style_ids,
+                )
+        if not story.body_blocks:
+            ET.SubElement(footnote, _qn(W_NS, "p"))
 
     for value in values:
         footnote = ET.SubElement(
@@ -2294,6 +2355,21 @@ def _footnotes_xml(document: Document) -> bytes:
         note_name="footnote",
         id_attribute="footnote_id",
         marker_name="footnoteRef",
+        separator_stories=(
+            (-1, "separator", "separator", document.footnote_separator),
+            (
+                0,
+                "continuationSeparator",
+                "continuationSeparator",
+                document.footnote_continuation_separator,
+            ),
+            (
+                -2,
+                "continuationNotice",
+                None,
+                document.footnote_continuation_notice,
+            ),
+        ),
     )
 
 
@@ -2305,6 +2381,21 @@ def _endnotes_xml(document: Document) -> bytes:
         note_name="endnote",
         id_attribute="endnote_id",
         marker_name="endnoteRef",
+        separator_stories=(
+            (-1, "separator", "separator", document.endnote_separator),
+            (
+                0,
+                "continuationSeparator",
+                "continuationSeparator",
+                document.endnote_continuation_separator,
+            ),
+            (
+                -2,
+                "continuationNotice",
+                None,
+                document.endnote_continuation_notice,
+            ),
+        ),
     )
 
 
@@ -2740,8 +2831,18 @@ def write_docx(document: Document, destination: str | Path) -> None:
         document.even_and_odd_headers
         or document.adjust_line_height_in_table is True
     )
-    has_footnotes = bool(document.footnotes)
-    has_endnotes = bool(document.endnotes)
+    has_footnotes = bool(
+        document.footnotes
+        or document.footnote_separator
+        or document.footnote_continuation_separator
+        or document.footnote_continuation_notice
+    )
+    has_endnotes = bool(
+        document.endnotes
+        or document.endnote_separator
+        or document.endnote_continuation_separator
+        or document.endnote_continuation_notice
+    )
     has_comments = bool(document.comments)
     has_numbering = bool(
         document.numbering.abstracts or document.numbering.instances
@@ -2763,6 +2864,22 @@ def write_docx(document: Document, destination: str | Path) -> None:
         has_numbering=has_numbering,
     )
     main_pictures = _pictures_in_blocks(document.body_blocks)
+    footnote_pictures = _pictures_in_note_part(
+        document.footnotes,
+        (
+            document.footnote_separator,
+            document.footnote_continuation_separator,
+            document.footnote_continuation_notice,
+        ),
+    )
+    endnote_pictures = _pictures_in_note_part(
+        document.endnotes,
+        (
+            document.endnote_separator,
+            document.endnote_continuation_separator,
+            document.endnote_continuation_notice,
+        ),
+    )
     try:
         with zipfile.ZipFile(output, mode="w") as package:
             _write_part(
@@ -2850,12 +2967,24 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     "word/footnotes.xml",
                     _footnotes_xml(document),
                 )
+                if footnote_pictures:
+                    _write_part(
+                        package,
+                        "word/_rels/footnotes.xml.rels",
+                        _image_relationships_xml(footnote_pictures),
+                    )
             if has_endnotes:
                 _write_part(
                     package,
                     "word/endnotes.xml",
                     _endnotes_xml(document),
                 )
+                if endnote_pictures:
+                    _write_part(
+                        package,
+                        "word/_rels/endnotes.xml.rels",
+                        _image_relationships_xml(endnote_pictures),
+                    )
             if has_comments:
                 _write_part(
                     package,

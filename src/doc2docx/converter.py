@@ -549,6 +549,20 @@ def convert(
         sections=sections,
         footnotes=footnotes.footnotes,
         endnotes=endnotes.endnotes,
+        footnote_separator=header_footers.footnote_separator,
+        footnote_continuation_separator=(
+            header_footers.footnote_continuation_separator
+        ),
+        footnote_continuation_notice=(
+            header_footers.footnote_continuation_notice
+        ),
+        endnote_separator=header_footers.endnote_separator,
+        endnote_continuation_separator=(
+            header_footers.endnote_continuation_separator
+        ),
+        endnote_continuation_notice=(
+            header_footers.endnote_continuation_notice
+        ),
         comments=comments.comments,
         core_properties=summary_information,
         numbering=numbering,
@@ -681,6 +695,9 @@ def convert(
             ),
             "header_footer_story_count": header_footers.story_count,
             "header_footer_paragraph_count": header_footers.paragraph_count,
+            "note_separator_story_count": (
+                header_footers.note_separator_story_count
+            ),
             "header_textbox_count": header_textboxes.textbox_count,
             "header_textbox_field_count": header_textboxes.field_count,
             "styled_header_textbox_count": (
@@ -802,7 +819,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M14b conversion completed")
+    report.info("CONVERSION_COMPLETE", "conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

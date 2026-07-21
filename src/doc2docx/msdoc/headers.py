@@ -15,6 +15,7 @@ from ..model import (
     FieldEndProperties,
     HeaderFooterStory,
     InlinePicture,
+    NoteSeparatorStory,
     ParagraphProperties,
     SectionProperties,
     StoryCharacter,
@@ -32,12 +33,34 @@ _STORIES_PER_SECTION = (
     ("first_footer", "first-page footer"),
 )
 
+_NOTE_SEPARATOR_STORIES = (
+    ("footnote_separator", "footnote-separator"),
+    ("footnote_continuation_separator", "footnote-continuation-separator"),
+    ("footnote_continuation_notice", "footnote-continuation-notice"),
+    ("endnote_separator", "endnote-separator"),
+    ("endnote_continuation_separator", "endnote-continuation-separator"),
+    ("endnote_continuation_notice", "endnote-continuation-notice"),
+)
+
 
 @dataclass(slots=True, frozen=True)
 class HeaderFooterCollection:
     sections: tuple[SectionProperties, ...]
     story_count: int = 0
     paragraph_count: int = 0
+    footnote_separator: NoteSeparatorStory | None = None
+    footnote_continuation_separator: NoteSeparatorStory | None = None
+    footnote_continuation_notice: NoteSeparatorStory | None = None
+    endnote_separator: NoteSeparatorStory | None = None
+    endnote_continuation_separator: NoteSeparatorStory | None = None
+    endnote_continuation_notice: NoteSeparatorStory | None = None
+
+    @property
+    def note_separator_story_count(self) -> int:
+        return sum(
+            getattr(self, field_name) is not None
+            for field_name, _story_name in _NOTE_SEPARATOR_STORIES
+        )
 
 
 def _read_story_cps(
@@ -162,16 +185,35 @@ def read_header_footer_stories(
             )
         return units[:-1]
 
-    nonempty_separators = 0
-    for story_index in range(6):
-        if content_units(story_index, f"note-separator-{story_index}") is not None:
-            nonempty_separators += 1
-    if nonempty_separators:
-        report.warning(
-            "NOTE_SEPARATOR_STORIES_DEFERRED",
-            "footnote or endnote separator stories are not yet emitted",
-            location=SourceLocation(story="headers"),
-            story_count=nonempty_separators,
+    separator_replacements: dict[str, NoteSeparatorStory] = {}
+    for story_index, (field_name, story_name) in enumerate(
+        _NOTE_SEPARATOR_STORIES
+    ):
+        units = content_units(story_index, story_name)
+        if units is None:
+            continue
+        parsed = parse_main_story(
+            units,
+            report,
+            character_properties_at=character_properties_at,
+            paragraph_properties_at=paragraph_properties_at,
+            floating_textbox_at=floating_textbox_at,
+            inline_picture_at=inline_picture_at,
+            floating_picture_at=floating_picture_at,
+            field_end_properties_at=field_end_properties_at,
+            bookmark_names=bookmark_names,
+            style_names=style_names,
+            list_names=list_names,
+            story_name=story_name,
+            note_separator_story=True,
+        )
+        content_cp_start = header_story_cp_start + story_cps[story_index]
+        content_cp_end = header_story_cp_start + story_cps[story_index + 1] - 1
+        separator_replacements[field_name] = NoteSeparatorStory(
+            cp_start=content_cp_start,
+            cp_end=content_cp_end,
+            paragraphs=parsed.paragraphs,
+            blocks=parsed.blocks,
         )
 
     parsed_story_count = 0
@@ -220,4 +262,5 @@ def read_header_footer_stories(
         sections=tuple(resolved_sections),
         story_count=parsed_story_count,
         paragraph_count=paragraph_count,
+        **separator_replacements,
     )

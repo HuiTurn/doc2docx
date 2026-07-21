@@ -9,16 +9,24 @@ from xml.etree import ElementTree as ET
 from doc2docx.diagnostics import ConversionReport
 from doc2docx.errors import InvalidWordDocument
 from doc2docx.model import (
+    CharacterProperties,
+    ContinuationSeparatorMark,
     Document,
     FloatingTextBox,
     InlinePicture,
     Paragraph,
     SectionProperties,
+    SeparatorMark,
     ShapeStyle,
     StoryCharacter,
     TextRun,
 )
-from doc2docx.msdoc import read_document_settings, read_header_footer_stories
+from doc2docx.msdoc import (
+    Piece,
+    PieceTable,
+    read_document_settings,
+    read_header_footer_stories,
+)
 from doc2docx.ooxml import write_docx
 
 
@@ -27,6 +35,141 @@ V = "{urn:schemas-microsoft-com:vml}"
 
 
 class HeaderFooterParsingTests(unittest.TestCase):
+    def test_note_separator_stories_are_parsed_and_packaged(self) -> None:
+        story_payloads = (
+            b"\x03\r\r",
+            b"\x04\r\r",
+            b"\x01Footnote continues\r",
+            b"\x03\r\r",
+            b"\x04\r\r",
+            b"Endnote continues\r",
+        ) + (b"",) * 6
+        payload = bytearray()
+        story_cps = [0]
+        for story in story_payloads:
+            payload.extend(story)
+            story_cps.append(len(payload))
+        header_document = bytes(payload) + b"\r"
+        piece_table = PieceTable(
+            (Piece(0, len(header_document), 0, True, 0),),
+            header_document,
+        )
+        table_stream = struct.pack(
+            f"<{len(story_cps) + 1}I",
+            *story_cps,
+            0,
+        )
+        report = ConversionReport("note-separators.doc")
+        picture = InlinePicture(
+            1,
+            0,
+            b"png",
+            "png",
+            "image/png",
+            914400,
+            457200,
+        )
+
+        collection = read_header_footer_stories(
+            table_stream,
+            piece_table,
+            (SectionProperties(0, 1),),
+            offset=0,
+            size=len(table_stream),
+            ccp_headers=len(header_document),
+            header_story_cp_start=0,
+            report=report,
+            character_properties_at=lambda cp: CharacterProperties(
+                special=header_document[cp] in (0x03, 0x04)
+            ),
+            inline_picture_at=lambda cp: picture if cp == story_cps[2] else None,
+        )
+
+        self.assertEqual(report.warnings, [])
+        self.assertEqual(collection.note_separator_story_count, 6)
+        assert collection.footnote_separator is not None
+        assert collection.footnote_continuation_separator is not None
+        assert collection.footnote_continuation_notice is not None
+        self.assertIsInstance(
+            collection.footnote_separator.paragraphs[0].inlines[0],
+            SeparatorMark,
+        )
+        self.assertIsInstance(
+            collection.footnote_continuation_separator.paragraphs[0].inlines[0],
+            ContinuationSeparatorMark,
+        )
+
+        document = Document(
+            (Paragraph((TextRun("Body"),)),),
+            footnote_separator=collection.footnote_separator,
+            footnote_continuation_separator=(
+                collection.footnote_continuation_separator
+            ),
+            footnote_continuation_notice=(
+                collection.footnote_continuation_notice
+            ),
+            endnote_separator=collection.endnote_separator,
+            endnote_continuation_separator=(
+                collection.endnote_continuation_separator
+            ),
+            endnote_continuation_notice=(
+                collection.endnote_continuation_notice
+            ),
+            pictures=(picture,),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "note-separators.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                names = set(package.namelist())
+                footnotes = ET.fromstring(package.read("word/footnotes.xml"))
+                endnotes = ET.fromstring(package.read("word/endnotes.xml"))
+                footnote_relationships = ET.fromstring(
+                    package.read("word/_rels/footnotes.xml.rels")
+                )
+
+        self.assertIn("word/footnotes.xml", names)
+        self.assertIn("word/endnotes.xml", names)
+        self.assertIn("word/_rels/footnotes.xml.rels", names)
+        footnote_types = {
+            value.get(f"{W}type"): value
+            for value in footnotes.findall(f"{W}footnote")
+        }
+        endnote_types = {
+            value.get(f"{W}type"): value
+            for value in endnotes.findall(f"{W}endnote")
+        }
+        self.assertEqual(
+            set(footnote_types),
+            {"separator", "continuationSeparator", "continuationNotice"},
+        )
+        self.assertEqual(
+            set(endnote_types),
+            {"separator", "continuationSeparator", "continuationNotice"},
+        )
+        self.assertIsNotNone(
+            footnote_types["separator"].find(f".//{W}separator")
+        )
+        self.assertIsNotNone(
+            footnote_types["continuationSeparator"].find(
+                f".//{W}continuationSeparator"
+            )
+        )
+        self.assertEqual(
+            "".join(footnote_types["continuationNotice"].itertext()),
+            "Footnote continues",
+        )
+        self.assertTrue(
+            any(
+                relationship.get("Target") == "media/image1.png"
+                for relationship in footnote_relationships
+            )
+        )
+        self.assertEqual(
+            "".join(endnote_types["continuationNotice"].itertext()),
+            "Endnote continues",
+        )
+
     def test_inline_picture_callback_is_used_in_header_story(self) -> None:
         story_cps = (0,) * 8 + (3,) * 5 + (0,)
         table_stream = struct.pack("<14I", *story_cps)
