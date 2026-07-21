@@ -4,6 +4,7 @@ from .fonts import read_font_table
 from .formatting import FormattingMap, read_formatting
 from .headers import HeaderFooterCollection, read_header_footer_stories
 from .header_textboxes import HeaderTextBoxCollection, read_header_textboxes
+from .officeart import OfficeArtShapeCollection, read_officeart_shapes
 from .pieces import Piece, PieceTable, read_piece_table
 from .sections import read_sections
 from .styles import read_style_sheet
@@ -13,6 +14,7 @@ __all__ = [
     "FormattingMap",
     "HeaderFooterCollection",
     "HeaderTextBoxCollection",
+    "OfficeArtShapeCollection",
     "Piece",
     "PieceTable",
     "WordDocumentSettings",
@@ -21,6 +23,7 @@ __all__ = [
     "read_formatting",
     "read_header_footer_stories",
     "read_header_textboxes",
+    "read_officeart_shapes",
     "read_piece_table",
     "read_sections",
     "read_style_sheet",

@@ -624,6 +624,16 @@ def _twips_as_points(value: int) -> str:
     return f"{points:.2f}".rstrip("0").rstrip(".")
 
 
+def _emus_as_points(value: int) -> str:
+    points = value / 12700
+    return f"{points:.4f}".rstrip("0").rstrip(".")
+
+
+def _opacity_as_percentage(value: int) -> str:
+    percentage = value * 100 / 0x10000
+    return f"{percentage:.3f}".rstrip("0").rstrip(".") + "%"
+
+
 def _append_field(
     paragraph_element: ET.Element,
     field: Field,
@@ -713,17 +723,46 @@ def _append_floating_textbox(
     )
     run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
     pict = ET.SubElement(run, _qn(W_NS, "pict"))
+    shape_style = textbox.shape_style
+    shape_attributes = {
+        "id": f"_x0000_s{textbox.shape_id}",
+        "style": style,
+        "stroked": "t" if shape_style and shape_style.line_enabled else "f",
+        "filled": "t" if shape_style and shape_style.fill_enabled else "f",
+        _qn(OFFICE_NS, "allowincell"): "f",
+    }
+    if shape_style is not None and shape_style.fill_enabled:
+        shape_attributes["fillcolor"] = f"#{shape_style.fill_color}"
+    if shape_style is not None and shape_style.line_enabled:
+        shape_attributes["strokecolor"] = f"#{shape_style.line_color}"
+        shape_attributes["strokeweight"] = (
+            f"{_emus_as_points(shape_style.line_width_emu)}pt"
+        )
     shape = ET.SubElement(
         pict,
         _qn(VML_NS, "rect"),
-        {
-            "id": f"_x0000_s{textbox.shape_id}",
-            "style": style,
-            "stroked": "f",
-            "filled": "f",
-            _qn(OFFICE_NS, "allowincell"): "f",
-        },
+        shape_attributes,
     )
+    if (
+        shape_style is not None
+        and shape_style.fill_enabled
+        and shape_style.fill_opacity < 0x10000
+    ):
+        ET.SubElement(
+            shape,
+            _qn(VML_NS, "fill"),
+            {"opacity": _opacity_as_percentage(shape_style.fill_opacity)},
+        )
+    if (
+        shape_style is not None
+        and shape_style.line_enabled
+        and shape_style.line_opacity < 0x10000
+    ):
+        ET.SubElement(
+            shape,
+            _qn(VML_NS, "stroke"),
+            {"opacity": _opacity_as_percentage(shape_style.line_opacity)},
+        )
     ET.SubElement(
         shape,
         _qn(WORD_2003_NS, "wrap"),
@@ -735,10 +774,21 @@ def _append_floating_textbox(
             _qn(OFFICE_NS, "lock"),
             {_qn(VML_NS, "ext"): "edit", "position": "t"},
         )
+    inset = "0,0,0,0"
+    if shape_style is not None:
+        inset = ",".join(
+            f"{_emus_as_points(value)}pt"
+            for value in (
+                shape_style.inset_left_emu,
+                shape_style.inset_top_emu,
+                shape_style.inset_right_emu,
+                shape_style.inset_bottom_emu,
+            )
+        )
     vml_textbox = ET.SubElement(
         shape,
         _qn(VML_NS, "textbox"),
-        {"inset": "0,0,0,0"},
+        {"inset": inset},
     )
     content = ET.SubElement(vml_textbox, _qn(W_NS, "txbxContent"))
     for block in textbox.body_blocks or (Paragraph(()),):

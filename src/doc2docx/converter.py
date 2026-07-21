@@ -25,6 +25,7 @@ from .msdoc import (
     read_formatting,
     read_header_footer_stories,
     read_header_textboxes,
+    read_officeart_shapes,
     read_piece_table,
     read_sections,
     read_style_sheet,
@@ -150,6 +151,12 @@ def convert(
         style_sheet=style_sheet,
     )
     spa_headers = fib.plc_spa_hdr
+    dgg_info = fib.dgg_info
+    officeart_shapes = read_officeart_shapes(
+        table_stream,
+        offset=dgg_info.fc,
+        size=dgg_info.lcb,
+    )
     header_textbox_table = fib.plcf_hdr_txbx_txt
     header_textbox_fields = fib.plcf_fld_hdr_txbx
     header_textbox_breaks = fib.plcf_txbx_hdr_bkd
@@ -171,6 +178,7 @@ def convert(
         report=report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
+        shape_style_at=officeart_shapes.style_at,
     )
     header_table = fib.plcf_hdd
     header_footers = read_header_footer_stories(
@@ -269,6 +277,9 @@ def convert(
             "header_footer_paragraph_count": header_footers.paragraph_count,
             "header_textbox_count": header_textboxes.textbox_count,
             "header_textbox_field_count": header_textboxes.field_count,
+            "styled_header_textbox_count": (
+                header_textboxes.styled_textbox_count
+            ),
             "symbol_character_count": sum(
                 isinstance(inline, Symbol)
                 for paragraph in document.paragraphs
@@ -296,7 +307,7 @@ def convert(
     if secondary_stories:
         report.warning(
             "SECONDARY_STORIES_DEFERRED",
-            "some secondary document stories remain unsupported after M6c",
+            "some secondary document stories remain unsupported after M6d",
             stories=secondary_stories,
         )
 
@@ -327,7 +338,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M6c conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M6d conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -386,6 +397,8 @@ def inspect_doc(
             "lcbPlcfHdd": fib.plcf_hdd.lcb,
             "fcPlcSpaHdr": fib.plc_spa_hdr.fc,
             "lcbPlcSpaHdr": fib.plc_spa_hdr.lcb,
+            "fcDggInfo": fib.dgg_info.fc,
+            "lcbDggInfo": fib.dgg_info.lcb,
             "fcPlcfHdrtxbxTxt": fib.plcf_hdr_txbx_txt.fc,
             "lcbPlcfHdrtxbxTxt": fib.plcf_hdr_txbx_txt.lcb,
             "fcPlcffldHdrTxbx": fib.plcf_fld_hdr_txbx.fc,

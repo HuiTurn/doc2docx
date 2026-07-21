@@ -74,6 +74,7 @@ def _build_fib(
     section_plc: tuple[int, int] = (0, 0),
     header_plc: tuple[int, int] = (0, 0),
     header_shape_plc: tuple[int, int] = (0, 0),
+    dgg_info: tuple[int, int] = (0, 0),
     header_textbox_plc: tuple[int, int] = (0, 0),
     header_textbox_field_plc: tuple[int, int] = (0, 0),
     header_textbox_break_plc: tuple[int, int] = (0, 0),
@@ -119,6 +120,7 @@ def _build_fib(
     pairs[31] = dop
     pairs[33] = (0, clx_size)
     pairs[41] = header_shape_plc
+    pairs[50] = dgg_info
     pairs[58] = header_textbox_plc
     pairs[59] = header_textbox_field_plc
     pairs[76] = header_textbox_break_plc
@@ -358,7 +360,72 @@ def build_header_footer_word_cfb(*, malformed_guard: bool = False) -> bytes:
     return _wrap_regular_word_streams(word_document, table_stream)
 
 
-def build_header_textbox_word_cfb(*, malformed_field: bool = False) -> bytes:
+def _officeart_record(
+    version: int,
+    instance: int,
+    record_type: int,
+    payload: bytes,
+) -> bytes:
+    return struct.pack(
+        "<HHI",
+        (instance << 4) | version,
+        record_type,
+        len(payload),
+    ) + payload
+
+
+def _header_textbox_officeart(shape_id: int) -> bytes:
+    drawing_group_data = _officeart_record(
+        0,
+        0,
+        0xF006,
+        struct.pack("<4I", 2048, 1, 2, 2),
+    )
+    drawing_group = _officeart_record(0xF, 0, 0xF000, drawing_group_data)
+    main_drawing = _officeart_record(
+        0xF,
+        0,
+        0xF002,
+        _officeart_record(0, 1, 0xF008, struct.pack("<2I", 0, 2048)),
+    )
+    shape_properties = b"".join(
+        struct.pack("<HI", identifier, value)
+        for identifier, value in (
+            (0x0081, 0),
+            (0x0082, 0),
+            (0x0083, 0),
+            (0x0084, 0),
+            (0x01BF, 0x00110001),
+            (0x01FF, 0x00080000),
+        )
+    )
+    shape = _officeart_record(
+        0xF,
+        0,
+        0xF004,
+        _officeart_record(
+            2,
+            202,
+            0xF00A,
+            struct.pack("<2I", shape_id, 0x00000A00),
+        )
+        + _officeart_record(3, 6, 0xF00B, shape_properties),
+    )
+    header_drawing = _officeart_record(
+        0xF,
+        0,
+        0xF002,
+        _officeart_record(0, 2, 0xF008, struct.pack("<2I", 1, shape_id))
+        + shape,
+    )
+    return drawing_group + b"\x00" + main_drawing + b"\x01" + header_drawing
+
+
+def build_header_textbox_word_cfb(
+    *,
+    malformed_field: bool = False,
+    officeart_style: bool = False,
+) -> bytes:
     """A DOC whose default footer contains a floating PAGE-field textbox."""
 
     main_text = b"Body\r"
@@ -462,6 +529,9 @@ def build_header_textbox_word_cfb(*, malformed_field: bool = False) -> bytes:
     )
     plcf_fields_offset = 460
 
+    dgg_info = _header_textbox_officeart(shape_id) if officeart_style else b""
+    dgg_info_offset = 520
+
     word_document = bytearray(4096)
     word_document[:1024] = _build_fib(
         ccp_text=len(main_text),
@@ -471,6 +541,7 @@ def build_header_textbox_word_cfb(*, malformed_field: bool = False) -> bytes:
         section_plc=(plcf_sed_offset, len(plcf_sed)),
         header_plc=(plcf_hdd_offset, len(plcf_hdd)),
         header_shape_plc=(plcf_spa_hdr_offset, len(plcf_spa_hdr)),
+        dgg_info=(dgg_info_offset, len(dgg_info)) if dgg_info else (0, 0),
         header_textbox_plc=(
             plcf_header_textboxes_offset,
             len(plcf_header_textboxes),
@@ -506,6 +577,8 @@ def build_header_textbox_word_cfb(*, malformed_field: bool = False) -> bytes:
     table_stream[
         plcf_fields_offset : plcf_fields_offset + len(plcf_fields)
     ] = plcf_fields
+    if dgg_info:
+        table_stream[dgg_info_offset : dgg_info_offset + len(dgg_info)] = dgg_info
     return _wrap_regular_word_streams(word_document, table_stream)
 
 

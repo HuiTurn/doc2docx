@@ -21,6 +21,7 @@ FCLCB97_PLCF_FLD_HDR_INDEX = 17
 FCLCB97_DOP_INDEX = 31
 FCLCB97_CLX_INDEX = 33
 FCLCB97_PLC_SPA_HDR_INDEX = 41
+FCLCB97_DGG_INFO_INDEX = 50
 FCLCB97_PLCF_HDR_TXBX_TXT_INDEX = 58
 FCLCB97_PLCF_FLD_HDR_TXBX_INDEX = 59
 FCLCB97_PLCF_TXBX_HDR_BKD_INDEX = 76
@@ -180,6 +181,12 @@ class FileInformationBlock:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_PLC_SPA_HDR_INDEX:
             return FcLcb(0, 0)
         return self.fib_rg_fc_lcb[FCLCB97_PLC_SPA_HDR_INDEX]
+
+    @property
+    def dgg_info(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_DGG_INFO_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_DGG_INFO_INDEX]
 
     @property
     def plcf_hdr_txbx_txt(self) -> FcLcb:

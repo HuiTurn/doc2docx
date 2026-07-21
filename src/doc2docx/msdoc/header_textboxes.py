@@ -13,6 +13,7 @@ from ..model import (
     FloatingTextBox,
     Paragraph,
     ParagraphProperties,
+    ShapeStyle,
     Table,
     parse_main_story,
 )
@@ -37,6 +38,7 @@ class HeaderTextBoxCollection:
     by_anchor_cp: Mapping[int, FloatingTextBox]
     textbox_count: int = 0
     field_count: int = 0
+    styled_textbox_count: int = 0
 
     def textbox_at(self, cp: int) -> FloatingTextBox | None:
         return self.by_anchor_cp.get(cp)
@@ -402,6 +404,7 @@ def read_header_textboxes(
     report: ConversionReport,
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
+    shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
 ) -> HeaderTextBoxCollection:
     """Read header textbox contents and associate them with header-story anchors."""
 
@@ -460,6 +463,7 @@ def read_header_textboxes(
     )
     by_anchor_cp: dict[int, FloatingTextBox] = {}
     linked_count = 0
+    approximated_style_count = 0
     for entry in entries:
         spa = spas.get(entry.shape_id)
         if spa is None:
@@ -471,6 +475,11 @@ def read_header_textboxes(
             raise InvalidWordDocument(
                 f"multiple header textboxes use anchor CP {spa.anchor_cp}"
             )
+        shape_style = (
+            shape_style_at(entry.shape_id) if shape_style_at is not None else None
+        )
+        if shape_style is None or shape_style.approximated:
+            approximated_style_count += 1
         by_anchor_cp[absolute_anchor_cp] = FloatingTextBox(
             shape_id=entry.shape_id,
             anchor_cp=absolute_anchor_cp,
@@ -486,6 +495,7 @@ def read_header_textboxes(
             anchor_locked=spa.anchor_locked,
             paragraphs=entry.paragraphs,
             blocks=entry.blocks,
+            shape_style=shape_style,
         )
         if entry.chain_length > 1:
             linked_count += 1
@@ -496,15 +506,16 @@ def read_header_textboxes(
             location=SourceLocation(story="header-textboxes"),
             textbox_count=linked_count,
         )
-    if entries:
+    if approximated_style_count:
         report.warning(
             "HEADER_TEXTBOX_STYLE_APPROXIMATED",
-            "header textbox geometry was preserved but OfficeArt fill and line styling was approximated",
+            "some header textbox OfficeArt fill, line, or inset styling was approximated",
             location=SourceLocation(story="header-textboxes"),
-            textbox_count=len(entries),
+            textbox_count=approximated_style_count,
         )
     return HeaderTextBoxCollection(
         by_anchor_cp=by_anchor_cp,
         textbox_count=len(entries),
         field_count=field_count,
+        styled_textbox_count=len(entries) - approximated_style_count,
     )

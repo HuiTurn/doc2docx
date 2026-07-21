@@ -306,6 +306,24 @@ class Field:
 
 
 @dataclass(slots=True, frozen=True)
+class ShapeStyle:
+    """Basic OfficeArt appearance retained for a floating shape."""
+
+    fill_enabled: bool = True
+    fill_color: str = "FFFFFF"
+    fill_opacity: int = 0x10000
+    line_enabled: bool = True
+    line_color: str = "000000"
+    line_opacity: int = 0x10000
+    line_width_emu: int = 0x2535
+    inset_left_emu: int = 0x16530
+    inset_top_emu: int = 0xB298
+    inset_right_emu: int = 0x16530
+    inset_bottom_emu: int = 0xB298
+    approximated: bool = False
+
+
+@dataclass(slots=True, frozen=True)
 class FloatingTextBox:
     """A positioned header/footer textbox reconstructed from a DOC Spa."""
 
@@ -323,6 +341,7 @@ class FloatingTextBox:
     anchor_locked: bool
     paragraphs: tuple["Paragraph", ...]
     blocks: tuple["Paragraph | Table", ...] = ()
+    shape_style: ShapeStyle | None = None
 
     @property
     def body_blocks(self) -> tuple["Paragraph | Table", ...]:

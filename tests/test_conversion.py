@@ -37,12 +37,28 @@ class ConversionTests(unittest.TestCase):
             with self.assertRaises(InvalidWordDocument):
                 convert(source)
 
+    def test_header_textbox_without_officeart_style_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "header-textbox-without-officeart.doc"
+            source.write_bytes(build_header_textbox_word_cfb())
+
+            result = convert(source)
+
+            self.assertEqual(
+                [warning.code for warning in result.report.warnings],
+                ["HEADER_TEXTBOX_STYLE_APPROXIMATED"],
+            )
+            self.assertEqual(
+                result.report.statistics["styled_header_textbox_count"],
+                0,
+            )
+
     def test_header_textbox_and_page_field_are_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
             source = temporary / "header-textbox.doc"
             destination = temporary / "header-textbox.docx"
-            source.write_bytes(build_header_textbox_word_cfb())
+            source.write_bytes(build_header_textbox_word_cfb(officeart_style=True))
 
             result = convert(source, destination)
 
@@ -51,11 +67,12 @@ class ConversionTests(unittest.TestCase):
                 result.report.statistics["header_textbox_field_count"], 1
             )
             self.assertEqual(
-                [warning.code for warning in result.report.warnings],
-                ["HEADER_TEXTBOX_STYLE_APPROXIMATED"],
+                result.report.statistics["styled_header_textbox_count"], 1
             )
+            self.assertEqual(result.report.warnings, [])
             inspected = inspect_doc(source)
             self.assertGreater(inspected["fib"]["lcbPlcSpaHdr"], 0)
+            self.assertGreater(inspected["fib"]["lcbDggInfo"], 0)
             self.assertGreater(inspected["fib"]["lcbPlcfHdrtxbxTxt"], 0)
             self.assertGreater(inspected["fib"]["lcbPlcffldHdrTxbx"], 0)
             self.assertGreater(inspected["fib"]["lcbPlcfTxbxHdrBkd"], 0)
@@ -65,10 +82,15 @@ class ConversionTests(unittest.TestCase):
             rectangle = footer_root.find(f".//{W}pict/{V}rect")
             assert rectangle is not None
             self.assertEqual(rectangle.get("id"), "_x0000_s1025")
+            self.assertEqual(rectangle.get("filled"), "f")
+            self.assertEqual(rectangle.get("stroked"), "f")
             style = rectangle.get("style", "")
             self.assertIn("width:144pt", style)
             self.assertIn("height:36pt", style)
             self.assertIn("mso-position-horizontal-relative:margin", style)
+            textbox = rectangle.find(f"{V}textbox")
+            assert textbox is not None
+            self.assertEqual(textbox.get("inset"), "0pt,0pt,0pt,0pt")
             self.assertEqual(
                 [
                     element.get(f"{W}fldCharType")
