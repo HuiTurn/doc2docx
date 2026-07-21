@@ -7,7 +7,15 @@ import zipfile
 from xml.etree import ElementTree as ET
 
 from ..errors import PackageWriteError
-from ..model import Break, BreakType, Document, Tab, TextRun
+from ..model import (
+    Break,
+    BreakType,
+    CharacterProperties,
+    Document,
+    ParagraphProperties,
+    Tab,
+    TextRun,
+)
 
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -69,8 +77,146 @@ def _root_relationships_xml() -> bytes:
     return _xml_bytes(root)
 
 
-def _append_text_run(paragraph_element: ET.Element, text: str) -> None:
+def _append_boolean_property(
+    parent: ET.Element,
+    name: str,
+    value: bool | None,
+) -> None:
+    if value is None:
+        return
+    element = ET.SubElement(parent, _qn(W_NS, name))
+    if not value:
+        element.set(_qn(W_NS, "val"), "0")
+
+
+def _append_run_properties(
+    run: ET.Element,
+    properties: CharacterProperties,
+) -> None:
+    if properties == CharacterProperties():
+        return
+    run_properties = ET.SubElement(run, _qn(W_NS, "rPr"))
+    _append_boolean_property(run_properties, "b", properties.bold)
+    _append_boolean_property(run_properties, "i", properties.italic)
+    _append_boolean_property(run_properties, "caps", properties.caps)
+    _append_boolean_property(run_properties, "smallCaps", properties.small_caps)
+    _append_boolean_property(run_properties, "strike", properties.strike)
+    _append_boolean_property(run_properties, "dstrike", properties.double_strike)
+    _append_boolean_property(run_properties, "vanish", properties.hidden)
+    if properties.color is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "color"),
+            {_qn(W_NS, "val"): properties.color},
+        )
+    if properties.position_half_points is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "position"),
+            {_qn(W_NS, "val"): str(properties.position_half_points)},
+        )
+    if properties.size_half_points is not None:
+        attributes = {_qn(W_NS, "val"): str(properties.size_half_points)}
+        ET.SubElement(run_properties, _qn(W_NS, "sz"), attributes)
+        ET.SubElement(run_properties, _qn(W_NS, "szCs"), attributes)
+    if properties.highlight is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "highlight"),
+            {_qn(W_NS, "val"): properties.highlight},
+        )
+    if properties.underline is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "u"),
+            {_qn(W_NS, "val"): properties.underline},
+        )
+    if properties.vertical_align is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "vertAlign"),
+            {_qn(W_NS, "val"): properties.vertical_align},
+        )
+
+
+def _append_paragraph_properties(
+    paragraph: ET.Element,
+    properties: ParagraphProperties,
+) -> None:
+    # style_id is intentionally not serialized until the DOC style hierarchy
+    # and a corresponding DOCX styles part are available.
+    serializable = (
+        properties.justification is not None
+        or properties.keep_lines is not None
+        or properties.keep_next is not None
+        or properties.page_break_before is not None
+        or properties.left_indent_twips is not None
+        or properties.right_indent_twips is not None
+        or properties.first_line_indent_twips is not None
+        or properties.space_before_twips is not None
+        or properties.space_after_twips is not None
+        or properties.line_spacing_twips is not None
+    )
+    if not serializable:
+        return
+    paragraph_properties = ET.SubElement(paragraph, _qn(W_NS, "pPr"))
+    _append_boolean_property(
+        paragraph_properties,
+        "keepNext",
+        properties.keep_next,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "keepLines",
+        properties.keep_lines,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "pageBreakBefore",
+        properties.page_break_before,
+    )
+    spacing: dict[str, str] = {}
+    if properties.space_before_twips is not None:
+        spacing[_qn(W_NS, "before")] = str(properties.space_before_twips)
+    if properties.space_after_twips is not None:
+        spacing[_qn(W_NS, "after")] = str(properties.space_after_twips)
+    if properties.line_spacing_twips is not None:
+        spacing[_qn(W_NS, "line")] = str(properties.line_spacing_twips)
+    if properties.line_rule is not None:
+        spacing[_qn(W_NS, "lineRule")] = properties.line_rule
+    if spacing:
+        ET.SubElement(paragraph_properties, _qn(W_NS, "spacing"), spacing)
+    indentation: dict[str, str] = {}
+    if properties.left_indent_twips is not None:
+        indentation[_qn(W_NS, "left")] = str(properties.left_indent_twips)
+    if properties.right_indent_twips is not None:
+        indentation[_qn(W_NS, "right")] = str(properties.right_indent_twips)
+    if properties.first_line_indent_twips is not None:
+        if properties.first_line_indent_twips < 0:
+            indentation[_qn(W_NS, "hanging")] = str(
+                -properties.first_line_indent_twips
+            )
+        else:
+            indentation[_qn(W_NS, "firstLine")] = str(
+                properties.first_line_indent_twips
+            )
+    if indentation:
+        ET.SubElement(paragraph_properties, _qn(W_NS, "ind"), indentation)
+    if properties.justification is not None:
+        ET.SubElement(
+            paragraph_properties,
+            _qn(W_NS, "jc"),
+            {_qn(W_NS, "val"): properties.justification},
+        )
+
+
+def _append_text_run(
+    paragraph_element: ET.Element,
+    text: str,
+    properties: CharacterProperties,
+) -> None:
     run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    _append_run_properties(run, properties)
     text_element = ET.SubElement(run, _qn(W_NS, "t"))
     if text[:1].isspace() or text[-1:].isspace() or "  " in text:
         text_element.set(_qn(XML_NS, "space"), "preserve")
@@ -82,14 +228,21 @@ def _document_xml(document: Document) -> bytes:
     body = ET.SubElement(root, _qn(W_NS, "body"))
     for paragraph in document.paragraphs:
         paragraph_element = ET.SubElement(body, _qn(W_NS, "p"))
+        _append_paragraph_properties(paragraph_element, paragraph.properties)
         for inline in paragraph.inlines:
             if isinstance(inline, TextRun):
-                _append_text_run(paragraph_element, inline.text)
+                _append_text_run(
+                    paragraph_element,
+                    inline.text,
+                    inline.properties,
+                )
             elif isinstance(inline, Tab):
                 run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+                _append_run_properties(run, inline.properties)
                 ET.SubElement(run, _qn(W_NS, "tab"))
             elif isinstance(inline, Break):
                 run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+                _append_run_properties(run, inline.properties)
                 attributes = (
                     {_qn(W_NS, "type"): "page"}
                     if inline.kind is BreakType.PAGE

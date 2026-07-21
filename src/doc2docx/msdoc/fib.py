@@ -11,6 +11,8 @@ from ..errors import BinaryBoundsError, InvalidWordDocument
 FIB_IDENT = 0xA5EC
 # FibRgFcLcb97 includes the deprecated fcPlcPad/lcbPlcPad pair after
 # fcPlcfSed/lcbPlcfSed. Therefore fcClx/lcbClx is pair 33 (zero-based).
+FCLCB97_PLCF_BTE_CHPX_INDEX = 12
+FCLCB97_PLCF_BTE_PAPX_INDEX = 13
 FCLCB97_CLX_INDEX = 33
 
 
@@ -110,6 +112,18 @@ class FileInformationBlock:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_CLX_INDEX:
             raise InvalidWordDocument("FIB does not contain fcClx/lcbClx")
         return self.fib_rg_fc_lcb[FCLCB97_CLX_INDEX]
+
+    @property
+    def plcf_bte_chpx(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_BTE_CHPX_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_BTE_CHPX_INDEX]
+
+    @property
+    def plcf_bte_papx(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_BTE_PAPX_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_BTE_PAPX_INDEX]
 
     @classmethod
     def parse(cls, word_document_stream: bytes) -> "FileInformationBlock":

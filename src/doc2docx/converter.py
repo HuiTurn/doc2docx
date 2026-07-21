@@ -17,7 +17,7 @@ from .errors import (
     UnsafeOutputPathError,
 )
 from .model import Document, parse_main_story
-from .msdoc import FileInformationBlock, read_piece_table
+from .msdoc import FileInformationBlock, read_formatting, read_piece_table
 from .ooxml import validate_docx, write_docx
 
 
@@ -66,7 +66,7 @@ def convert(
     if fib.base.is_encrypted:
         method = "XOR obfuscation" if fib.base.is_obfuscated else "RC4 encryption"
         raise EncryptedDocumentError(
-            f"password-protected Word documents using {method} are deferred beyond M2"
+            f"password-protected Word documents using {method} are not yet supported"
         )
 
     table_name = fib.base.table_stream_name
@@ -84,8 +84,38 @@ def convert(
             f"FIB main-story length {fib.ccp_text} exceeds Piece Table range "
             f"{piece_table.cp_end}"
         )
-    main_text = piece_table.extract(0, fib.ccp_text, report, story="main")
-    document = parse_main_story(main_text, report)
+    chpx = fib.plcf_bte_chpx
+    papx = fib.plcf_bte_papx
+    formatting = read_formatting(
+        table_stream,
+        word_document,
+        piece_table,
+        fc_plcf_bte_chpx=chpx.fc,
+        lcb_plcf_bte_chpx=chpx.lcb,
+        fc_plcf_bte_papx=papx.fc,
+        lcb_plcf_bte_papx=papx.lcb,
+        report=report,
+    )
+    main_characters = piece_table.extract_characters(
+        0,
+        fib.ccp_text,
+        report,
+        story="main",
+    )
+    document = parse_main_story(
+        main_characters,
+        report,
+        character_properties_at=formatting.character_properties_at,
+        paragraph_properties_at=formatting.paragraph_properties_at,
+    )
+
+    prm_pieces = sum(1 for piece in piece_table.pieces if piece.prm)
+    if prm_pieces:
+        report.warning(
+            "PIECE_PRM_DEFERRED",
+            "piece-level Prm formatting is deferred beyond M3a",
+            piece_count=prm_pieces,
+        )
 
     report.statistics.update(
         {
@@ -95,6 +125,10 @@ def convert(
             "piece_count": len(piece_table.pieces),
             "main_story_cp_count": fib.ccp_text,
             "paragraph_count": len(document.paragraphs),
+            "character_format_span_count": len(formatting.character_spans),
+            "paragraph_format_span_count": len(formatting.paragraph_spans),
+            "character_fkp_run_count": formatting.character_fkp_run_count,
+            "paragraph_fkp_run_count": formatting.paragraph_fkp_run_count,
         }
     )
     if fib.base.has_pictures:
@@ -137,7 +171,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M2 conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M3a conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -182,6 +216,10 @@ def inspect_doc(
             "ccpText": fib.ccp_text,
             "fcClx": fib.clx.fc,
             "lcbClx": fib.clx.lcb,
+            "fcPlcfBteChpx": fib.plcf_bte_chpx.fc,
+            "lcbPlcfBteChpx": fib.plcf_bte_chpx.lcb,
+            "fcPlcfBtePapx": fib.plcf_bte_papx.fc,
+            "lcbPlcfBtePapx": fib.plcf_bte_papx.lcb,
         },
         "entries": sorted(entries, key=lambda item: item["path"]),
     }

@@ -4,9 +4,10 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M2 implementation supports unencrypted CFB/OLE Word documents,
+The current M0–M3a implementation supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
-UTF-16LE text pieces, and the main document story. It writes a minimal,
+UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
+preserves a useful first set of direct character and paragraph properties in a
 standards-based WordprocessingML `.docx` package.
 
 ## Usage
@@ -27,9 +28,14 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-Formatting, tables, secondary stories, images, fields, embedded objects, and
-encrypted documents are intentionally deferred to later milestones. Unsupported
-or lossy content is reported rather than silently treated as fully converted.
+M3a currently preserves bold, italic, strike, double strike, capitalization,
+hidden text, underline, text color, highlight, font size, vertical alignment,
+paragraph justification, indents, spacing, line spacing, and keep/page-break
+flags when they are present as direct formatting. Font-name resolution, style
+inheritance, piece-level PRMs, tables, secondary stories, images, live fields,
+embedded objects, and encrypted documents are intentionally deferred to later
+iterations. Unsupported or lossy content is reported rather than silently
+treated as fully converted.
 
 ## Tests
 
@@ -40,5 +46,6 @@ PYTHONPATH=src python -m unittest discover -v
 ```
 
 It includes constructed CFB version 3/version 4 files, regular and mini streams,
-both Table stream variants, mixed compressed/UTF-16 text pieces, malformed input
-checks, CLI coverage, and end-to-end DOCX package validation.
+both Table stream variants, mixed compressed/UTF-16 text pieces, UTF-16 surrogate
+pair coordinates, CHPX/PAPX formatting, malformed input checks, CLI coverage,
+and end-to-end DOCX package validation.

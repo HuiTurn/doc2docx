@@ -1,0 +1,301 @@
+"""Bounded parsing and M3a application of MS-DOC property modifiers."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+import struct
+
+from ..errors import InvalidWordDocument
+from ..model import CharacterProperties, ParagraphProperties
+
+
+@dataclass(slots=True, frozen=True)
+class PropertyModifier:
+    opcode: int
+    operand: bytes
+
+
+_FIXED_OPERAND_LENGTHS = {0: 1, 1: 1, 2: 2, 3: 4, 4: 2, 5: 2, 7: 3}
+
+
+def parse_grpprl(
+    data: bytes,
+    *,
+    label: str,
+    allow_trailing_zero_padding: bool = False,
+) -> tuple[PropertyModifier, ...]:
+    """Parse a complete grpprl, using Sprm.spra to bound every operand."""
+
+    modifiers: list[PropertyModifier] = []
+    position = 0
+    while position < len(data):
+        if len(data) - position < 2:
+            if allow_trailing_zero_padding and data[position:] == b"\0":
+                break
+            raise InvalidWordDocument(
+                f"{label} ends with a truncated Sprm at byte {position}"
+            )
+        opcode = struct.unpack_from("<H", data, position)[0]
+        position += 2
+        spra = opcode >> 13
+        if spra == 6:
+            if position >= len(data):
+                raise InvalidWordDocument(
+                    f"{label} Sprm 0x{opcode:04X} has no variable-length prefix"
+                )
+            byte_count = data[position]
+            # sprmPChgTabs permits 0xFF with an implicit size. M3a does not
+            # consume tab-stop operands, so retaining the remainder as one
+            # opaque operand is safer than guessing boundaries.
+            if opcode == 0xC615 and byte_count == 0xFF:
+                modifiers.append(PropertyModifier(opcode, data[position:]))
+                position = len(data)
+                continue
+            operand_length = 1 + byte_count
+        else:
+            operand_length = _FIXED_OPERAND_LENGTHS.get(spra)
+            if operand_length is None:
+                raise InvalidWordDocument(
+                    f"{label} Sprm 0x{opcode:04X} has invalid spra {spra}"
+                )
+        operand_end = position + operand_length
+        if operand_end > len(data):
+            raise InvalidWordDocument(
+                f"{label} Sprm 0x{opcode:04X} operand exceeds grpprl"
+            )
+        modifiers.append(PropertyModifier(opcode, data[position:operand_end]))
+        position = operand_end
+    return tuple(modifiers)
+
+
+_CHARACTER_TOGGLES = {
+    0x0835: "bold",
+    0x0836: "italic",
+    0x0837: "strike",
+    0x083A: "small_caps",
+    0x083B: "caps",
+    0x083C: "hidden",
+    0x2A53: "double_strike",
+}
+
+_UNDERLINES = {
+    0x00: "none",
+    0x01: "single",
+    0x02: "words",
+    0x03: "double",
+    0x04: "dotted",
+    0x06: "thick",
+    0x07: "dash",
+    0x09: "dotDash",
+    0x0A: "dotDotDash",
+    0x0B: "wave",
+    0x14: "dottedHeavy",
+    0x17: "dashedHeavy",
+    0x19: "dashDotHeavy",
+    0x1A: "dashDotDotHeavy",
+    0x1B: "wavyHeavy",
+    0x27: "dashLong",
+    0x2B: "wavyDouble",
+    0x37: "dashLongHeavy",
+}
+
+_ICO_RGB = {
+    0x01: "000000",
+    0x02: "0000FF",
+    0x03: "00FFFF",
+    0x04: "00FF00",
+    0x05: "FF00FF",
+    0x06: "FF0000",
+    0x07: "FFFF00",
+    0x08: "FFFFFF",
+    0x09: "000080",
+    0x0A: "008080",
+    0x0B: "008000",
+    0x0C: "800080",
+    0x0D: "800000",
+    0x0E: "808000",
+    0x0F: "808080",
+    0x10: "C0C0C0",
+}
+
+_ICO_HIGHLIGHT = {
+    0x00: "none",
+    0x01: "black",
+    0x02: "blue",
+    0x03: "cyan",
+    0x04: "green",
+    0x05: "magenta",
+    0x06: "red",
+    0x07: "yellow",
+    0x08: "white",
+    0x09: "darkBlue",
+    0x0A: "darkCyan",
+    0x0B: "darkGreen",
+    0x0C: "darkMagenta",
+    0x0D: "darkRed",
+    0x0E: "darkYellow",
+    0x0F: "darkGray",
+    0x10: "lightGray",
+}
+
+
+def apply_character_modifiers(
+    modifiers: tuple[PropertyModifier, ...],
+) -> tuple[CharacterProperties, set[int], int]:
+    properties = CharacterProperties()
+    unsupported: set[int] = set()
+    style_relative_toggle_count = 0
+    for modifier in modifiers:
+        opcode = modifier.opcode
+        operand = modifier.operand
+        if opcode in _CHARACTER_TOGGLES:
+            value = operand[0]
+            if value in (0x00, 0x01):
+                properties = replace(
+                    properties,
+                    **{_CHARACTER_TOGGLES[opcode]: bool(value)},
+                )
+            elif value in (0x80, 0x81):
+                style_relative_toggle_count += 1
+            else:
+                unsupported.add(opcode)
+        elif opcode == 0x2A3E:
+            underline = _UNDERLINES.get(operand[0])
+            if underline is None:
+                unsupported.add(opcode)
+            else:
+                properties = replace(properties, underline=underline)
+        elif opcode == 0x2A42:
+            if operand[0] == 0:
+                properties = replace(properties, color="auto")
+            elif operand[0] in _ICO_RGB:
+                properties = replace(properties, color=_ICO_RGB[operand[0]])
+            else:
+                unsupported.add(opcode)
+        elif opcode == 0x2A0C:
+            highlight = _ICO_HIGHLIGHT.get(operand[0])
+            if highlight is None:
+                unsupported.add(opcode)
+            else:
+                properties = replace(properties, highlight=highlight)
+        elif opcode == 0x4A43:
+            size = struct.unpack("<H", operand)[0]
+            if 2 <= size <= 3276:
+                properties = replace(properties, size_half_points=size)
+            else:
+                unsupported.add(opcode)
+        elif opcode == 0x4845:
+            position = struct.unpack("<h", operand)[0]
+            properties = replace(properties, position_half_points=position)
+        elif opcode == 0x2A48:
+            vertical_align = {0: "baseline", 1: "superscript", 2: "subscript"}.get(
+                operand[0]
+            )
+            if vertical_align is None:
+                unsupported.add(opcode)
+            else:
+                properties = replace(properties, vertical_align=vertical_align)
+        elif opcode == 0x6870:
+            if operand[3] == 0xFF:
+                properties = replace(properties, color="auto")
+            else:
+                properties = replace(
+                    properties,
+                    color=f"{operand[0]:02X}{operand[1]:02X}{operand[2]:02X}",
+                )
+        else:
+            unsupported.add(opcode)
+    return properties, unsupported, style_relative_toggle_count
+
+
+_JUSTIFICATION = {
+    0: "left",
+    1: "center",
+    2: "right",
+    3: "both",
+    4: "distribute",
+    5: "mediumKashida",
+    7: "highKashida",
+    8: "lowKashida",
+    9: "thaiDistribute",
+}
+
+
+def apply_paragraph_modifiers(
+    modifiers: tuple[PropertyModifier, ...],
+    *,
+    style_id: int,
+) -> tuple[ParagraphProperties, set[int]]:
+    properties = ParagraphProperties(style_id=style_id)
+    unsupported: set[int] = set()
+    for modifier in modifiers:
+        opcode = modifier.opcode
+        operand = modifier.operand
+        if opcode == 0x4600:
+            properties = replace(
+                properties,
+                style_id=struct.unpack("<H", operand)[0],
+            )
+        elif opcode in (0x2403, 0x2461):
+            justification = _JUSTIFICATION.get(operand[0])
+            if justification is None:
+                unsupported.add(opcode)
+            else:
+                properties = replace(properties, justification=justification)
+        elif opcode == 0x2405:
+            properties = replace(properties, keep_lines=bool(operand[0]))
+        elif opcode == 0x2406:
+            properties = replace(properties, keep_next=bool(operand[0]))
+        elif opcode == 0x2407:
+            properties = replace(properties, page_break_before=bool(operand[0]))
+        elif opcode in (0x840F, 0x845E):
+            properties = replace(
+                properties,
+                left_indent_twips=struct.unpack("<h", operand)[0],
+            )
+        elif opcode in (0x840E, 0x845D):
+            properties = replace(
+                properties,
+                right_indent_twips=struct.unpack("<h", operand)[0],
+            )
+        elif opcode in (0x8411, 0x8460):
+            properties = replace(
+                properties,
+                first_line_indent_twips=struct.unpack("<h", operand)[0],
+            )
+        elif opcode == 0xA413:
+            properties = replace(
+                properties,
+                space_before_twips=struct.unpack("<H", operand)[0],
+            )
+        elif opcode == 0xA414:
+            properties = replace(
+                properties,
+                space_after_twips=struct.unpack("<H", operand)[0],
+            )
+        elif opcode == 0x6412:
+            raw_line, multiple = struct.unpack("<HH", operand)
+            signed_line = struct.unpack("<h", operand[:2])[0]
+            if multiple == 1 and signed_line >= 0:
+                properties = replace(
+                    properties,
+                    line_spacing_twips=raw_line,
+                    line_rule="auto",
+                )
+            elif multiple == 0 and signed_line < 0:
+                properties = replace(
+                    properties,
+                    line_spacing_twips=-signed_line,
+                    line_rule="exact",
+                )
+            elif multiple == 0:
+                properties = replace(
+                    properties,
+                    line_spacing_twips=raw_line,
+                    line_rule="atLeast",
+                )
+            else:
+                unsupported.add(opcode)
+        else:
+            unsupported.add(opcode)
+    return properties, unsupported

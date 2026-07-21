@@ -8,13 +8,63 @@ from xml.etree import ElementTree as ET
 from doc2docx import convert, inspect_doc
 from doc2docx.errors import EncryptedDocumentError, UnsafeOutputPathError
 
-from .fixtures import build_word_cfb
+from .fixtures import build_formatted_word_cfb, build_word_cfb
 
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_direct_character_and_paragraph_formatting_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "formatted.doc"
+            destination = temporary / "formatted.docx"
+            source.write_bytes(build_formatted_word_cfb())
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.statistics["character_fkp_run_count"], 4)
+            self.assertEqual(result.report.statistics["paragraph_fkp_run_count"], 2)
+            self.assertFalse(result.report.warnings)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+            paragraphs = root.findall(f"./{W}body/{W}p")
+            self.assertEqual(
+                ["".join(paragraph.itertext()) for paragraph in paragraphs],
+                ["Bold plain", "Centered"],
+            )
+            first_runs = paragraphs[0].findall(f"{W}r")
+            self.assertEqual([run.findtext(f"{W}t") for run in first_runs], ["Bold", " ", "plain"])
+            self.assertIsNotNone(first_runs[0].find(f"{W}rPr/{W}b"))
+            rich_properties = first_runs[2].find(f"{W}rPr")
+            assert rich_properties is not None
+            self.assertIsNotNone(rich_properties.find(f"{W}i"))
+            self.assertEqual(
+                rich_properties.find(f"{W}color").get(f"{W}val"),  # type: ignore[union-attr]
+                "FF0000",
+            )
+            self.assertEqual(
+                rich_properties.find(f"{W}sz").get(f"{W}val"),  # type: ignore[union-attr]
+                "28",
+            )
+
+            second_properties = paragraphs[1].find(f"{W}pPr")
+            assert second_properties is not None
+            self.assertEqual(
+                second_properties.find(f"{W}jc").get(f"{W}val"),  # type: ignore[union-attr]
+                "center",
+            )
+            self.assertEqual(
+                second_properties.find(f"{W}ind").get(f"{W}left"),  # type: ignore[union-attr]
+                "720",
+            )
+            spacing = second_properties.find(f"{W}spacing")
+            assert spacing is not None
+            self.assertEqual(spacing.get(f"{W}before"), "120")
+            self.assertEqual(spacing.get(f"{W}after"), "240")
+
     def test_end_to_end_mixed_piece_conversion(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
@@ -53,6 +103,8 @@ class ConversionTests(unittest.TestCase):
             info = inspect_doc(source)
             self.assertEqual(info["fib"]["table_stream"], "1Table")
             self.assertEqual(info["fib"]["ccpText"], 9)
+            self.assertEqual(info["fib"]["lcbPlcfBteChpx"], 0)
+            self.assertEqual(info["fib"]["lcbPlcfBtePapx"], 0)
             self.assertEqual(
                 {item["path"] for item in info["entries"]},
                 {"WordDocument", "1Table"},

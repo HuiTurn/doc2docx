@@ -1,8 +1,9 @@
-"""Small M2 document intermediate representation."""
+"""Document intermediate representation with CP-aware direct formatting."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from ..diagnostics import ConversionReport, SourceLocation
@@ -14,18 +15,66 @@ class BreakType(StrEnum):
 
 
 @dataclass(slots=True, frozen=True)
+class CharacterProperties:
+    """Direct character properties; ``None`` means not specified by the DOC run."""
+
+    bold: bool | None = None
+    italic: bool | None = None
+    strike: bool | None = None
+    double_strike: bool | None = None
+    small_caps: bool | None = None
+    caps: bool | None = None
+    hidden: bool | None = None
+    underline: str | None = None
+    color: str | None = None
+    highlight: str | None = None
+    size_half_points: int | None = None
+    vertical_align: str | None = None
+    position_half_points: int | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class ParagraphProperties:
+    """Direct paragraph properties represented in WordprocessingML units."""
+
+    style_id: int | None = None
+    justification: str | None = None
+    keep_lines: bool | None = None
+    keep_next: bool | None = None
+    page_break_before: bool | None = None
+    left_indent_twips: int | None = None
+    right_indent_twips: int | None = None
+    first_line_indent_twips: int | None = None
+    space_before_twips: int | None = None
+    space_after_twips: int | None = None
+    line_spacing_twips: int | None = None
+    line_rule: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class StoryCharacter:
+    """One decoded character and its half-open MS-DOC CP range."""
+
+    text: str
+    cp_start: int
+    cp_end: int
+
+
+@dataclass(slots=True, frozen=True)
 class TextRun:
     text: str
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
 
 
 @dataclass(slots=True, frozen=True)
 class Tab:
-    pass
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
 
 
 @dataclass(slots=True, frozen=True)
 class Break:
     kind: BreakType
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
 
 
 Inline = TextRun | Tab | Break
@@ -34,6 +83,7 @@ Inline = TextRun | Tab | Break
 @dataclass(slots=True, frozen=True)
 class Paragraph:
     inlines: tuple[Inline, ...]
+    properties: ParagraphProperties = field(default_factory=ParagraphProperties)
 
 
 @dataclass(slots=True, frozen=True)
@@ -51,10 +101,28 @@ def _is_xml_character(character: str) -> bool:
     ) and value not in (0xFFFE, 0xFFFF)
 
 
-def parse_main_story(text: str, report: ConversionReport) -> Document:
+def parse_main_story(
+    text: str | Sequence[StoryCharacter],
+    report: ConversionReport,
+    *,
+    character_properties_at: Callable[[int], CharacterProperties] | None = None,
+    paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
+) -> Document:
+    if isinstance(text, str):
+        characters = tuple(
+            StoryCharacter(character, cp, cp + 1)
+            for cp, character in enumerate(text)
+        )
+    else:
+        characters = tuple(text)
+
+    default_character_properties = CharacterProperties()
+    default_paragraph_properties = ParagraphProperties()
+
     paragraphs: list[Paragraph] = []
     inlines: list[Inline] = []
     text_buffer: list[str] = []
+    text_properties = default_character_properties
     unsupported_controls: dict[int, int] = {}
     deferred_markers: dict[str, int] = {}
     flattened_fields = 0
@@ -65,21 +133,42 @@ def parse_main_story(text: str, report: ConversionReport) -> Document:
 
     def flush_text() -> None:
         if text_buffer:
-            text = "".join(text_buffer)
-            if inlines and isinstance(inlines[-1], TextRun):
+            buffered_text = "".join(text_buffer)
+            if (
+                inlines
+                and isinstance(inlines[-1], TextRun)
+                and inlines[-1].properties == text_properties
+            ):
                 previous = inlines[-1]
-                inlines[-1] = TextRun(previous.text + text)
+                inlines[-1] = TextRun(
+                    previous.text + buffered_text,
+                    previous.properties,
+                )
             else:
-                inlines.append(TextRun(text))
+                inlines.append(TextRun(buffered_text, text_properties))
             text_buffer.clear()
 
-    def finish_paragraph() -> None:
+    def append_text(character: str, properties: CharacterProperties) -> None:
+        nonlocal text_properties
+        if text_buffer and properties != text_properties:
+            flush_text()
+        text_properties = properties
+        text_buffer.append(character)
+
+    def finish_paragraph(properties: ParagraphProperties) -> None:
         flush_text()
-        paragraphs.append(Paragraph(tuple(inlines)))
+        paragraphs.append(Paragraph(tuple(inlines), properties))
         inlines.clear()
 
-    for cp_offset, character in enumerate(text):
+    for unit in characters:
+        character = unit.text
+        cp_offset = unit.cp_start
         value = ord(character)
+        character_properties = (
+            character_properties_at(cp_offset)
+            if character_properties_at is not None
+            else default_character_properties
+        )
 
         if value == 0x13:  # field begin
             flush_text()
@@ -98,16 +187,21 @@ def parse_main_story(text: str, report: ConversionReport) -> Document:
             continue
 
         if character == "\r":
-            finish_paragraph()
+            paragraph_properties = (
+                paragraph_properties_at(cp_offset)
+                if paragraph_properties_at is not None
+                else default_paragraph_properties
+            )
+            finish_paragraph(paragraph_properties)
         elif character == "\t":
             flush_text()
-            inlines.append(Tab())
+            inlines.append(Tab(character_properties))
         elif character in ("\n", "\v"):
             flush_text()
-            inlines.append(Break(BreakType.LINE))
+            inlines.append(Break(BreakType.LINE, character_properties))
         elif character == "\f":
             flush_text()
-            inlines.append(Break(BreakType.PAGE))
+            inlines.append(Break(BreakType.PAGE, character_properties))
             deferred_markers["BREAK_KIND_APPROXIMATED"] = (
                 deferred_markers.get("BREAK_KIND_APPROXIMATED", 0) + 1
             )
@@ -118,21 +212,36 @@ def parse_main_story(text: str, report: ConversionReport) -> Document:
                 0x07: "TABLE_MARKER_DEFERRED",
             }[value]
             deferred_markers[marker_code] = deferred_markers.get(marker_code, 0) + 1
-            text_buffer.append("\uFFFC")
+            append_text("\uFFFC", character_properties)
         elif value < 0x20 or not _is_xml_character(character):
             unsupported_controls[value] = unsupported_controls.get(value, 0) + 1
-            text_buffer.append("\uFFFD")
+            append_text("\uFFFD", character_properties)
         else:
-            text_buffer.append(character)
+            append_text(character, character_properties)
 
-    if text_buffer or inlines or not paragraphs or (text and text[-1] != "\r"):
-        finish_paragraph()
+    if (
+        text_buffer
+        or inlines
+        or not paragraphs
+        or (characters and characters[-1].text != "\r")
+    ):
+        paragraph_cp = characters[-1].cp_start if characters else 0
+        paragraph_properties = (
+            paragraph_properties_at(paragraph_cp)
+            if paragraph_properties_at is not None
+            else default_paragraph_properties
+        )
+        finish_paragraph(paragraph_properties)
 
     if field_stack:
         report.warning(
             "UNTERMINATED_FIELD",
             "main story contains an unterminated field; its instruction was hidden",
-            location=SourceLocation(story="main", cp_start=0, cp_end=len(text)),
+            location=SourceLocation(
+                story="main",
+                cp_start=characters[0].cp_start if characters else 0,
+                cp_end=characters[-1].cp_end if characters else 0,
+            ),
             open_field_count=len(field_stack),
         )
     if flattened_fields:

@@ -8,6 +8,7 @@ import struct
 from ..binary import BinaryReader
 from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import BinaryBoundsError, InvalidWordDocument
+from ..model import StoryCharacter
 
 
 _COMPRESSED_SPECIAL_CHARACTERS = {
@@ -78,7 +79,34 @@ class PieceTable:
                 f"range [{self.cp_start}, {self.cp_end})"
             )
 
-        chunks: list[str] = []
+        return "".join(
+            unit.text
+            for unit in self.extract_characters(
+                cp_start,
+                cp_end,
+                report,
+                story=story,
+            )
+        )
+
+    def extract_characters(
+        self,
+        cp_start: int,
+        cp_end: int,
+        report: ConversionReport,
+        *,
+        story: str,
+    ) -> tuple[StoryCharacter, ...]:
+        """Decode a CP range while retaining UTF-16 code-unit coordinates."""
+
+        if cp_start < self.cp_start or cp_end < cp_start or cp_end > self.cp_end:
+            raise InvalidWordDocument(
+                f"requested CP range [{cp_start}, {cp_end}) is outside Piece Table "
+                f"range [{self.cp_start}, {self.cp_end})"
+            )
+
+        characters: list[StoryCharacter] = []
+        invalid_utf16_ranges: list[tuple[int, int, int, int]] = []
         for piece in self.pieces:
             start = max(cp_start, piece.cp_start)
             end = min(cp_end, piece.cp_end)
@@ -97,30 +125,99 @@ class PieceTable:
                 )
             raw = self.word_document_stream[byte_start:byte_end]
             if piece.compressed:
-                chunks.append(
-                    "".join(
-                        _COMPRESSED_SPECIAL_CHARACTERS.get(value, chr(value))
-                        for value in raw
+                characters.extend(
+                    StoryCharacter(
+                        _COMPRESSED_SPECIAL_CHARACTERS.get(value, chr(value)),
+                        start + index,
+                        start + index + 1,
                     )
+                    for index, value in enumerate(raw)
                 )
             else:
-                try:
-                    chunks.append(raw.decode("utf-16le"))
-                except UnicodeDecodeError:
-                    chunks.append(raw.decode("utf-16le", errors="replace"))
-                    report.warning(
-                        "INVALID_UTF16",
-                        "invalid UTF-16LE sequence was replaced while reading text",
-                        location=SourceLocation(
-                            story=story,
-                            cp_start=start,
-                            cp_end=end,
-                            stream="WordDocument",
-                            fc_start=byte_start,
-                            fc_end=byte_end,
-                        ),
-                    )
-        return "".join(chunks)
+                code_units = struct.unpack(f"<{len(raw) // 2}H", raw)
+                index = 0
+                while index < len(code_units):
+                    code_unit = code_units[index]
+                    unit_cp = start + index
+                    if (
+                        0xD800 <= code_unit <= 0xDBFF
+                        and index + 1 < len(code_units)
+                        and 0xDC00 <= code_units[index + 1] <= 0xDFFF
+                    ):
+                        low = code_units[index + 1]
+                        scalar = 0x10000 + (
+                            ((code_unit - 0xD800) << 10) | (low - 0xDC00)
+                        )
+                        characters.append(
+                            StoryCharacter(chr(scalar), unit_cp, unit_cp + 2)
+                        )
+                        index += 2
+                        continue
+                    if 0xD800 <= code_unit <= 0xDFFF:
+                        characters.append(
+                            StoryCharacter("\uFFFD", unit_cp, unit_cp + 1)
+                        )
+                        invalid_utf16_ranges.append(
+                            (
+                                unit_cp,
+                                unit_cp + 1,
+                                byte_start + index * 2,
+                                byte_start + index * 2 + 2,
+                            )
+                        )
+                    else:
+                        characters.append(
+                            StoryCharacter(chr(code_unit), unit_cp, unit_cp + 1)
+                        )
+                    index += 1
+
+        for invalid_cp_start, invalid_cp_end, invalid_fc_start, invalid_fc_end in (
+            invalid_utf16_ranges
+        ):
+            report.warning(
+                "INVALID_UTF16",
+                "invalid UTF-16LE code unit was replaced while reading text",
+                location=SourceLocation(
+                    story=story,
+                    cp_start=invalid_cp_start,
+                    cp_end=invalid_cp_end,
+                    stream="WordDocument",
+                    fc_start=invalid_fc_start,
+                    fc_end=invalid_fc_end,
+                ),
+            )
+        return tuple(characters)
+
+    def fc_range_to_cp_ranges(
+        self,
+        fc_start: int,
+        fc_end: int,
+    ) -> tuple[tuple[int, int], ...]:
+        """Intersect a physical FC range with pieces and return CP ranges."""
+
+        if fc_start < 0 or fc_end < fc_start:
+            raise InvalidWordDocument(
+                f"invalid FC range [{fc_start}, {fc_end})"
+            )
+        ranges: list[tuple[int, int]] = []
+        for piece in self.pieces:
+            width = 1 if piece.compressed else 2
+            piece_fc_start = piece.file_offset
+            piece_fc_end = piece.file_offset + piece.character_count * width
+            start = max(fc_start, piece_fc_start)
+            end = min(fc_end, piece_fc_end)
+            if start >= end:
+                continue
+            if not piece.compressed and (
+                (start - piece_fc_start) % 2 or (end - piece_fc_start) % 2
+            ):
+                raise InvalidWordDocument(
+                    f"FKP FC range [{fc_start}, {fc_end}) splits a UTF-16 code unit"
+                )
+            cp_range_start = piece.cp_start + (start - piece_fc_start) // width
+            cp_range_end = piece.cp_start + (end - piece_fc_start) // width
+            ranges.append((cp_range_start, cp_range_end))
+        return tuple(ranges)
 
 
 def _parse_plc_pcd(data: bytes, word_document_stream: bytes) -> PieceTable:
@@ -217,4 +314,3 @@ def read_piece_table(
         raise InvalidWordDocument(f"truncated CLX/Piece Table: {exc}") from exc
 
     raise InvalidWordDocument("CLX does not contain a Pcdt/Piece Table")
-
