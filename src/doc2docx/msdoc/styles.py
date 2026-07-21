@@ -34,6 +34,7 @@ class _RawStyle:
     kind: str
     based_on: int | None
     next_style: int | None
+    table_modifiers: tuple[PropertyModifier, ...]
     paragraph_modifiers: tuple[PropertyModifier, ...]
     character_modifiers: tuple[PropertyModifier, ...]
 
@@ -106,6 +107,7 @@ def _parse_std(
             f"{label} has {len(data) - position} unexpected trailing bytes"
         )
 
+    table_modifiers: tuple[PropertyModifier, ...] = ()
     paragraph_modifiers: tuple[PropertyModifier, ...] = ()
     character_modifiers: tuple[PropertyModifier, ...] = ()
     if kind == "paragraph":
@@ -129,6 +131,30 @@ def _parse_std(
             label=f"{label}.UpxChpx.grpprl",
             allow_trailing_zero_padding=True,
         )
+    elif kind == "table":
+        # StkTableGRLPUPX stores optional TAPX, PAPX, and CHPX values in
+        # exactly this order. UpxPapx begins with an istd just like a
+        # paragraph-style UpxPapx; UpxChpx is a bare grpprl.
+        if upx_values:
+            table_modifiers = parse_grpprl(
+                upx_values[0],
+                label=f"{label}.UpxTapx.grpprl",
+                allow_trailing_zero_padding=True,
+            )
+        if len(upx_values) >= 2:
+            if len(upx_values[1]) < 2:
+                raise InvalidWordDocument(f"{label} UpxPapx has no istd")
+            paragraph_modifiers = parse_grpprl(
+                upx_values[1][2:],
+                label=f"{label}.UpxPapx.grpprl",
+                allow_trailing_zero_padding=True,
+            )
+        if len(upx_values) >= 3:
+            character_modifiers = parse_grpprl(
+                upx_values[2],
+                label=f"{label}.UpxChpx.grpprl",
+                allow_trailing_zero_padding=True,
+            )
 
     return _RawStyle(
         index=index,
@@ -136,6 +162,7 @@ def _parse_std(
         kind=kind,
         based_on=None if based_on_raw == 0x0FFF else based_on_raw,
         next_style=None if next_raw == 0x0FFF else next_raw,
+        table_modifiers=table_modifiers,
         paragraph_modifiers=paragraph_modifiers,
         character_modifiers=character_modifiers,
     )
@@ -205,6 +232,7 @@ def read_style_sheet(
     visiting: set[int] = set()
     unsupported_character: set[int] = set()
     unsupported_paragraph: set[int] = set()
+    unsupported_table: set[int] = set()
 
     def resolve(index: int) -> None:
         if definitions[index] is not None or raw_styles[index] is None:
@@ -223,9 +251,22 @@ def read_style_sheet(
             if effective_characters[raw.based_on] is not None:
                 parent_character = effective_characters[raw.based_on]  # type: ignore[assignment]
 
+        # A sprmTIstd inside UpxTapx identifies the style itself and MUST be
+        # ignored while applying that style. Other supported table modifiers
+        # are retained in table_row so they can be emitted in w:tblPr.
+        table_paragraph, unsupported = apply_paragraph_modifiers(
+            tuple(
+                modifier
+                for modifier in raw.table_modifiers
+                if modifier.opcode != 0x563A
+            ),
+            style_id=None,
+        )
+        unsupported_table.update(unsupported)
         direct_paragraph, unsupported = apply_paragraph_modifiers(
             raw.paragraph_modifiers,
             style_id=None,
+            initial_properties=table_paragraph,
         )
         unsupported_paragraph.update(unsupported)
         direct_character, unsupported, _ = apply_character_modifiers(
@@ -270,9 +311,15 @@ def read_style_sheet(
             "some paragraph properties in the DOC style sheet are not yet supported",
             opcodes=[f"0x{value:04X}" for value in sorted(unsupported_paragraph)],
         )
+    if unsupported_table:
+        report.warning(
+            "UNSUPPORTED_STYLE_TABLE_SPRMS",
+            "some table properties in the DOC style sheet are not yet supported",
+            opcodes=[f"0x{value:04X}" for value in sorted(unsupported_table)],
+        )
     deferred_kinds = sorted(
         {raw.kind for raw in raw_styles if raw is not None}
-        - {"paragraph", "character"}
+        - {"paragraph", "character", "table"}
     )
     if deferred_kinds:
         report.warning(

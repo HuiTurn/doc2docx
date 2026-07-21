@@ -4,13 +4,15 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M6a implementation supports unencrypted CFB/OLE Word documents,
+The current M0–M6b implementation supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
 UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
 preserves a useful first set of direct character and paragraph properties. It
 also reads the SttbfFfn font table, emits DOCX font definitions, converts
 paragraph/character styles with `basedOn` inheritance, resolves style-relative
-toggles, and applies simple and complex piece-level PRMs in specification order.
+toggles, parses unconditional table-style TAPX/PAPX/CHPX properties, preserves
+`sprmTIstd` as native DOCX table-style references, and applies simple and complex
+piece-level PRMs in specification order.
 It reconstructs tables from DOC cell/row markers, including nested tables, and
 preserves their column grid, preferred cell widths, basic merges, alignment,
 row sizing, Word 97 borders and shading, and default or range-specific cell
@@ -29,7 +31,9 @@ flags are emitted as compatible VML textboxes. `PAGE`, `NUMPAGES`, and
 display results. East Asian section document grids, grid-aware paragraph
 controls, script-specific font hints, language/proofing metadata, complex-script
 font size and emphasis, and Word's table-grid line-height compatibility setting
-are also carried into the DOCX package.
+are also carried into the DOCX package. Paragraph-mark formatting, spacing in
+hundredths of a line, and `sprmCSymbol` characters are preserved as native
+WordprocessingML run and symbol elements.
 
 ## Usage
 
@@ -51,14 +55,16 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-M6a currently preserves bold, italic, strike, double strike, capitalization,
+M6b currently preserves bold, italic, strike, double strike, capitalization,
 hidden text, underline, text color, highlight, font size, vertical alignment,
 paragraph justification, indents, spacing, line spacing, and keep/page-break
 flags, font names, paragraph/character style references, style inheritance,
 basic section/page layout, ordinary paragraph/table content in headers and
 footers, positioned header/footer textboxes, and basic dynamic page-number
 fields. It additionally distinguishes Latin/East Asian/complex-script run
-properties and preserves East Asian document-grid pagination controls.
+properties and preserves East Asian document-grid pagination controls. Basic
+unconditional table styles are emitted as `w:style` definitions and selected by
+`w:tblStyle`; conditional cell/band/corner variants remain deferred.
 Conditional table styles, newer color-based table shading, cell spacing,
 numbering styles, multi-column layout, page-number settings, header/footer
 non-textbox shapes and full OfficeArt styling, main-story textboxes, other
@@ -84,4 +90,5 @@ Sepx page-layout parsing, multi-section break placement, PlcfHdd guard and story
 mapping, header textbox/shape/field PLC validation, live PAGE-field output,
 header/footer OPC relationships, East Asian document grids and paragraph
 controls, script-specific language/font properties, malformed input checks, CLI
-coverage, and end-to-end DOCX package validation.
+coverage, symbol characters, paragraph-mark formatting, unconditional table-style
+inheritance, and end-to-end DOCX package validation.

@@ -1,10 +1,58 @@
 import unittest
 
 from doc2docx.diagnostics import ConversionReport
-from doc2docx.model import Break, BreakType, Field, Tab, TextRun, parse_main_story
+from doc2docx.model import (
+    Break,
+    BreakType,
+    CharacterProperties,
+    Field,
+    Symbol,
+    Tab,
+    TextRun,
+    parse_main_story,
+)
 
 
 class DocumentModelTests(unittest.TestCase):
+    def test_symbol_character_replaces_its_story_placeholder(self) -> None:
+        report = ConversionReport("symbol.doc")
+        symbol_properties = CharacterProperties(
+            symbol_font="Wingdings",
+            symbol_character_code=0xF03A,
+        )
+        document = parse_main_story(
+            "x\r",
+            report,
+            character_properties_at=(
+                lambda cp: symbol_properties if cp == 0 else CharacterProperties()
+            ),
+        )
+
+        self.assertEqual(
+            document.paragraphs[0].inlines,
+            (Symbol("Wingdings", 0xF03A),),
+        )
+        self.assertFalse(report.warnings)
+
+    def test_paragraph_mark_character_formatting_is_retained(self) -> None:
+        report = ConversionReport("paragraph-mark.doc")
+        mark_properties = CharacterProperties(
+            east_asia_font="SimSun",
+            complex_script_size_half_points=21,
+        )
+        document = parse_main_story(
+            "text\r",
+            report,
+            character_properties_at=(
+                lambda cp: mark_properties if cp == 4 else CharacterProperties()
+            ),
+        )
+
+        self.assertEqual(
+            document.paragraphs[0].mark_properties,
+            mark_properties,
+        )
+
     def test_story_control_characters_map_to_ir(self) -> None:
         report = ConversionReport("fixture.doc")
         document = parse_main_story("a\tb\vc\fd\r", report)

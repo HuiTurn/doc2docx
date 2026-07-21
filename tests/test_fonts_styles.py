@@ -6,7 +6,20 @@ import zipfile
 from xml.etree import ElementTree as ET
 
 from doc2docx.diagnostics import ConversionReport
-from doc2docx.model import CharacterProperties, Document, Paragraph, TextRun
+from doc2docx.model import (
+    CharacterProperties,
+    Document,
+    Paragraph,
+    ParagraphProperties,
+    StyleDefinition,
+    StyleSheet,
+    Symbol,
+    Table,
+    TableCell,
+    TableRow,
+    TableRowProperties,
+    TextRun,
+)
 from doc2docx.msdoc import read_font_table, read_style_sheet
 from doc2docx.ooxml import write_docx
 
@@ -83,7 +96,154 @@ def _style_sheet() -> bytes:
     )
 
 
+def _table_style_sheet() -> bytes:
+    normal = _paragraph_std(
+        "Normal",
+        index=0,
+        based_on=None,
+        character_grpprl=b"",
+    )
+    derived = _paragraph_std(
+        "Derived",
+        index=1,
+        based_on=0,
+        character_grpprl=b"",
+    )
+    table_index = 2
+    table_base = struct.pack(
+        "<5H",
+        0,
+        (0x0FFF << 4) | 3,
+        (table_index << 4) | 3,
+        0,
+        0,
+    )
+    default_margins = struct.pack("<BBBBBH", 6, 0, 1, 0x0A, 3, 108)
+    tapx = (
+        struct.pack("<HH", 0x563A, table_index)
+        + struct.pack("<H", 0xD634)
+        + default_margins
+    )
+    papx = struct.pack("<HHB", table_index, 0x2403, 3)
+    chpx = struct.pack("<HH", 0x4A50, 0)
+    table = (
+        table_base
+        + _xstz("Plain Table")
+        + _lpupx(tapx)
+        + _lpupx(papx)
+        + _lpupx(chpx)
+    )
+    stshif = struct.pack("<6H3h", 3, 10, 0, 3, 0, 0, 0, 0, 0)
+    return b"".join(
+        (
+            struct.pack("<H", len(stshif)),
+            stshif,
+            struct.pack("<H", len(normal)),
+            normal,
+            struct.pack("<H", len(derived)),
+            derived,
+            struct.pack("<H", len(table)),
+            table,
+        )
+    )
+
+
 class FontAndStyleTests(unittest.TestCase):
+    def test_root_style_materializes_document_default_fonts(self) -> None:
+        effective = CharacterProperties(
+            ascii_font="Times New Roman",
+            high_ansi_font="Times New Roman",
+            east_asia_font="SimSun",
+            size_half_points=21,
+        )
+        style_sheet = StyleSheet(
+            styles=(
+                StyleDefinition(
+                    index=0,
+                    name="Normal",
+                    kind="paragraph",
+                    character_properties=CharacterProperties(
+                        size_half_points=21,
+                    ),
+                ),
+            ),
+            default_character_properties=CharacterProperties(
+                ascii_font="Times New Roman",
+                high_ansi_font="Times New Roman",
+                east_asia_font="SimSun",
+            ),
+            effective_character_properties=(effective,),
+        )
+        document = Document(
+            (Paragraph((TextRun("Styled"),)),),
+            styles=style_sheet,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "root-style.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/styles.xml"))
+
+        fonts = root.find(f"{W}style/{W}rPr/{W}rFonts")
+        assert fonts is not None
+        self.assertEqual(fonts.get(f"{W}ascii"), "Times New Roman")
+        self.assertEqual(fonts.get(f"{W}hAnsi"), "Times New Roman")
+        self.assertEqual(fonts.get(f"{W}eastAsia"), "SimSun")
+
+    def test_writes_paragraph_spacing_in_line_units(self) -> None:
+        document = Document(
+            (
+                Paragraph(
+                    (TextRun("Grid spacing"),),
+                    ParagraphProperties(
+                        space_before_lines=25,
+                        space_after_lines=50,
+                    ),
+                    mark_properties=CharacterProperties(
+                        east_asia_font="SimSun",
+                        complex_script_size_half_points=21,
+                    ),
+                ),
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "paragraph-spacing.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        spacing = root.find(f".//{W}spacing")
+        assert spacing is not None
+        self.assertEqual(spacing.get(f"{W}beforeLines"), "25")
+        self.assertEqual(spacing.get(f"{W}afterLines"), "50")
+        mark_properties = root.find(f".//{W}pPr/{W}rPr")
+        assert mark_properties is not None
+        mark_fonts = mark_properties.find(f"{W}rFonts")
+        assert mark_fonts is not None
+        self.assertEqual(mark_fonts.get(f"{W}eastAsia"), "SimSun")
+        self.assertEqual(
+            mark_properties.find(f"{W}szCs").get(f"{W}val"),  # type: ignore[union-attr]
+            "21",
+        )
+
+    def test_writes_symbol_character(self) -> None:
+        document = Document(
+            (Paragraph((Symbol("Wingdings", 0xF03A),)),),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "symbol.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        symbol = root.find(f".//{W}sym")
+        assert symbol is not None
+        self.assertEqual(symbol.get(f"{W}font"), "Wingdings")
+        self.assertEqual(symbol.get(f"{W}char"), "F03A")
+
     def test_writes_script_specific_character_properties(self) -> None:
         properties = CharacterProperties(
             east_asia_font="SimSun",
@@ -167,6 +327,76 @@ class FontAndStyleTests(unittest.TestCase):
         )
         self.assertFalse(styles.effective_character_at(1).bold)
         self.assertFalse(report.warnings)
+
+    def test_parses_and_writes_unconditional_table_style_properties(self) -> None:
+        font_bytes = _font_table()
+        fonts = read_font_table(font_bytes, offset=0, size=len(font_bytes))
+        style_bytes = _table_style_sheet()
+        report = ConversionReport("table-style.doc")
+        styles = read_style_sheet(
+            style_bytes,
+            offset=0,
+            size=len(style_bytes),
+            fonts=fonts,
+            report=report,
+        )
+        table_style = styles.styles[2]
+        assert table_style is not None
+        self.assertEqual(table_style.kind, "table")
+        self.assertEqual(table_style.paragraph_properties.justification, "both")
+        self.assertEqual(
+            table_style.character_properties.east_asia_font,
+            "Times New Roman",
+        )
+        assert table_style.paragraph_properties.table_row is not None
+        self.assertEqual(
+            table_style.paragraph_properties.table_row.default_cell_margins.left,
+            108,
+        )
+        self.assertFalse(report.warnings)
+
+        paragraph = Paragraph((TextRun("Styled cell"),))
+        table = Table(
+            (
+                TableRow(
+                    (TableCell((paragraph,)),),
+                    TableRowProperties(table_style_id=2),
+                ),
+            )
+        )
+        document = Document(
+            (paragraph,),
+            fonts,
+            styles,
+            blocks=(table,),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "table-style.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                document_root = ET.fromstring(package.read("word/document.xml"))
+                style_root = ET.fromstring(package.read("word/styles.xml"))
+
+        table_reference = document_root.find(f".//{W}tblPr/{W}tblStyle")
+        assert table_reference is not None
+        self.assertEqual(table_reference.get(f"{W}val"), "DocStyle2")
+        table_style_xml = style_root.find(f"{W}style[@{W}styleId='DocStyle2']")
+        assert table_style_xml is not None
+        self.assertEqual(table_style_xml.get(f"{W}type"), "table")
+        self.assertEqual(
+            table_style_xml.find(f"{W}pPr/{W}jc").get(f"{W}val"),  # type: ignore[union-attr]
+            "both",
+        )
+        self.assertEqual(
+            table_style_xml.find(f"{W}rPr/{W}rFonts").get(f"{W}eastAsia"),  # type: ignore[union-attr]
+            "Times New Roman",
+        )
+        self.assertEqual(
+            table_style_xml.find(f"{W}tblPr/{W}tblCellMar/{W}left").get(  # type: ignore[union-attr]
+                f"{W}w"
+            ),
+            "108",
+        )
 
     def test_writes_font_and_style_parts_with_relationships(self) -> None:
         font_bytes = _font_table()

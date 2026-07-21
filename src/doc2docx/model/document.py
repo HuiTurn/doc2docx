@@ -57,6 +57,8 @@ class CharacterProperties:
     language: str | None = None
     east_asia_language: str | None = None
     complex_script_language: str | None = None
+    symbol_font: str | None = None
+    symbol_character_code: int | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -115,6 +117,7 @@ class TableCellDefinition:
 
 @dataclass(slots=True, frozen=True)
 class TableRowProperties:
+    table_style_id: int | None = None
     cell_boundaries_twips: tuple[int, ...] = ()
     cell_definitions: tuple[TableCellDefinition, ...] = ()
     alignment: str | None = None
@@ -155,6 +158,8 @@ class ParagraphProperties:
     first_line_indent_twips: int | None = None
     space_before_twips: int | None = None
     space_after_twips: int | None = None
+    space_before_lines: int | None = None
+    space_after_lines: int | None = None
     line_spacing_twips: int | None = None
     line_rule: str | None = None
     in_table: bool | None = None
@@ -250,6 +255,13 @@ class TextRun:
 
 
 @dataclass(slots=True, frozen=True)
+class Symbol:
+    font: str
+    character_code: int
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+
+
+@dataclass(slots=True, frozen=True)
 class Tab:
     properties: CharacterProperties = field(default_factory=CharacterProperties)
 
@@ -293,7 +305,7 @@ class FloatingTextBox:
         return self.blocks or self.paragraphs
 
 
-Inline = TextRun | Tab | Break | Field | FloatingTextBox
+Inline = TextRun | Symbol | Tab | Break | Field | FloatingTextBox
 
 
 @dataclass(slots=True, frozen=True)
@@ -330,6 +342,9 @@ class Paragraph:
     inlines: tuple[Inline, ...]
     properties: ParagraphProperties = field(default_factory=ParagraphProperties)
     section_end: SectionProperties | None = None
+    mark_properties: CharacterProperties = field(
+        default_factory=CharacterProperties
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -700,9 +715,15 @@ def parse_main_story(
     def finish_paragraph(
         properties: ParagraphProperties,
         section_end: SectionProperties | None = None,
+        mark_properties: CharacterProperties = default_character_properties,
     ) -> None:
         flush_text()
-        paragraph = Paragraph(tuple(inlines), properties, section_end)
+        paragraph = Paragraph(
+            tuple(inlines),
+            properties,
+            section_end,
+            mark_properties,
+        )
         paragraphs.append(paragraph)
         flow.append(paragraph)
         inlines.clear()
@@ -766,13 +787,22 @@ def parse_main_story(
             )
             if paragraph_properties.inner_table_row:
                 if text_buffer or inlines:
-                    finish_paragraph(paragraph_properties)
+                    finish_paragraph(
+                        paragraph_properties,
+                        mark_properties=character_properties,
+                    )
                 flow.append(_TableMarker("row", paragraph_properties))
             elif paragraph_properties.inner_table_cell:
-                finish_paragraph(paragraph_properties)
+                finish_paragraph(
+                    paragraph_properties,
+                    mark_properties=character_properties,
+                )
                 flow.append(_TableMarker("cell", paragraph_properties))
             else:
-                finish_paragraph(paragraph_properties)
+                finish_paragraph(
+                    paragraph_properties,
+                    mark_properties=character_properties,
+                )
             last_was_terminator = True
         elif character == "\t":
             flush_text()
@@ -790,7 +820,11 @@ def parse_main_story(
                     if paragraph_properties_at is not None
                     else default_paragraph_properties
                 )
-                finish_paragraph(paragraph_properties, section)
+                finish_paragraph(
+                    paragraph_properties,
+                    section,
+                    character_properties,
+                )
                 matched_section_ends.add(section.cp_end)
                 last_was_terminator = True
             else:
@@ -810,10 +844,16 @@ def parse_main_story(
             if paragraph_properties.effective_table_depth:
                 if paragraph_properties.table_terminating:
                     if text_buffer or inlines:
-                        finish_paragraph(paragraph_properties)
+                        finish_paragraph(
+                            paragraph_properties,
+                            mark_properties=character_properties,
+                        )
                     flow.append(_TableMarker("row", paragraph_properties))
                 else:
-                    finish_paragraph(paragraph_properties)
+                    finish_paragraph(
+                        paragraph_properties,
+                        mark_properties=character_properties,
+                    )
                     flow.append(_TableMarker("cell", paragraph_properties))
                 last_was_terminator = True
             else:
@@ -840,6 +880,23 @@ def parse_main_story(
             }[value]
             deferred_markers[marker_code] = deferred_markers.get(marker_code, 0) + 1
             append_text("\uFFFC", character_properties)
+            last_was_terminator = False
+        elif (
+            character_properties.symbol_font is not None
+            and character_properties.symbol_character_code is not None
+        ):
+            flush_text()
+            current_inlines().append(
+                Symbol(
+                    font=character_properties.symbol_font,
+                    character_code=character_properties.symbol_character_code,
+                    properties=replace(
+                        character_properties,
+                        symbol_font=None,
+                        symbol_character_code=None,
+                    ),
+                )
+            )
             last_was_terminator = False
         elif value < 0x20 or not _is_xml_character(character):
             unsupported_controls[value] = unsupported_controls.get(value, 0) + 1

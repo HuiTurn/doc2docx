@@ -24,6 +24,7 @@ from ..model import (
     SectionProperties,
     ShadingProperties,
     StyleSheet,
+    Symbol,
     Tab,
     Table,
     TableBorders,
@@ -410,7 +411,10 @@ def _append_paragraph_properties(
     properties: ParagraphProperties,
     *,
     valid_style_ids: set[int] | None = None,
+    mark_properties: CharacterProperties | None = None,
+    valid_mark_style_ids: set[int] | None = None,
 ) -> None:
+    mark_properties = mark_properties or CharacterProperties()
     serializable = (
         (
             properties.style_id is not None
@@ -434,7 +438,10 @@ def _append_paragraph_properties(
         or properties.first_line_indent_twips is not None
         or properties.space_before_twips is not None
         or properties.space_after_twips is not None
+        or properties.space_before_lines is not None
+        or properties.space_after_lines is not None
         or properties.line_spacing_twips is not None
+        or _has_character_properties(mark_properties)
     )
     if not serializable:
         return
@@ -505,6 +512,10 @@ def _append_paragraph_properties(
         spacing[_qn(W_NS, "before")] = str(properties.space_before_twips)
     if properties.space_after_twips is not None:
         spacing[_qn(W_NS, "after")] = str(properties.space_after_twips)
+    if properties.space_before_lines is not None:
+        spacing[_qn(W_NS, "beforeLines")] = str(properties.space_before_lines)
+    if properties.space_after_lines is not None:
+        spacing[_qn(W_NS, "afterLines")] = str(properties.space_after_lines)
     if properties.line_spacing_twips is not None:
         spacing[_qn(W_NS, "line")] = str(properties.line_spacing_twips)
     if properties.line_rule is not None:
@@ -533,6 +544,16 @@ def _append_paragraph_properties(
             _qn(W_NS, "jc"),
             {_qn(W_NS, "val"): properties.justification},
         )
+    if _has_character_properties(mark_properties):
+        mark_run_properties = ET.SubElement(
+            paragraph_properties,
+            _qn(W_NS, "rPr"),
+        )
+        _append_character_property_elements(
+            mark_run_properties,
+            mark_properties,
+            valid_style_ids=valid_mark_style_ids,
+        )
 
 
 def _append_text_run(
@@ -548,6 +569,28 @@ def _append_text_run(
     if text[:1].isspace() or text[-1:].isspace() or "  " in text:
         text_element.set(_qn(XML_NS, "space"), "preserve")
     text_element.text = text
+
+
+def _append_symbol(
+    paragraph_element: ET.Element,
+    symbol: Symbol,
+    *,
+    valid_style_ids: set[int],
+) -> None:
+    run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    _append_run_properties(
+        run,
+        symbol.properties,
+        valid_style_ids=valid_style_ids,
+    )
+    ET.SubElement(
+        run,
+        _qn(W_NS, "sym"),
+        {
+            _qn(W_NS, "font"): symbol.font,
+            _qn(W_NS, "char"): f"{symbol.character_code:04X}",
+        },
+    )
 
 
 def _twips_as_points(value: int) -> str:
@@ -698,7 +741,7 @@ def _append_floating_textbox(
 
 def _append_inline(
     paragraph_element: ET.Element,
-    inline: TextRun | Tab | Break | Field | FloatingTextBox,
+    inline: TextRun | Symbol | Tab | Break | Field | FloatingTextBox,
     *,
     valid_paragraph_style_ids: set[int],
     valid_character_style_ids: set[int],
@@ -708,6 +751,12 @@ def _append_inline(
             paragraph_element,
             inline.text,
             inline.properties,
+            valid_style_ids=valid_character_style_ids,
+        )
+    elif isinstance(inline, Symbol):
+        _append_symbol(
+            paragraph_element,
+            inline,
             valid_style_ids=valid_character_style_ids,
         )
     elif isinstance(inline, Tab):
@@ -826,6 +875,8 @@ def _append_paragraph(
         paragraph_element,
         paragraph.properties,
         valid_style_ids=valid_paragraph_style_ids,
+        mark_properties=paragraph.mark_properties,
+        valid_mark_style_ids=valid_character_style_ids,
     )
     if paragraph.section_end is not None:
         paragraph_properties = paragraph_element.find(_qn(W_NS, "pPr"))
@@ -941,12 +992,58 @@ def _append_shading(
     )
 
 
+def _append_table_property_elements(
+    parent: ET.Element,
+    properties: TableRowProperties,
+    *,
+    include_width: bool,
+) -> None:
+    if include_width:
+        ET.SubElement(
+            parent,
+            _qn(W_NS, "tblW"),
+            {_qn(W_NS, "w"): "0", _qn(W_NS, "type"): "auto"},
+        )
+    if properties.alignment is not None:
+        ET.SubElement(
+            parent,
+            _qn(W_NS, "jc"),
+            {_qn(W_NS, "val"): properties.alignment},
+        )
+    indent = properties.left_indent_twips
+    if indent is None and properties.gap_half_twips is not None:
+        # WordprocessingML's tblInd is measured from the text margin;
+        # unlike DOC's table origin it must not subtract dxaGapHalf again.
+        indent = 0
+    if indent is not None:
+        ET.SubElement(
+            parent,
+            _qn(W_NS, "tblInd"),
+            {
+                _qn(W_NS, "w"): str(indent),
+                _qn(W_NS, "type"): "dxa",
+            },
+        )
+    _append_borders(
+        parent,
+        "tblBorders",
+        properties.borders,
+        include_inside=True,
+    )
+    _append_cell_margins(
+        parent,
+        properties.default_cell_margins,
+        container_name="tblCellMar",
+    )
+
+
 def _append_table_cell(
     row_element: ET.Element,
     cell: TableCell,
     *,
     valid_paragraph_style_ids: set[int],
     valid_character_style_ids: set[int],
+    valid_table_style_ids: set[int],
 ) -> None:
     cell_element = ET.SubElement(row_element, _qn(W_NS, "tc"))
     has_properties = (
@@ -1030,46 +1127,26 @@ def _append_table(
     *,
     valid_paragraph_style_ids: set[int],
     valid_character_style_ids: set[int],
+    valid_table_style_ids: set[int] | None = None,
 ) -> None:
     table_element = ET.SubElement(body, _qn(W_NS, "tbl"))
     first_properties = table.rows[0].properties if table.rows else None
     if first_properties is not None:
         table_properties = ET.SubElement(table_element, _qn(W_NS, "tblPr"))
-        ET.SubElement(
-            table_properties,
-            _qn(W_NS, "tblW"),
-            {_qn(W_NS, "w"): "0", _qn(W_NS, "type"): "auto"},
-        )
-        if first_properties.alignment is not None:
+        if (
+            first_properties.table_style_id is not None
+            and valid_table_style_ids is not None
+            and first_properties.table_style_id in valid_table_style_ids
+        ):
             ET.SubElement(
                 table_properties,
-                _qn(W_NS, "jc"),
-                {_qn(W_NS, "val"): first_properties.alignment},
+                _qn(W_NS, "tblStyle"),
+                {_qn(W_NS, "val"): f"DocStyle{first_properties.table_style_id}"},
             )
-        indent = first_properties.left_indent_twips
-        if indent is None and first_properties.gap_half_twips is not None:
-            # WordprocessingML's tblInd is measured from the text margin;
-            # unlike DOC's table origin it must not subtract dxaGapHalf again.
-            indent = 0
-        if indent is not None:
-            ET.SubElement(
-                table_properties,
-                _qn(W_NS, "tblInd"),
-                {
-                    _qn(W_NS, "w"): str(indent),
-                    _qn(W_NS, "type"): "dxa",
-                },
-            )
-        _append_borders(
+        _append_table_property_elements(
             table_properties,
-            "tblBorders",
-            first_properties.borders,
-            include_inside=True,
-        )
-        _append_cell_margins(
-            table_properties,
-            first_properties.default_cell_margins,
-            container_name="tblCellMar",
+            first_properties,
+            include_width=True,
         )
 
     grid = ET.SubElement(table_element, _qn(W_NS, "tblGrid"))
@@ -1108,6 +1185,7 @@ def _append_table(
                 cell,
                 valid_paragraph_style_ids=valid_paragraph_style_ids,
                 valid_character_style_ids=valid_character_style_ids,
+                valid_table_style_ids=valid_table_style_ids or set(),
             )
 
 
@@ -1124,6 +1202,11 @@ def _document_xml(
         style.index
         for style in document.styles.styles
         if style is not None and style.kind == "character"
+    }
+    valid_table_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "table"
     }
     root = ET.Element(_qn(W_NS, "document"))
     body = ET.SubElement(root, _qn(W_NS, "body"))
@@ -1150,6 +1233,7 @@ def _document_xml(
                 block,
                 valid_paragraph_style_ids=valid_paragraph_style_ids,
                 valid_character_style_ids=valid_character_style_ids,
+                valid_table_style_ids=valid_table_style_ids,
             )
     if document.sections:
         _append_section_properties(
@@ -1181,6 +1265,11 @@ def _header_footer_xml(
         for style in document.styles.styles
         if style is not None and style.kind == "character"
     }
+    valid_table_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "table"
+    }
     root = ET.Element(_qn(W_NS, "hdr" if part.kind == "header" else "ftr"))
     blocks = part.story.body_blocks
     for block in blocks:
@@ -1197,6 +1286,7 @@ def _header_footer_xml(
                 block,
                 valid_paragraph_style_ids=valid_paragraph_style_ids,
                 valid_character_style_ids=valid_character_style_ids,
+                valid_table_style_ids=valid_table_style_ids,
             )
     if not blocks:
         ET.SubElement(root, _qn(W_NS, "p"))
@@ -1293,10 +1383,10 @@ def _styles_xml(style_sheet: StyleSheet) -> bytes:
     emitted_by_id = {
         style.index: style
         for style in style_sheet.styles
-        if style is not None and style.kind in ("paragraph", "character")
+        if style is not None and style.kind in ("paragraph", "character", "table")
     }
     for style in style_sheet.styles:
-        if style is None or style.kind not in ("paragraph", "character"):
+        if style is None or style.kind not in ("paragraph", "character", "table"):
             continue
         attributes = {
             _qn(W_NS, "type"): style.kind,
@@ -1337,7 +1427,15 @@ def _styles_xml(style_sheet: StyleSheet) -> bytes:
         if paragraph_properties is not None:
             element.append(paragraph_properties)
         character_properties = style.character_properties
-        if parent is not None and not same_kind_parent:
+        if style.based_on is None and style.kind in ("paragraph", "character"):
+            # DOC's Stshi defaults sit below every style in the inheritance
+            # chain. WordprocessingML has no implicit access to that binary
+            # layer, so root styles need their effective properties
+            # materialized (notably the default Latin/East Asian fonts).
+            character_properties = style_sheet.effective_character_at(
+                style.index
+            )
+        elif parent is not None and not same_kind_parent:
             # WordprocessingML ignores basedOn across style types. DOC files
             # can base a character style on Normal, so materialize the resolved
             # character properties in that case instead of emitting an invalid
@@ -1349,6 +1447,16 @@ def _styles_xml(style_sheet: StyleSheet) -> bytes:
                 run_properties,
                 character_properties,
                 valid_style_ids=emitted_ids,
+            )
+        if (
+            style.kind == "table"
+            and style.paragraph_properties.table_row is not None
+        ):
+            table_properties = ET.SubElement(element, _qn(W_NS, "tblPr"))
+            _append_table_property_elements(
+                table_properties,
+                style.paragraph_properties.table_row,
+                include_width=False,
             )
     return _xml_bytes(root)
 
@@ -1363,7 +1471,7 @@ def _write_part(package: zipfile.ZipFile, name: str, data: bytes) -> None:
 def write_docx(document: Document, destination: str | Path) -> None:
     output = Path(destination)
     has_styles = any(
-        style is not None and style.kind in ("paragraph", "character")
+        style is not None and style.kind in ("paragraph", "character", "table")
         for style in document.styles.styles
     )
     has_fonts = bool(document.fonts)

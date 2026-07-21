@@ -17,7 +17,7 @@ from .errors import (
     InvalidWordDocument,
     UnsafeOutputPathError,
 )
-from .model import Document, Paragraph, Table, parse_main_story
+from .model import Document, Paragraph, Symbol, Table, parse_main_story
 from .msdoc import (
     FileInformationBlock,
     read_document_settings,
@@ -229,11 +229,21 @@ def convert(
             "style_count": sum(
                 1 for style in style_sheet.styles if style is not None
             ),
+            "table_style_count": sum(
+                1
+                for style in style_sheet.styles
+                if style is not None and style.kind == "table"
+            ),
             "piece_prm_count": sum(
                 1 for piece in piece_table.pieces if piece.prm
             ),
             "clx_prc_count": len(piece_table.prcs),
             "table_count": len(tables),
+            "styled_table_count": sum(
+                bool(table.rows)
+                and table.rows[0].properties.table_style_id is not None
+                for table in tables
+            ),
             "table_row_count": sum(len(table.rows) for table in tables),
             "table_cell_count": sum(
                 len(row.cells) for table in tables for row in table.rows
@@ -249,6 +259,11 @@ def convert(
             "header_footer_paragraph_count": header_footers.paragraph_count,
             "header_textbox_count": header_textboxes.textbox_count,
             "header_textbox_field_count": header_textboxes.field_count,
+            "symbol_character_count": sum(
+                isinstance(inline, Symbol)
+                for paragraph in document.paragraphs
+                for inline in paragraph.inlines
+            ),
         }
     )
     if fib.base.has_pictures:
@@ -262,7 +277,7 @@ def convert(
     if secondary_stories:
         report.warning(
             "SECONDARY_STORIES_DEFERRED",
-            "some secondary document stories remain unsupported after M6a",
+            "some secondary document stories remain unsupported after M6b",
             stories=secondary_stories,
         )
 
@@ -293,7 +308,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M6a conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M6b conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

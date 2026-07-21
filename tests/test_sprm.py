@@ -72,6 +72,32 @@ class SprmTests(unittest.TestCase):
         self.assertTrue(character.complex_script_bold)
         self.assertFalse(character.complex_script_italic)
 
+    def test_symbol_character_uses_its_font_table_entry(self) -> None:
+        character, unsupported, _ = apply_character_modifiers(
+            parse_grpprl(
+                struct.pack("<HHH", 0x6A09, 3, 0xF03A),
+                label="symbol.grpprl",
+            ),
+            font_names={3: "Wingdings"},
+        )
+
+        self.assertFalse(unsupported)
+        self.assertEqual(character.symbol_font, "Wingdings")
+        self.assertEqual(character.symbol_character_code, 0xF03A)
+
+    def test_paragraph_spacing_in_line_units_is_preserved(self) -> None:
+        properties, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(
+                struct.pack("<HhHh", 0x4458, 25, 0x4459, 50),
+                label="line-spacing.grpprl",
+            ),
+            style_id=0,
+        )
+
+        self.assertFalse(unsupported)
+        self.assertEqual(properties.space_before_lines, 25)
+        self.assertEqual(properties.space_after_lines, 50)
+
     def test_cell_margins_and_word97_shading_are_parsed(self) -> None:
         default_margin = struct.pack("<BBBBBH", 6, 0, 1, 0x0A, 3, 108)
         cell_margin = struct.pack("<BBBBBH", 6, 1, 2, 0x05, 3, 36)
@@ -134,6 +160,19 @@ class SprmTests(unittest.TestCase):
         top_border = properties.table_row.borders.top
         assert top_border is not None
         self.assertEqual(top_border.style, "single")
+
+    def test_table_style_identifier_is_retained_on_the_row(self) -> None:
+        properties, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(
+                struct.pack("<HH", 0x563A, 11),
+                label="table-style.grpprl",
+            ),
+            style_id=0,
+        )
+
+        self.assertFalse(unsupported)
+        assert properties.table_row is not None
+        self.assertEqual(properties.table_row.table_style_id, 11)
 
     def test_large_tdef_table_uses_its_16_bit_length(self) -> None:
         column_count = 12

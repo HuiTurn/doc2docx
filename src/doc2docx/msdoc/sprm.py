@@ -502,6 +502,17 @@ def apply_character_modifiers(
                 0x4A5E: "complex_script_font",
             }[opcode]
             properties = replace(properties, **{attribute: font_name})
+        elif opcode == 0x6A09:  # sprmCSymbol
+            font_index, character_code = struct.unpack("<HH", operand)
+            font_name = font_names.get(font_index)
+            if font_name is None:
+                unsupported.add(opcode)
+            else:
+                properties = replace(
+                    properties,
+                    symbol_font=font_name,
+                    symbol_character_code=character_code,
+                )
         elif opcode == 0x2A3E:
             underline = _UNDERLINES.get(operand[0])
             if underline is None:
@@ -644,6 +655,15 @@ def apply_paragraph_modifiers(
             properties = replace(properties, inner_table_cell=bool(operand[0]))
         elif opcode == 0x244C:
             properties = replace(properties, inner_table_row=bool(operand[0]))
+        elif opcode == 0x563A:  # sprmTIstd
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    table_style_id=struct.unpack("<H", operand)[0],
+                ),
+            )
         elif opcode == 0x5400:
             alignment = {0: "left", 1: "center", 2: "right"}.get(
                 struct.unpack("<H", operand)[0]
@@ -801,6 +821,18 @@ def apply_paragraph_modifiers(
                 properties,
                 space_after_twips=struct.unpack("<H", operand)[0],
             )
+        elif opcode in (0x4458, 0x4459):  # sprmPDylBefore / sprmPDylAfter
+            line_hundredths = struct.unpack("<h", operand)[0]
+            if not -20 <= line_hundredths <= 31680:
+                unsupported.add(opcode)
+            else:
+                attribute = (
+                    "space_before_lines" if opcode == 0x4458 else "space_after_lines"
+                )
+                properties = replace(
+                    properties,
+                    **{attribute: line_hundredths},
+                )
         elif opcode == 0x6412:
             raw_line, multiple = struct.unpack("<HH", operand)
             signed_line = struct.unpack("<h", operand[:2])[0]
