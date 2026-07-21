@@ -25,6 +25,40 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class DocumentModelTests(unittest.TestCase):
+    def test_character_effects_scale_and_emphasis_are_written(self) -> None:
+        character = CharacterProperties(
+            outline=True,
+            shadow=False,
+            emboss=True,
+            imprint=False,
+            scale_percent=125,
+            emphasis="underDot",
+        )
+        document = Document((Paragraph((TextRun("effects", character),)),))
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "character-effects.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        run_properties = root.find(f"./{W}body/{W}p/{W}r/{W}rPr")
+        assert run_properties is not None
+        self.assertIsNotNone(run_properties.find(f"{W}outline"))
+        shadow = run_properties.find(f"{W}shadow")
+        assert shadow is not None
+        self.assertEqual(shadow.get(f"{W}val"), "0")
+        self.assertIsNotNone(run_properties.find(f"{W}emboss"))
+        imprint = run_properties.find(f"{W}imprint")
+        assert imprint is not None
+        self.assertEqual(imprint.get(f"{W}val"), "0")
+        scale = run_properties.find(f"{W}w")
+        assert scale is not None
+        self.assertEqual(scale.get(f"{W}val"), "125")
+        emphasis = run_properties.find(f"{W}em")
+        assert emphasis is not None
+        self.assertEqual(emphasis.get(f"{W}val"), "underDot")
+
     def test_symbol_character_replaces_its_story_placeholder(self) -> None:
         report = ConversionReport("symbol.doc")
         symbol_properties = CharacterProperties(

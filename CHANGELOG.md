@@ -5,6 +5,22 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+### M15a
+
+- Follow `sprmPTableProps` and `sprmPHugePapx` references into bounded
+  `PrcData` structures in the Data Stream, including cycle detection and the
+  MS-DOC rule that processing an indirection ends the containing property list.
+- Preserve table-cell insertion and column widths, modern raw cell shading,
+  table-formatting revision IDs, and printer-independent paper sizing while
+  safely ignoring the implementation-specific paper-selection tie breaker.
+- Preserve character outline, shadow, emboss, imprint, emphasis-mark, and
+  horizontal-scale properties in native WordprocessingML.
+- Validate with 156 focused tests and a 42-file real-DOC regression batch: all
+  40 Word 97–2003 files still convert, the two remaining files are Word 6/95,
+  and the targeted table and footnote samples no longer report their previous
+  unsupported-property warnings. Reopen and render the generated packages to
+  verify the four-column header table and character-formatting paths.
+
 ## 0.30.0 - 2026-07-22 (M14a-M14b)
 
 - Preserve character-formatting, text-insertion, and paragraph-formatting

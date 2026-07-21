@@ -95,10 +95,14 @@ _CHARACTER_TOGGLES = {
     0x0835: "bold",
     0x0836: "italic",
     0x0837: "strike",
+    0x0838: "outline",
+    0x0839: "shadow",
     0x083A: "small_caps",
     0x083B: "caps",
     0x083C: "hidden",
+    0x0854: "imprint",
     0x0855: "special",
+    0x0858: "emboss",
     0x085C: "complex_script_bold",
     0x085D: "complex_script_italic",
     0x0868: "snap_to_grid",
@@ -128,6 +132,14 @@ _FONT_HINTS = {
     0x00: "default",
     0x01: "eastAsia",
     0x02: "cs",
+}
+
+_EMPHASIS_MARKS = {
+    0x00: "none",
+    0x01: "dot",
+    0x02: "comma",
+    0x03: "circle",
+    0x04: "underDot",
 }
 
 _LANGUAGE_ATTRIBUTES = {
@@ -507,6 +519,74 @@ def _parse_table_look(operand: bytes) -> dict[str, bool]:
     }
 
 
+def _table_widths(row: TableRowProperties) -> tuple[int, list[int]]:
+    boundaries = row.cell_boundaries_twips
+    if not boundaries:
+        return 0, []
+    if len(boundaries) != len(row.cell_definitions) + 1:
+        raise InvalidWordDocument(
+            "table cell boundaries do not match the cell definitions"
+        )
+    return boundaries[0], [
+        right - left for left, right in zip(boundaries, boundaries[1:])
+    ]
+
+
+def _replace_table_widths(
+    row: TableRowProperties,
+    start: int,
+    widths: list[int],
+    definitions: list[TableCellDefinition],
+) -> TableRowProperties:
+    if any(width < 0 for width in widths) or sum(widths) > 31680:
+        raise InvalidWordDocument("table column widths exceed the MS-DOC range")
+    boundaries = [start]
+    for width in widths:
+        boundaries.append(boundaries[-1] + width)
+    return replace(
+        row,
+        cell_boundaries_twips=tuple(boundaries),
+        cell_definitions=tuple(definitions),
+    )
+
+
+def _insert_table_cells(
+    row: TableRowProperties,
+    operand: bytes,
+) -> TableRowProperties:
+    if len(operand) != 4:
+        raise InvalidWordDocument("TInsertOperand must contain exactly four bytes")
+    first_cell, cell_count, width = struct.unpack("<BBH", operand)
+    start, widths = _table_widths(row)
+    definitions = list(row.cell_definitions)
+    if not cell_count or first_cell > len(widths) or len(widths) + cell_count > 63:
+        raise InvalidWordDocument("TInsertOperand has an invalid cell range")
+    if width * cell_count + sum(widths) > 31680:
+        raise InvalidWordDocument("TInsertOperand makes the table too wide")
+    widths[first_cell:first_cell] = [width] * cell_count
+    definitions[first_cell:first_cell] = [TableCellDefinition()] * cell_count
+    return _replace_table_widths(row, start, widths, definitions)
+
+
+def _set_table_column_widths(
+    row: TableRowProperties,
+    operand: bytes,
+) -> TableRowProperties:
+    if len(operand) != 4:
+        raise InvalidWordDocument("TDxaColOperand must contain exactly four bytes")
+    first_cell, limit_cell, width = struct.unpack("<BBH", operand)
+    start, widths = _table_widths(row)
+    if first_cell >= limit_cell or limit_cell > len(widths):
+        raise InvalidWordDocument("TDxaColOperand has an invalid cell range")
+    widths[first_cell:limit_cell] = [width] * (limit_cell - first_cell)
+    return _replace_table_widths(
+        row,
+        start,
+        widths,
+        list(row.cell_definitions),
+    )
+
+
 def _parse_cell_width(operand: bytes) -> TableCellWidthOverride | None:
     if len(operand) != 6 or operand[0] != 5:
         raise InvalidWordDocument("TableCellWidthOperand must contain five data bytes")
@@ -582,6 +662,45 @@ def _parse_def_table_shd80(
     unsupported = False
     for position in range(1, len(operand), 2):
         shading, approximated = _parse_shd80(operand[position : position + 2])
+        values.append(shading)
+        unsupported = unsupported or approximated
+    return tuple(values), unsupported
+
+
+def _parse_shd(data: bytes) -> tuple[ShadingProperties | None, bool]:
+    if len(data) != 10:
+        raise InvalidWordDocument("Shd must contain exactly ten bytes")
+    foreground = _parse_colorref(data[:4])
+    background = _parse_colorref(data[4:8])
+    pattern_index = struct.unpack_from("<H", data, 8)[0]
+    if pattern_index == 0xFFFF:
+        return None, False
+    pattern = _SHADING_PATTERNS.get(pattern_index)
+    if pattern is None:
+        return None, True
+    if pattern_index == 0 and foreground in (None, "auto") and background in (
+        None,
+        "auto",
+    ):
+        return None, False
+    return ShadingProperties(
+        pattern,
+        foreground or "auto",
+        background or "auto",
+    ), False
+
+
+def _parse_def_table_shd(
+    operand: bytes,
+) -> tuple[tuple[ShadingProperties | None, ...], bool]:
+    if not operand or operand[0] != len(operand) - 1 or operand[0] % 10:
+        raise InvalidWordDocument("DefTableShdOperand has an invalid byte count")
+    if operand[0] > 220:
+        raise InvalidWordDocument("DefTableShdOperand has too many cells")
+    values: list[ShadingProperties | None] = []
+    unsupported = False
+    for position in range(1, len(operand), 10):
+        shading, approximated = _parse_shd(operand[position : position + 10])
         values.append(shading)
         unsupported = unsupported or approximated
     return tuple(values), unsupported
@@ -773,6 +892,19 @@ def apply_character_modifiers(
                 properties,
                 spacing_twips=struct.unpack("<h", operand)[0],
             )
+        elif opcode == 0x4852:  # sprmCCharScale
+            scale = struct.unpack("<H", operand)[0]
+            if not 1 <= scale <= 600:
+                raise InvalidWordDocument(
+                    "character horizontal scale is outside [1, 600] percent"
+                )
+            properties = replace(properties, scale_percent=scale)
+        elif opcode == 0x2A34:  # sprmCKcd
+            emphasis = _EMPHASIS_MARKS.get(operand[0])
+            if emphasis is None:
+                unsupported.add(opcode)
+            else:
+                properties = replace(properties, emphasis=emphasis)
         elif opcode == 0x6815:  # sprmCRsidProp
             properties = replace(
                 properties,
@@ -875,12 +1007,63 @@ _JUSTIFICATION = {
 }
 
 
+def _read_prc_data(data_stream: bytes, offset: int) -> tuple[PropertyModifier, ...]:
+    if offset < 0 or offset > len(data_stream) - 2:
+        raise InvalidWordDocument(
+            f"PrcData offset {offset} exceeds the Data stream"
+        )
+    byte_count = struct.unpack_from("<H", data_stream, offset)[0]
+    if byte_count < 10 or offset + 2 + byte_count > len(data_stream):
+        raise InvalidWordDocument("PrcData has an invalid grpprl byte count")
+    return parse_grpprl(
+        data_stream[offset + 2 : offset + 2 + byte_count],
+        label=f"PrcData[{offset}].grpprl",
+    )
+
+
+def _expand_paragraph_modifiers(
+    modifiers: tuple[PropertyModifier, ...],
+    data_stream: bytes | None,
+    *,
+    seen_offsets: frozenset[int] = frozenset(),
+) -> tuple[PropertyModifier, ...]:
+    if data_stream is None:
+        return modifiers
+    result: list[PropertyModifier] = []
+    for index, modifier in enumerate(modifiers):
+        if modifier.opcode == 0x6646:  # sprmPHugePapx
+            if index:
+                continue
+            offset = struct.unpack("<I", modifier.operand)[0]
+        elif modifier.opcode == 0x646B:  # sprmPTableProps
+            offset = struct.unpack("<I", modifier.operand)[0]
+        else:
+            result.append(modifier)
+            continue
+        if offset in seen_offsets or len(seen_offsets) >= 32:
+            raise InvalidWordDocument("PrcData paragraph-property chain is cyclic")
+        referenced = _read_prc_data(data_stream, offset)
+        result.extend(
+            _expand_paragraph_modifiers(
+                referenced,
+                data_stream,
+                seen_offsets=seen_offsets | {offset},
+            )
+        )
+        # Processing either indirection means the remainder of its containing
+        # Prl array is ignored by MS-DOC.
+        break
+    return tuple(result)
+
+
 def apply_paragraph_modifiers(
     modifiers: tuple[PropertyModifier, ...],
     *,
     style_id: int | None,
     initial_properties: ParagraphProperties | None = None,
+    data_stream: bytes | None = None,
 ) -> tuple[ParagraphProperties, set[int]]:
+    modifiers = _expand_paragraph_modifiers(modifiers, data_stream)
     properties = initial_properties or ParagraphProperties(style_id=style_id)
     unsupported: set[int] = set()
     for modifier in modifiers:
@@ -1040,6 +1223,18 @@ def apply_paragraph_modifiers(
                     cell_definitions=definition.cell_definitions,
                 ),
             )
+        elif opcode == 0x7621:  # sprmTInsert
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=_insert_table_cells(row, operand),
+            )
+        elif opcode == 0x7623:  # sprmTDxaCol
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=_set_table_column_widths(row, operand),
+            )
         elif opcode == 0xD609:
             shadings, approximated = _parse_def_table_shd80(operand)
             row = properties.table_row or TableRowProperties()
@@ -1049,6 +1244,24 @@ def apply_paragraph_modifiers(
             )
             if approximated:
                 unsupported.add(opcode)
+        elif opcode == 0xD670:  # sprmTDefTableShdRaw
+            shadings, approximated = _parse_def_table_shd(operand)
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(row, cell_shadings=shadings),
+            )
+            if approximated:
+                unsupported.add(opcode)
+        elif opcode == 0x7479:  # sprmTRsid
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    revision_save_id=struct.unpack("<I", operand)[0],
+                ),
+            )
         elif opcode in (0xD632, 0xD634):
             first_cell, limit_cell, sides, width = _parse_cssa(operand)
             row = properties.table_row or TableRowProperties()

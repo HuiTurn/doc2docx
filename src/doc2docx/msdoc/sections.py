@@ -217,6 +217,10 @@ def _apply_section_modifiers(
             section = replace(section, margin_bottom_twips=margin)
         elif opcode == 0xB025:  # sprmSDzaGutter
             section = replace(section, gutter_twips=_u16(operand))
+        elif opcode == 0x5026:  # sprmSDmPaperReq
+            # This printer-specific tie breaker MAY be ignored by MS-DOC and
+            # has no interoperable WordprocessingML equivalent.
+            continue
         elif opcode == 0x7030:  # sprmSDxtCharSpace
             character_space = _i32(operand)
             if not -670925 <= character_space <= 6488064:

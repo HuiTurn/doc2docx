@@ -567,6 +567,10 @@ def _append_character_property_elements(
     _append_boolean_property(run_properties, "smallCaps", properties.small_caps)
     _append_boolean_property(run_properties, "strike", properties.strike)
     _append_boolean_property(run_properties, "dstrike", properties.double_strike)
+    _append_boolean_property(run_properties, "outline", properties.outline)
+    _append_boolean_property(run_properties, "shadow", properties.shadow)
+    _append_boolean_property(run_properties, "emboss", properties.emboss)
+    _append_boolean_property(run_properties, "imprint", properties.imprint)
     _append_boolean_property(run_properties, "noProof", properties.no_proof)
     _append_boolean_property(run_properties, "snapToGrid", properties.snap_to_grid)
     _append_boolean_property(run_properties, "vanish", properties.hidden)
@@ -581,6 +585,12 @@ def _append_character_property_elements(
             run_properties,
             _qn(W_NS, "spacing"),
             {_qn(W_NS, "val"): str(properties.spacing_twips)},
+        )
+    if properties.scale_percent is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "w"),
+            {_qn(W_NS, "val"): str(properties.scale_percent)},
         )
     if properties.kerning_half_points is not None:
         ET.SubElement(
@@ -624,6 +634,12 @@ def _append_character_property_elements(
             run_properties,
             _qn(W_NS, "vertAlign"),
             {_qn(W_NS, "val"): properties.vertical_align},
+        )
+    if properties.emphasis is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "em"),
+            {_qn(W_NS, "val"): properties.emphasis},
         )
     language_attributes: dict[str, str] = {}
     if properties.language is not None:
@@ -1987,8 +2003,17 @@ def _append_table(
             )
 
     for row in table.rows:
-        row_element = ET.SubElement(table_element, _qn(W_NS, "tr"))
         properties = row.properties
+        row_attributes = {}
+        if properties.revision_save_id is not None:
+            row_attributes[_qn(W_NS, "rsidTr")] = (
+                f"{properties.revision_save_id:08X}"
+            )
+        row_element = ET.SubElement(
+            table_element,
+            _qn(W_NS, "tr"),
+            row_attributes,
+        )
         if (
             properties.height_twips is not None
             or properties.cant_split

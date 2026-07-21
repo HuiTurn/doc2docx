@@ -127,6 +127,10 @@ def convert(
 
     table_name = fib.base.table_stream_name
     table_stream = compound.open_stream(table_name)
+    try:
+        data_stream = compound.open_stream("Data")
+    except StreamNotFound:
+        data_stream = None
     section_table = fib.plcf_sed
     sections = read_sections(
         table_stream,
@@ -212,6 +216,7 @@ def convert(
         report=report,
         fonts=fonts,
         style_sheet=style_sheet,
+        data_stream=data_stream,
     )
     bookmark_names = fib.sttbf_bkmk
     bookmark_starts = fib.plcf_bkf
@@ -447,23 +452,6 @@ def convert(
         report,
         story="headers",
     )
-    needs_data_stream = any(
-        unit.text == "\x01"
-        and (
-            (properties := formatting.character_properties_at(unit.cp_start)).special
-            is True
-            and properties.picture_location is not None
-            and properties.picture_is_binary is not True
-        )
-        for unit in main_characters + header_characters
-    )
-    if needs_data_stream:
-        try:
-            data_stream = compound.open_stream("Data")
-        except StreamNotFound:
-            data_stream = None
-    else:
-        data_stream = None
     inline_pictures = read_inline_pictures(
         data_stream,
         main_characters,

@@ -2,6 +2,7 @@ import struct
 import unittest
 
 from doc2docx.errors import InvalidWordDocument
+from doc2docx.model import ShadingProperties
 from doc2docx.msdoc.sprm import (
     apply_character_modifiers,
     apply_paragraph_modifiers,
@@ -188,7 +189,13 @@ class SprmTests(unittest.TestCase):
                 + struct.pack("<HB", 0x0855, 1)
                 + struct.pack("<HB", 0x0875, 1)
                 + struct.pack("<HB", 0x085C, 1)
-                + struct.pack("<HB", 0x085D, 0),
+                + struct.pack("<HB", 0x085D, 0)
+                + struct.pack("<HB", 0x0838, 0)
+                + struct.pack("<HB", 0x0839, 0)
+                + struct.pack("<HB", 0x0854, 1)
+                + struct.pack("<HB", 0x0858, 0)
+                + struct.pack("<HH", 0x4852, 125)
+                + struct.pack("<HB", 0x2A34, 4),
                 label="character-grid.grpprl",
             )
         )
@@ -205,6 +212,12 @@ class SprmTests(unittest.TestCase):
         self.assertTrue(character.no_proof)
         self.assertTrue(character.complex_script_bold)
         self.assertFalse(character.complex_script_italic)
+        self.assertFalse(character.outline)
+        self.assertFalse(character.shadow)
+        self.assertTrue(character.imprint)
+        self.assertFalse(character.emboss)
+        self.assertEqual(character.scale_percent, 125)
+        self.assertEqual(character.emphasis, "underDot")
 
     def test_field_hidden_and_revision_save_ids_are_parsed(self) -> None:
         character, unsupported, relative_count = apply_character_modifiers(
@@ -259,6 +272,54 @@ class SprmTests(unittest.TestCase):
                     label="invalid-table-layout.grpprl",
                 ),
                 style_id=0,
+            )
+
+    def test_prc_data_table_grid_shading_and_revision_are_parsed(self) -> None:
+        red = bytes((0xFF, 0, 0, 0))
+        green = bytes((0, 0xFF, 0, 0))
+        shading = red + green + struct.pack("<H", 1)
+        prc_grpprl = (
+            struct.pack("<HBBH", 0x7621, 0, 2, 1000)
+            + struct.pack("<HBBH", 0x7623, 0, 2, 1200)
+            + struct.pack("<HB", 0xD670, len(shading))
+            + shading
+            + struct.pack("<HI", 0x7479, 0x12345678)
+        )
+        data_stream = struct.pack("<H", len(prc_grpprl)) + prc_grpprl
+        outer = parse_grpprl(
+            struct.pack("<HIHh", 0x646B, 0, 0x9601, 720),
+            label="table-properties-reference.grpprl",
+        )
+
+        properties, unsupported = apply_paragraph_modifiers(
+            outer,
+            style_id=0,
+            data_stream=data_stream,
+        )
+
+        self.assertFalse(unsupported)
+        assert properties.table_row is not None
+        row = properties.table_row
+        self.assertEqual(row.cell_boundaries_twips, (0, 1200, 2400))
+        self.assertEqual(len(row.cell_definitions), 2)
+        self.assertIsNone(row.left_indent_twips)
+        self.assertEqual(row.revision_save_id, 0x12345678)
+        self.assertEqual(
+            row.cell_shadings,
+            (ShadingProperties("solid", "FF0000", "00FF00"),),
+        )
+
+        with self.assertRaisesRegex(InvalidWordDocument, "cyclic"):
+            apply_paragraph_modifiers(
+                parse_grpprl(
+                    struct.pack("<HI", 0x646B, 0),
+                    label="cyclic-table-properties.grpprl",
+                ),
+                style_id=0,
+                data_stream=struct.pack("<H", 12)
+                + struct.pack("<HI", 0x646B, 0)
+                + struct.pack("<HB", 0x2416, 1)
+                + struct.pack("<HB", 0x2417, 1),
             )
 
     def test_symbol_character_uses_its_font_table_entry(self) -> None:

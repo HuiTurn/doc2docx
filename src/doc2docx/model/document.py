@@ -127,6 +127,10 @@ class CharacterProperties:
     complex_script_italic: bool | None = None
     strike: bool | None = None
     double_strike: bool | None = None
+    outline: bool | None = None
+    shadow: bool | None = None
+    emboss: bool | None = None
+    imprint: bool | None = None
     small_caps: bool | None = None
     caps: bool | None = None
     hidden: bool | None = None
@@ -141,6 +145,8 @@ class CharacterProperties:
     complex_script_size_half_points: int | None = None
     kerning_half_points: int | None = None
     spacing_twips: int | None = None
+    scale_percent: int | None = None
+    emphasis: str | None = None
     vertical_align: str | None = None
     position_half_points: int | None = None
     snap_to_grid: bool | None = None
@@ -223,6 +229,7 @@ class TableCellDefinition:
 
 @dataclass(slots=True, frozen=True)
 class TableRowProperties:
+    revision_save_id: int | None = None
     table_style_id: int | None = None
     preferred_width: int | None = None
     preferred_width_type: str | None = None

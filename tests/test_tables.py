@@ -31,6 +31,7 @@ class TableConversionTests(unittest.TestCase):
     def test_preferred_table_and_cell_widths_and_border_colors_are_written(self) -> None:
         border = BorderProperties("single", 4, "auto")
         row = TableRowProperties(
+            revision_save_id=0x12345678,
             preferred_width=2200,
             preferred_width_type="dxa",
             left_indent_twips=-360,
@@ -110,6 +111,9 @@ class TableConversionTests(unittest.TestCase):
         first_top = root.find(f".//{W}tr/{W}tc[1]/{W}tcPr/{W}tcBorders/{W}top")
         assert first_top is not None
         self.assertEqual(first_top.get(f"{W}color"), "FF0000")
+        table_row = root.find(f".//{W}tr")
+        assert table_row is not None
+        self.assertEqual(table_row.get(f"{W}rsidTr"), "12345678")
 
     def test_cell_margins_and_shading_are_written(self) -> None:
         row = TableRowProperties(

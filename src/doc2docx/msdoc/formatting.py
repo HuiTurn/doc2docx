@@ -175,6 +175,7 @@ def read_formatting(
     report: ConversionReport,
     fonts: tuple[FontDefinition, ...] = (),
     style_sheet: StyleSheet | None = None,
+    data_stream: bytes | None = None,
 ) -> FormattingMap:
     style_sheet = style_sheet or StyleSheet()
     font_names = {font.index: font.name for font in fonts}
@@ -241,6 +242,7 @@ def read_formatting(
                 properties, unsupported = apply_paragraph_modifiers(
                     modifiers,
                     style_id=style_id,
+                    data_stream=data_stream,
                 )
                 unsupported_paragraph_sprms.update(unsupported)
             for cp_start, cp_end in piece_table.fc_range_to_cp_ranges(
@@ -292,6 +294,7 @@ def read_formatting(
                     modifiers,
                     style_id=properties.style_id,
                     initial_properties=properties,
+                    data_stream=data_stream,
                 )
                 unsupported_paragraph_sprms.update(unsupported)
         composed_paragraph_spans.append(
