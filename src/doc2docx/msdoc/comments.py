@@ -6,7 +6,7 @@ from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 import struct
 
-from ..diagnostics import ConversionReport
+from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
 from ..model import (
     CharacterProperties,
@@ -233,6 +233,7 @@ def _read_annotation_ranges(
     start_size: int,
     end_offset: int,
     end_size: int,
+    report: ConversionReport,
 ) -> dict[int, tuple[int, int]]:
     sizes = (tag_size, start_size, end_size)
     if not any(sizes):
@@ -260,8 +261,6 @@ def _read_annotation_ranges(
     cp_count = count + 1
     start_cps = struct.unpack_from(f"<{cp_count}I", starts_data)
     starts = start_cps[:-1]
-    if start_cps[-1] != ccp_text + 1:
-        raise InvalidWordDocument("PlcfAtnBkf final CP is not ccpText plus one")
     if any(cp > ccp_text for cp in starts) or any(
         current < previous for previous, current in zip(starts, starts[1:])
     ):
@@ -277,12 +276,25 @@ def _read_annotation_ranges(
         raise InvalidWordDocument("PlcfAtnBkl size does not describe a CP-only PLC")
     end_cps = struct.unpack_from(f"<{end_size // 4}I", end_data)
     ends = end_cps[:-1]
-    if end_cps[-1] != ccp_text + 1:
-        raise InvalidWordDocument("PlcfAtnBkl final CP is not ccpText plus one")
     if any(cp > ccp_text for cp in ends) or any(
         current < previous for previous, current in zip(ends, ends[1:])
     ):
         raise InvalidWordDocument("PlcfAtnBkl contains invalid or unsorted CPs")
+    terminal_cp = start_cps[-1]
+    if terminal_cp != end_cps[-1] or terminal_cp not in (
+        ccp_text + 1,
+        ccp_text + 2,
+    ):
+        raise InvalidWordDocument(
+            "annotation bookmark PLCs have invalid or inconsistent terminal CPs"
+        )
+    if terminal_cp == ccp_text + 2:
+        report.warning(
+            "COMMENT_BOOKMARK_TERMINAL_CP_REPAIRED",
+            "annotation bookmark PLCs use a terminal CP two positions past ccpText",
+            location=SourceLocation(story="comments", stream="Table"),
+            terminal_cp=terminal_cp,
+        )
     if len(tags) != count or len(ends) != count:
         raise InvalidWordDocument(
             "annotation bookmark tables do not contain the same number of entries"
@@ -348,8 +360,39 @@ def read_comments(
         bookmark_starts_size,
         bookmark_ends_size,
     )
-    if ccp_comments == 0 and not any(core_sizes) and not any(bookmark_sizes):
-        return CommentCollection()
+    if ccp_comments == 0 and not any(core_sizes):
+        if not any(bookmark_sizes):
+            return CommentCollection()
+        if (
+            bookmark_tags_size == 0
+            and bookmark_starts_size == 4
+            and bookmark_ends_size == 4
+        ):
+            start_data = _checked_range(
+                table_stream,
+                offset=bookmark_starts_offset,
+                size=bookmark_starts_size,
+                label="PlcfAtnBkf",
+            )
+            end_data = _checked_range(
+                table_stream,
+                offset=bookmark_ends_offset,
+                size=bookmark_ends_size,
+                label="PlcfAtnBkl",
+            )
+            start_terminal = struct.unpack_from("<I", start_data)[0]
+            end_terminal = struct.unpack_from("<I", end_data)[0]
+            if (
+                start_terminal == end_terminal
+                and ccp_text <= start_terminal <= ccp_text + 2
+            ):
+                report.warning(
+                    "EMPTY_COMMENT_BOOKMARK_TABLES_REPAIRED",
+                    "zero-entry annotation bookmark PLCs without a comment story were omitted",
+                    location=SourceLocation(story="comments", stream="Table"),
+                    terminal_cp=start_terminal,
+                )
+                return CommentCollection()
     if ccp_comments == 0 or not all(core_sizes):
         raise InvalidWordDocument(
             "comment document, PlcfandRef, PlcfandTxt, and authors must exist together"
@@ -394,6 +437,7 @@ def read_comments(
         start_size=bookmark_starts_size,
         end_offset=bookmark_ends_offset,
         end_size=bookmark_ends_size,
+        report=report,
     )
 
     comments: list[Comment] = []
@@ -452,15 +496,20 @@ def read_comments(
             report,
             story=story_name,
         )
+        marker_indexes = tuple(
+            index for index, unit in enumerate(units) if unit.text == "\x05"
+        )
+        if len(marker_indexes) != 1:
+            raise InvalidWordDocument(
+                f"PlcfandTxt comment {comment_id} does not contain one 0x05 marker"
+            )
+        marker_index = marker_indexes[0]
+        marker_cp = units[marker_index].cp_start
         marker_properties = (
-            character_properties_at(cp_start)
+            character_properties_at(marker_cp)
             if character_properties_at is not None
             else CharacterProperties()
         )
-        if not units or units[0].text != "\x05":
-            raise InvalidWordDocument(
-                f"PlcfandTxt comment {comment_id} does not begin with 0x05"
-            )
         if marker_properties.special is not True:
             raise InvalidWordDocument(
                 f"PlcfandTxt comment {comment_id} marker has no sprmCFSpec"
@@ -469,8 +518,20 @@ def read_comments(
             raise InvalidWordDocument(
                 f"PlcfandTxt comment {comment_id} does not end in a paragraph mark"
             )
+        if marker_index:
+            report.warning(
+                "COMMENT_MARKER_POSITION_REPAIRED",
+                "a comment annotation marker found after visible text was omitted in place",
+                location=SourceLocation(
+                    story=story_name,
+                    cp_start=marker_cp,
+                    cp_end=units[marker_index].cp_end,
+                ),
+                relative_cp=marker_cp - cp_start,
+            )
+        content_units = units[:marker_index] + units[marker_index + 1 :]
         parsed = parse_main_story(
-            units[1:],
+            content_units,
             report,
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,

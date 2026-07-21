@@ -98,8 +98,13 @@ def read_field_table(
         raise InvalidWordDocument(f"{structure} field CPs are not increasing")
     if any(cp >= story_length for cp in field_cps):
         raise InvalidWordDocument(f"{structure} contains a CP outside its story")
-    if cps[-1] > story_length or (field_cps and cps[-1] <= field_cps[-1]):
-        raise InvalidWordDocument(f"{structure} final CP is not the largest story CP")
+    # MS-DOC 2.8.25 defines the final Plcfld CP as an undefined PLC
+    # terminator. It only has to be the largest CP and must otherwise be
+    # ignored; real producers commonly place a global-story sentinel here.
+    if field_cps and cps[-1] <= field_cps[-1]:
+        raise InvalidWordDocument(
+            f"{structure} final CP is not larger than its field CPs"
+        )
 
     data_offset = 4 * (count + 1)
     stack: list[_OpenField] = []
@@ -111,6 +116,7 @@ def read_field_table(
     private_result_count = 0
     zombie_embed_count = 0
     inconsistent_nested_count = 0
+    repaired_separator_flag_count = 0
 
     for index, relative_cp in enumerate(field_cps):
         first, flags = struct.unpack_from("BB", raw, data_offset + index * 2)
@@ -162,9 +168,11 @@ def read_field_table(
         # absent from this PLC. Keep the source flag and diagnose the mismatch.
         inconsistent_nested_count += nested != bool(stack)
         if has_separator != opened.has_separator:
-            raise InvalidWordDocument(
-                f"{structure} field end {index} has inconsistent fHasSep"
-            )
+            # The field-character sequence is already matched against the
+            # story and is authoritative for whether a result separator is
+            # present. Some legacy writers leave fHasSep stale.
+            repaired_separator_flag_count += 1
+            has_separator = opened.has_separator
         inverted_display_count += bool(flags & 0x01)
         zombie_embed_count += bool(flags & 0x02)
         private_result_count += bool(flags & 0x20)
@@ -210,6 +218,13 @@ def read_field_table(
             "some fNested flags refer to fields omitted from this Plcfld",
             location=location,
             field_count=inconsistent_nested_count,
+        )
+    if repaired_separator_flag_count:
+        report.warning(
+            "FIELD_SEPARATOR_FLAG_REPAIRED",
+            "some fHasSep flags were reconciled with the validated field-character sequence",
+            location=location,
+            field_count=repaired_separator_flag_count,
         )
     return FieldTable(
         ends_by_cp,

@@ -103,6 +103,25 @@ def read_header_footer_stories(
     section_values = tuple(sections)
     if ccp_headers == 0 and size == 0:
         return HeaderFooterCollection(section_values)
+    if ccp_headers == 0 and size:
+        if offset < 0 or size < 0 or offset > len(table_stream) - size:
+            raise InvalidWordDocument(
+                f"PlcfHdd range [{offset}, {offset + size}) exceeds Table stream"
+            )
+        story_count = 6 + 6 * len(section_values)
+        expected_size = (story_count + 2) * 4
+        raw = memoryview(table_stream)[offset : offset + size]
+        if size not in (expected_size - 4, expected_size) or any(raw):
+            raise InvalidWordDocument(
+                "header document and PlcfHdd must either both exist or both be absent"
+            )
+        report.warning(
+            "EMPTY_HEADER_TABLE_REPAIRED",
+            "an all-zero PlcfHdd left by a legacy writer was omitted",
+            location=SourceLocation(story="headers", stream="Table"),
+            cp_count=size // 4,
+        )
+        return HeaderFooterCollection(section_values)
     if ccp_headers == 0 or size == 0:
         raise InvalidWordDocument(
             "header document and PlcfHdd must either both exist or both be absent"

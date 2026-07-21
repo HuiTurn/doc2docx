@@ -146,6 +146,41 @@ class HeaderFooterParsingTests(unittest.TestCase):
         with self.assertRaises(InvalidWordDocument):
             read_document_settings(b"\x01", offset=0, size=1)
 
+    def test_all_zero_legacy_plcf_hdd_without_header_story_is_omitted(self) -> None:
+        report = ConversionReport("empty-legacy-headers.doc")
+
+        collection = read_header_footer_stories(
+            bytes(52),
+            Mock(cp_end=100),
+            (SectionProperties(0, 1),),
+            offset=0,
+            size=52,
+            ccp_headers=0,
+            header_story_cp_start=1,
+            report=report,
+        )
+
+        self.assertEqual(collection.story_count, 0)
+        self.assertEqual(
+            [warning.code for warning in report.warnings],
+            ["EMPTY_HEADER_TABLE_REPAIRED"],
+        )
+
+    def test_nonzero_plcf_hdd_without_header_story_is_rejected(self) -> None:
+        table = bytearray(52)
+        table[4] = 1
+        with self.assertRaises(InvalidWordDocument):
+            read_header_footer_stories(
+                bytes(table),
+                Mock(cp_end=100),
+                (SectionProperties(0, 1),),
+                offset=0,
+                size=52,
+                ccp_headers=0,
+                header_story_cp_start=1,
+                report=ConversionReport("invalid-empty-headers.doc"),
+            )
+
     def test_plcf_hdd_must_have_six_stories_per_section(self) -> None:
         with self.assertRaises(InvalidWordDocument):
             read_header_footer_stories(

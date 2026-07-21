@@ -143,7 +143,67 @@ class FieldTableTests(unittest.TestCase):
         self.assertTrue(fields.end_properties_at(2).nested)
         self.assertFalse(fields.end_properties_at(4).nested)
 
-    def test_rejects_malformed_field_plcs_and_end_flags(self) -> None:
+    def test_ignores_undefined_final_plcf_cp(self) -> None:
+        text = "\x13 DATE \x141\x15\r"
+        table = bytearray(
+            _plcf(
+                (
+                    (text.index("\x13"), 0x13, 0x1F),
+                    (text.index("\x14"), 0x14, 0),
+                    (text.index("\x15"), 0x15, 0x80),
+                ),
+                len(text),
+            )
+        )
+        struct.pack_into("<I", table, 12, 541)
+
+        fields = read_field_table(
+            bytes(table),
+            _piece_table(text),
+            offset=0,
+            size=len(table),
+            story_length=len(text),
+            story_cp_start=0,
+            structure="PlcfFldMom",
+            story_name="main",
+            report=ConversionReport("undefined-final-cp.doc"),
+        )
+
+        self.assertEqual((fields.field_count, fields.character_count), (1, 3))
+
+    def test_repairs_has_separator_from_validated_field_sequence(self) -> None:
+        text = "\x13 DATE \x141\x15\r"
+        table = _plcf(
+            (
+                (text.index("\x13"), 0x13, 0x1F),
+                (text.index("\x14"), 0x14, 0),
+                (text.index("\x15"), 0x15, 0),
+            ),
+            len(text),
+        )
+        report = ConversionReport("stale-field-flags.doc")
+
+        fields = read_field_table(
+            table,
+            _piece_table(text),
+            offset=0,
+            size=len(table),
+            story_length=len(text),
+            story_cp_start=0,
+            structure="PlcfFldMom",
+            story_name="main",
+            report=report,
+        )
+
+        properties = fields.end_properties_at(text.index("\x15"))
+        assert properties is not None
+        self.assertTrue(properties.has_separator)
+        self.assertEqual(
+            [warning.code for warning in report.warnings],
+            ["FIELD_SEPARATOR_FLAG_REPAIRED"],
+        )
+
+    def test_rejects_malformed_field_plcs(self) -> None:
         text = "\x13 DATE \x141\x15\r"
         begin = text.index("\x13")
         separator = text.index("\x14")
@@ -156,14 +216,6 @@ class FieldTableTests(unittest.TestCase):
             ),
             len(text),
         )
-        missing_has_separator = _plcf(
-            (
-                (begin, 0x13, 0x1F),
-                (separator, 0x14, 0),
-                (end, 0x15, 0),
-            ),
-            len(text),
-        )
         wrong_story_character = _plcf(
             (
                 (begin + 1, 0x13, 0x1F),
@@ -172,7 +224,7 @@ class FieldTableTests(unittest.TestCase):
             ),
             len(text),
         )
-        cases = (valid[:-1], missing_has_separator, wrong_story_character)
+        cases = (valid[:-1], wrong_story_character)
         for payload in cases:
             with self.subTest(size=len(payload)):
                 with self.assertRaises(InvalidWordDocument):

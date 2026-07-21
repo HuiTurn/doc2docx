@@ -1133,6 +1133,8 @@ def build_comment_word_cfb(
     malformed_text_end: bool = False,
     invalid_author_index: bool = False,
     missing_bookmark_table: bool = False,
+    bookmark_terminal_delta: int = 1,
+    internal_comment_marker: bool = False,
 ) -> bytes:
     """A one-comment DOC with legacy author and annotation bookmark tables."""
 
@@ -1140,7 +1142,8 @@ def build_comment_word_cfb(
     main_text = b"Some text" + reference_character + b"\r"
     reference_cp = 9
     comment_marker = b"!" if malformed_text_marker else b"\x05"
-    comment_content = comment_marker + b"Comment body\r"
+    comment_prefix = b"Comment prefix " if internal_comment_marker else b""
+    comment_content = comment_prefix + comment_marker + b"Comment body\r"
     if malformed_text_end:
         comment_content = comment_marker + b"Comment bodyX"
     comment_document = comment_content + b"\r"
@@ -1191,12 +1194,13 @@ def build_comment_word_cfb(
         1234,
         0xFFFFFFFF,
     )
-    bookmark_starts = struct.pack("<2IHH", 5, len(main_text) + 1, 0, 0)
-    bookmark_ends = struct.pack("<2I", 9, len(main_text) + 1)
+    bookmark_terminal_cp = len(main_text) + bookmark_terminal_delta
+    bookmark_starts = struct.pack("<2IHH", 5, bookmark_terminal_cp, 0, 0)
+    bookmark_ends = struct.pack("<2I", 9, bookmark_terminal_cp)
 
     chpx_plc = struct.pack("<3I", text_fc, text_fc_end, 4)
     chpx_fkp = bytearray(SECTOR_SIZE)
-    comment_marker_cp = len(main_text)
+    comment_marker_cp = len(main_text) + len(comment_prefix)
     boundaries = (
         text_fc,
         text_fc + reference_cp,

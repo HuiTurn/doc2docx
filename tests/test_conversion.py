@@ -213,6 +213,39 @@ class ConversionTests(unittest.TestCase):
             self.assertIsNone(document_root.find(f".//{W}commentRangeEnd"))
             self.assertIsNotNone(document_root.find(f".//{W}commentReference"))
 
+    def test_comment_bookmark_terminal_cp_two_past_story_is_repaired(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "compatible-comment.doc"
+            destination = Path(directory) / "compatible-comment.docx"
+            source.write_bytes(build_comment_word_cfb(bookmark_terminal_delta=2))
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.statistics["comment_range_count"], 1)
+            self.assertEqual(
+                [warning.code for warning in result.report.warnings],
+                ["COMMENT_BOOKMARK_TERMINAL_CP_REPAIRED"],
+            )
+
+    def test_internal_comment_marker_is_omitted_without_losing_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "internal-comment-marker.doc"
+            destination = Path(directory) / "internal-comment-marker.docx"
+            source.write_bytes(build_comment_word_cfb(internal_comment_marker=True))
+
+            result = convert(source, destination)
+
+            self.assertEqual(
+                [warning.code for warning in result.report.warnings],
+                ["COMMENT_MARKER_POSITION_REPAIRED"],
+            )
+            with zipfile.ZipFile(destination) as package:
+                comments_root = ET.fromstring(package.read("word/comments.xml"))
+            self.assertEqual(
+                "".join(comments_root.itertext()),
+                "Comment prefix Comment body",
+            )
+
     def test_malformed_comments_are_rejected(self) -> None:
         fixtures = (
             build_comment_word_cfb(missing_special=True),
@@ -221,6 +254,7 @@ class ConversionTests(unittest.TestCase):
             build_comment_word_cfb(malformed_text_end=True),
             build_comment_word_cfb(invalid_author_index=True),
             build_comment_word_cfb(missing_bookmark_table=True),
+            build_comment_word_cfb(bookmark_terminal_delta=3),
         )
         with tempfile.TemporaryDirectory() as directory:
             for index, payload in enumerate(fixtures):

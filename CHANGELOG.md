@@ -5,12 +5,22 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.30.0 - 2026-07-22 (M14a-M14b)
+
 - Preserve character-formatting, text-insertion, and paragraph-formatting
   revision save identifiers as native WordprocessingML attributes.
 - Honor field-hidden formatting through native field-code semantics, and
   preserve fixed/automatic table layout and table style look flags.
-- Continue expanding MS-DOC compatibility with specification-backed parsers,
-  focused tests, and real Word 97 sample rendering.
+- Follow the MS-DOC rule that the final `Plcfld` CP is undefined, and reconcile
+  stale `fHasSep` flags with the validated field-character sequence.
+- Safely omit bounded zero-content header and annotation-bookmark PLC remnants,
+  accept the observed annotation terminal-CP variant, and preserve comment text
+  when a legacy writer places its annotation marker after visible content.
+- Validate with 154 focused tests and a 42-file real-DOC regression batch: 40
+  Word 97–2003 files convert successfully, including five previously rejected
+  structures, while the remaining two are Word 6/95 files outside the declared
+  input scope. Render a complex multi-story sample containing headers, text
+  boxes, footnotes, endnotes, comments, and fields for visual verification.
 
 ## 0.29.0 - 2026-07-22 (M13a-M13b)
 
