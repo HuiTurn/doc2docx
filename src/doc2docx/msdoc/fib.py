@@ -17,8 +17,13 @@ FCLCB97_PLCF_HDD_INDEX = 11
 FCLCB97_PLCF_BTE_CHPX_INDEX = 12
 FCLCB97_PLCF_BTE_PAPX_INDEX = 13
 FCLCB97_STTBF_FFN_INDEX = 15
+FCLCB97_PLCF_FLD_HDR_INDEX = 17
 FCLCB97_DOP_INDEX = 31
 FCLCB97_CLX_INDEX = 33
+FCLCB97_PLC_SPA_HDR_INDEX = 41
+FCLCB97_PLCF_HDR_TXBX_TXT_INDEX = 58
+FCLCB97_PLCF_FLD_HDR_TXBX_INDEX = 59
+FCLCB97_PLCF_TXBX_HDR_BKD_INDEX = 76
 
 
 @dataclass(slots=True, frozen=True)
@@ -103,6 +108,16 @@ class FileInformationBlock:
         return self.ccp_text + self.ccp_footnotes
 
     @property
+    def ccp_header_textboxes(self) -> int:
+        return self.fib_rg_lw[10] if len(self.fib_rg_lw) > 10 else 0
+
+    @property
+    def header_textbox_story_cp_start(self) -> int:
+        # Main, footnote, header, macro, comment, endnote and main-textbox
+        # documents precede the header-textbox document in the global CP space.
+        return sum(self.fib_rg_lw[3:10])
+
+    @property
     def cb_mac(self) -> int:
         if not self.fib_rg_lw:
             raise InvalidWordDocument("FIB does not contain FibRgLw97.cbMac")
@@ -149,10 +164,40 @@ class FileInformationBlock:
         return self.fib_rg_fc_lcb[FCLCB97_PLCF_HDD_INDEX]
 
     @property
+    def plcf_fld_hdr(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_FLD_HDR_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_FLD_HDR_INDEX]
+
+    @property
     def dop(self) -> FcLcb:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_DOP_INDEX:
             return FcLcb(0, 0)
         return self.fib_rg_fc_lcb[FCLCB97_DOP_INDEX]
+
+    @property
+    def plc_spa_hdr(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLC_SPA_HDR_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLC_SPA_HDR_INDEX]
+
+    @property
+    def plcf_hdr_txbx_txt(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_HDR_TXBX_TXT_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_HDR_TXBX_TXT_INDEX]
+
+    @property
+    def plcf_fld_hdr_txbx(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_FLD_HDR_TXBX_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_FLD_HDR_TXBX_INDEX]
+
+    @property
+    def plcf_txbx_hdr_bkd(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_TXBX_HDR_BKD_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_TXBX_HDR_BKD_INDEX]
 
     @property
     def sttbf_ffn(self) -> FcLcb:

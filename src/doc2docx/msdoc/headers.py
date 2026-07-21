@@ -10,6 +10,7 @@ from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
 from ..model import (
     CharacterProperties,
+    FloatingTextBox,
     HeaderFooterStory,
     ParagraphProperties,
     SectionProperties,
@@ -84,6 +85,7 @@ def read_header_footer_stories(
     report: ConversionReport,
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
+    floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
 ) -> HeaderFooterCollection:
     """Read non-empty header/footer stories and attach them to their sections."""
 
@@ -165,6 +167,7 @@ def read_header_footer_stories(
                 report,
                 character_properties_at=character_properties_at,
                 paragraph_properties_at=paragraph_properties_at,
+                floating_textbox_at=floating_textbox_at,
                 story_name=story_name,
             )
             replacements[field_name] = HeaderFooterStory(

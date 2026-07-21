@@ -15,6 +15,8 @@ from ..model import (
     BreakType,
     CharacterProperties,
     Document,
+    Field,
+    FloatingTextBox,
     FontDefinition,
     HeaderFooterStory,
     Paragraph,
@@ -72,9 +74,15 @@ SETTINGS_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings"
 )
 XML_NS = "http://www.w3.org/XML/1998/namespace"
+VML_NS = "urn:schemas-microsoft-com:vml"
+OFFICE_NS = "urn:schemas-microsoft-com:office:office"
+WORD_2003_NS = "urn:schemas-microsoft-com:office:word"
 
 ET.register_namespace("w", W_NS)
 ET.register_namespace("r", R_NS)
+ET.register_namespace("v", VML_NS)
+ET.register_namespace("o", OFFICE_NS)
+ET.register_namespace("w10", WORD_2003_NS)
 
 
 @dataclass(slots=True, frozen=True)
@@ -458,6 +466,203 @@ def _append_text_run(
     text_element.text = text
 
 
+def _twips_as_points(value: int) -> str:
+    points = value / 20
+    return f"{points:.2f}".rstrip("0").rstrip(".")
+
+
+def _append_field(
+    paragraph_element: ET.Element,
+    field: Field,
+    *,
+    valid_paragraph_style_ids: set[int],
+    valid_character_style_ids: set[int],
+) -> None:
+    begin_run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    _append_run_properties(
+        begin_run,
+        field.properties,
+        valid_style_ids=valid_character_style_ids,
+    )
+    ET.SubElement(
+        begin_run,
+        _qn(W_NS, "fldChar"),
+        {_qn(W_NS, "fldCharType"): "begin"},
+    )
+    instruction_run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    _append_run_properties(
+        instruction_run,
+        field.properties,
+        valid_style_ids=valid_character_style_ids,
+    )
+    instruction = ET.SubElement(instruction_run, _qn(W_NS, "instrText"))
+    instruction.set(_qn(XML_NS, "space"), "preserve")
+    instruction.text = field.instruction
+    separator_run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    _append_run_properties(
+        separator_run,
+        field.properties,
+        valid_style_ids=valid_character_style_ids,
+    )
+    ET.SubElement(
+        separator_run,
+        _qn(W_NS, "fldChar"),
+        {_qn(W_NS, "fldCharType"): "separate"},
+    )
+    for inline in field.result:
+        _append_inline(
+            paragraph_element,
+            inline,
+            valid_paragraph_style_ids=valid_paragraph_style_ids,
+            valid_character_style_ids=valid_character_style_ids,
+        )
+    end_run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    _append_run_properties(
+        end_run,
+        field.properties,
+        valid_style_ids=valid_character_style_ids,
+    )
+    ET.SubElement(
+        end_run,
+        _qn(W_NS, "fldChar"),
+        {_qn(W_NS, "fldCharType"): "end"},
+    )
+
+
+def _append_floating_textbox(
+    paragraph_element: ET.Element,
+    textbox: FloatingTextBox,
+    *,
+    valid_paragraph_style_ids: set[int],
+    valid_character_style_ids: set[int],
+) -> None:
+    horizontal_relative = {
+        "margin": "margin",
+        "page": "page",
+        "column": "text",
+    }[textbox.horizontal_relative]
+    vertical_relative = {
+        "margin": "margin",
+        "page": "page",
+        "paragraph": "text",
+    }[textbox.vertical_relative]
+    style = ";".join(
+        (
+            "position:absolute",
+            f"margin-left:{_twips_as_points(textbox.left_twips)}pt",
+            f"margin-top:{_twips_as_points(textbox.top_twips)}pt",
+            f"width:{_twips_as_points(textbox.width_twips)}pt",
+            f"height:{_twips_as_points(textbox.height_twips)}pt",
+            f"z-index:{-1 if textbox.behind_text else 1}",
+            f"mso-position-horizontal-relative:{horizontal_relative}",
+            f"mso-position-vertical-relative:{vertical_relative}",
+        )
+    )
+    run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    pict = ET.SubElement(run, _qn(W_NS, "pict"))
+    shape = ET.SubElement(
+        pict,
+        _qn(VML_NS, "rect"),
+        {
+            "id": f"_x0000_s{textbox.shape_id}",
+            "style": style,
+            "stroked": "f",
+            "filled": "f",
+            _qn(OFFICE_NS, "allowincell"): "f",
+        },
+    )
+    ET.SubElement(
+        shape,
+        _qn(WORD_2003_NS, "wrap"),
+        {"type": textbox.wrap_type, "side": textbox.wrap_side},
+    )
+    if textbox.anchor_locked:
+        ET.SubElement(
+            shape,
+            _qn(OFFICE_NS, "lock"),
+            {_qn(VML_NS, "ext"): "edit", "position": "t"},
+        )
+    vml_textbox = ET.SubElement(
+        shape,
+        _qn(VML_NS, "textbox"),
+        {"inset": "0,0,0,0"},
+    )
+    content = ET.SubElement(vml_textbox, _qn(W_NS, "txbxContent"))
+    for block in textbox.body_blocks or (Paragraph(()),):
+        if isinstance(block, Paragraph):
+            _append_paragraph(
+                content,
+                block,
+                valid_paragraph_style_ids=valid_paragraph_style_ids,
+                valid_character_style_ids=valid_character_style_ids,
+            )
+        elif isinstance(block, Table):
+            _append_table(
+                content,
+                block,
+                valid_paragraph_style_ids=valid_paragraph_style_ids,
+                valid_character_style_ids=valid_character_style_ids,
+            )
+    if textbox.body_blocks and isinstance(textbox.body_blocks[-1], Table):
+        _append_paragraph(
+            content,
+            Paragraph(()),
+            valid_paragraph_style_ids=valid_paragraph_style_ids,
+            valid_character_style_ids=valid_character_style_ids,
+        )
+
+
+def _append_inline(
+    paragraph_element: ET.Element,
+    inline: TextRun | Tab | Break | Field | FloatingTextBox,
+    *,
+    valid_paragraph_style_ids: set[int],
+    valid_character_style_ids: set[int],
+) -> None:
+    if isinstance(inline, TextRun):
+        _append_text_run(
+            paragraph_element,
+            inline.text,
+            inline.properties,
+            valid_style_ids=valid_character_style_ids,
+        )
+    elif isinstance(inline, Tab):
+        run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+        _append_run_properties(
+            run,
+            inline.properties,
+            valid_style_ids=valid_character_style_ids,
+        )
+        ET.SubElement(run, _qn(W_NS, "tab"))
+    elif isinstance(inline, Break):
+        run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+        _append_run_properties(
+            run,
+            inline.properties,
+            valid_style_ids=valid_character_style_ids,
+        )
+        attributes = (
+            {_qn(W_NS, "type"): "page"}
+            if inline.kind is BreakType.PAGE
+            else {}
+        )
+        ET.SubElement(run, _qn(W_NS, "br"), attributes)
+    elif isinstance(inline, Field):
+        _append_field(
+            paragraph_element,
+            inline,
+            valid_paragraph_style_ids=valid_paragraph_style_ids,
+            valid_character_style_ids=valid_character_style_ids,
+        )
+    elif isinstance(inline, FloatingTextBox):
+        _append_floating_textbox(
+            paragraph_element,
+            inline,
+            valid_paragraph_style_ids=valid_paragraph_style_ids,
+            valid_character_style_ids=valid_character_style_ids,
+        )
+
+
 def _append_section_properties(
     parent: ET.Element,
     section: SectionProperties,
@@ -541,34 +746,12 @@ def _append_paragraph(
             ),
         )
     for inline in paragraph.inlines:
-        if isinstance(inline, TextRun):
-            _append_text_run(
-                paragraph_element,
-                inline.text,
-                inline.properties,
-                valid_style_ids=valid_character_style_ids,
-            )
-        elif isinstance(inline, Tab):
-            run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
-            _append_run_properties(
-                run,
-                inline.properties,
-                valid_style_ids=valid_character_style_ids,
-            )
-            ET.SubElement(run, _qn(W_NS, "tab"))
-        elif isinstance(inline, Break):
-            run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
-            _append_run_properties(
-                run,
-                inline.properties,
-                valid_style_ids=valid_character_style_ids,
-            )
-            attributes = (
-                {_qn(W_NS, "type"): "page"}
-                if inline.kind is BreakType.PAGE
-                else {}
-            )
-            ET.SubElement(run, _qn(W_NS, "br"), attributes)
+        _append_inline(
+            paragraph_element,
+            inline,
+            valid_paragraph_style_ids=valid_paragraph_style_ids,
+            valid_character_style_ids=valid_character_style_ids,
+        )
 
 
 def _border_attributes(border: BorderProperties) -> dict[str, str]:

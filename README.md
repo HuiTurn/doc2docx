@@ -4,7 +4,7 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M5b implementation supports unencrypted CFB/OLE Word documents,
+The current M0–M5c implementation supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
 UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
 preserves a useful first set of direct character and paragraph properties. It
@@ -21,7 +21,12 @@ distance, and gutter width are emitted as WordprocessingML section properties.
 It parses `PlcfHdd`, removes each story's guard paragraph, preserves the six
 default/even/first header and footer positions per section, and retains empty-story
 inheritance. Header/footer parts, relationships, first-page rules, and the DOP
-facing-pages setting are written as native DOCX package parts.
+facing-pages setting are written as native DOCX package parts. Header textbox
+stories are resolved through `PlcfHdrtxbxTxt`, `PlcfTxbxHdrBkd`, and
+`PlcSpaHdr`; their shape rectangle, relative positioning, wrapping, and anchor
+flags are emitted as compatible VML textboxes. `PAGE`, `NUMPAGES`, and
+`SECTIONPAGES` are preserved as live WordprocessingML fields with their cached
+display results.
 
 ## Usage
 
@@ -43,16 +48,18 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-M5b currently preserves bold, italic, strike, double strike, capitalization,
+M5c currently preserves bold, italic, strike, double strike, capitalization,
 hidden text, underline, text color, highlight, font size, vertical alignment,
 paragraph justification, indents, spacing, line spacing, and keep/page-break
 flags, font names, paragraph/character style references, style inheritance,
-basic section/page layout, and ordinary paragraph/table content in headers and
-footers.
+basic section/page layout, ordinary paragraph/table content in headers and
+footers, positioned header/footer textboxes, and basic dynamic page-number
+fields.
 Conditional table styles, newer color-based table shading, cell spacing,
 numbering styles, multi-column layout, page-number settings, header/footer
-textboxes and shapes, other secondary stories, images, live fields, embedded
-objects, and encrypted documents are intentionally deferred to later iterations.
+non-textbox shapes and full OfficeArt styling, main-story textboxes, other
+secondary stories, images, fields beyond the supported page-number family,
+embedded objects, and encrypted documents are intentionally deferred to later iterations.
 Unsupported or lossy content is reported rather than silently treated as fully
 converted.
 
@@ -69,5 +76,6 @@ both Table stream variants, mixed compressed/UTF-16 text pieces, UTF-16 surrogat
 pair coordinates, CHPX/PAPX and piece-level PRM formatting, font/style table
 parsing, nested table reconstruction, grids, cell margins and shading, PlcfSed and
 Sepx page-layout parsing, multi-section break placement, PlcfHdd guard and story
-mapping, header/footer OPC relationships, malformed input checks, CLI coverage,
-and end-to-end DOCX package validation.
+mapping, header textbox/shape/field PLC validation, live PAGE-field output,
+header/footer OPC relationships, malformed input checks, CLI coverage, and
+end-to-end DOCX package validation.

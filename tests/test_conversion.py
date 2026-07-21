@@ -15,6 +15,7 @@ from doc2docx.errors import (
 from .fixtures import (
     build_formatted_word_cfb,
     build_header_footer_word_cfb,
+    build_header_textbox_word_cfb,
     build_nested_table_word_cfb,
     build_sectioned_word_cfb,
     build_table_word_cfb,
@@ -25,9 +26,61 @@ from .fixtures import (
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+V = "{urn:schemas-microsoft-com:vml}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_header_textbox_field_table_mismatch_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "bad-header-textbox.doc"
+            source.write_bytes(build_header_textbox_word_cfb(malformed_field=True))
+            with self.assertRaises(InvalidWordDocument):
+                convert(source)
+
+    def test_header_textbox_and_page_field_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "header-textbox.doc"
+            destination = temporary / "header-textbox.docx"
+            source.write_bytes(build_header_textbox_word_cfb())
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.statistics["header_textbox_count"], 1)
+            self.assertEqual(
+                result.report.statistics["header_textbox_field_count"], 1
+            )
+            self.assertEqual(
+                [warning.code for warning in result.report.warnings],
+                ["HEADER_TEXTBOX_STYLE_APPROXIMATED"],
+            )
+            inspected = inspect_doc(source)
+            self.assertGreater(inspected["fib"]["lcbPlcSpaHdr"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcfHdrtxbxTxt"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcffldHdrTxbx"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcfTxbxHdrBkd"], 0)
+
+            with zipfile.ZipFile(destination) as package:
+                footer_root = ET.fromstring(package.read("word/footer1.xml"))
+            rectangle = footer_root.find(f".//{W}pict/{V}rect")
+            assert rectangle is not None
+            self.assertEqual(rectangle.get("id"), "_x0000_s1025")
+            style = rectangle.get("style", "")
+            self.assertIn("width:144pt", style)
+            self.assertIn("height:36pt", style)
+            self.assertIn("mso-position-horizontal-relative:margin", style)
+            self.assertEqual(
+                [
+                    element.get(f"{W}fldCharType")
+                    for element in footer_root.findall(f".//{W}fldChar")
+                ],
+                ["begin", "separate", "end"],
+            )
+            instruction = footer_root.findtext(f".//{W}instrText")
+            self.assertEqual(instruction, " PAGE \\* MERGEFORMAT ")
+            self.assertIn("1", "".join(footer_root.itertext()))
+            self.assertNotIn("\uFFFC", "".join(footer_root.itertext()))
+
     def test_header_footer_story_without_guard_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "bad-header.doc"

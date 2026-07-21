@@ -70,8 +70,13 @@ def _build_fib(
     clx_size: int,
     ccp_footnotes: int = 0,
     ccp_headers: int = 0,
+    ccp_header_textboxes: int = 0,
     section_plc: tuple[int, int] = (0, 0),
     header_plc: tuple[int, int] = (0, 0),
+    header_shape_plc: tuple[int, int] = (0, 0),
+    header_textbox_plc: tuple[int, int] = (0, 0),
+    header_textbox_field_plc: tuple[int, int] = (0, 0),
+    header_textbox_break_plc: tuple[int, int] = (0, 0),
     chpx_plc: tuple[int, int] = (0, 0),
     papx_plc: tuple[int, int] = (0, 0),
     dop: tuple[int, int] = (0, 0),
@@ -101,6 +106,7 @@ def _build_fib(
     fib_rg_lw[3] = ccp_text
     fib_rg_lw[4] = ccp_footnotes
     fib_rg_lw[5] = ccp_headers
+    fib_rg_lw[10] = ccp_header_textboxes
     struct.pack_into("<22I", fib, position, *fib_rg_lw)
     position += 22 * 4
     struct.pack_into("<H", fib, position, 93)
@@ -112,6 +118,10 @@ def _build_fib(
     pairs[13] = papx_plc
     pairs[31] = dop
     pairs[33] = (0, clx_size)
+    pairs[41] = header_shape_plc
+    pairs[58] = header_textbox_plc
+    pairs[59] = header_textbox_field_plc
+    pairs[76] = header_textbox_break_plc
     for fc, lcb in pairs:
         struct.pack_into("<II", fib, position, fc, lcb)
         position += 8
@@ -333,6 +343,157 @@ def build_header_footer_word_cfb(*, malformed_guard: bool = False) -> bytes:
         plcf_hdd_offset : plcf_hdd_offset + len(plcf_hdd)
     ] = plcf_hdd
     table_stream[dop_offset] = 0x01  # DopBase.fFacingPages
+    return _wrap_regular_word_streams(word_document, table_stream)
+
+
+def build_header_textbox_word_cfb(*, malformed_field: bool = False) -> bytes:
+    """A DOC whose default footer contains a floating PAGE-field textbox."""
+
+    main_text = b"Body\r"
+    header_stories = [b""] * 12
+    header_stories[9] = b"\x08\r\r"
+    header_payload = bytearray()
+    header_cps = [0]
+    for story in header_stories:
+        header_payload.extend(story)
+        header_cps.append(len(header_payload))
+    header_document = bytes(header_payload) + b"\r"
+
+    field_text = b"\x13 PAGE \\* MERGEFORMAT \x141\x15"
+    textbox_range = field_text + b"\r\r"
+    header_textbox_document = textbox_range + b"\r"
+    all_text = main_text + header_document + header_textbox_document
+
+    text_fc = 1024
+    compressed_fc = (text_fc * 2) | 0x40000000
+    plc_pcd = struct.pack("<2I", 0, len(all_text))
+    plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
+    clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
+
+    sepx_fc = 1400
+    section_grpprl = b"".join(
+        (
+            struct.pack("<HH", 0xB01F, 12240),
+            struct.pack("<HH", 0xB020, 15840),
+            struct.pack("<HH", 0xB021, 1440),
+            struct.pack("<HH", 0xB022, 1440),
+            struct.pack("<Hh", 0x9023, 1440),
+            struct.pack("<Hh", 0x9024, 1440),
+            struct.pack("<HH", 0xB017, 720),
+            struct.pack("<HH", 0xB018, 720),
+        )
+    )
+    plcf_sed = struct.pack("<2I", 0, len(main_text))
+    plcf_sed += struct.pack("<HiHI", 0, sepx_fc, 0, 0)
+    plcf_sed_offset = 128
+
+    plcf_hdd = struct.pack(
+        f"<{len(header_cps) + 1}I",
+        *header_cps,
+        len(header_document),
+    )
+    plcf_hdd_offset = 200
+
+    shape_id = 1025
+    plcf_spa_hdr = struct.pack("<2I", 0, len(header_document))
+    plcf_spa_hdr += struct.pack(
+        "<I4iHI",
+        shape_id,
+        0,
+        0,
+        2880,
+        720,
+        0x0070,
+        0,
+    )
+    plcf_spa_hdr_offset = 300
+
+    textbox_cps = (0, len(textbox_range), len(header_textbox_document))
+    plcf_header_textboxes = struct.pack("<3I", *textbox_cps)
+    plcf_header_textboxes += struct.pack(
+        "<iiHiII",
+        1,
+        0,
+        0,
+        -1,
+        shape_id,
+        0,
+    )
+    plcf_header_textboxes += struct.pack(
+        "<iiHiII",
+        -1,
+        0,
+        1,
+        0,
+        0,
+        0,
+    )
+    plcf_header_textboxes_offset = 350
+
+    plcf_breaks = struct.pack("<3I", *textbox_cps)
+    plcf_breaks += struct.pack("<hHH", 0, 0, 0)
+    plcf_breaks += struct.pack("<hHH", -1, 0, 0)
+    plcf_breaks_offset = 420
+
+    separator_cp = field_text.index(b"\x14")
+    end_cp = field_text.index(b"\x15")
+    plcf_fields = struct.pack(
+        "<4I",
+        0,
+        separator_cp,
+        end_cp,
+        len(header_textbox_document),
+    )
+    first_field_character = 0x14 if malformed_field else 0x13
+    plcf_fields += bytes(
+        (first_field_character, 0x21, 0x14, 0x00, 0x15, 0x00)
+    )
+    plcf_fields_offset = 460
+
+    word_document = bytearray(4096)
+    word_document[:1024] = _build_fib(
+        ccp_text=len(main_text),
+        ccp_headers=len(header_document),
+        ccp_header_textboxes=len(header_textbox_document),
+        clx_size=len(clx),
+        section_plc=(plcf_sed_offset, len(plcf_sed)),
+        header_plc=(plcf_hdd_offset, len(plcf_hdd)),
+        header_shape_plc=(plcf_spa_hdr_offset, len(plcf_spa_hdr)),
+        header_textbox_plc=(
+            plcf_header_textboxes_offset,
+            len(plcf_header_textboxes),
+        ),
+        header_textbox_field_plc=(plcf_fields_offset, len(plcf_fields)),
+        header_textbox_break_plc=(plcf_breaks_offset, len(plcf_breaks)),
+        cb_mac=1500,
+    )
+    word_document[text_fc : text_fc + len(all_text)] = all_text
+    struct.pack_into("<h", word_document, sepx_fc, len(section_grpprl))
+    word_document[
+        sepx_fc + 2 : sepx_fc + 2 + len(section_grpprl)
+    ] = section_grpprl
+
+    table_stream = bytearray(4096)
+    table_stream[: len(clx)] = clx
+    table_stream[
+        plcf_sed_offset : plcf_sed_offset + len(plcf_sed)
+    ] = plcf_sed
+    table_stream[
+        plcf_hdd_offset : plcf_hdd_offset + len(plcf_hdd)
+    ] = plcf_hdd
+    table_stream[
+        plcf_spa_hdr_offset : plcf_spa_hdr_offset + len(plcf_spa_hdr)
+    ] = plcf_spa_hdr
+    table_stream[
+        plcf_header_textboxes_offset :
+        plcf_header_textboxes_offset + len(plcf_header_textboxes)
+    ] = plcf_header_textboxes
+    table_stream[
+        plcf_breaks_offset : plcf_breaks_offset + len(plcf_breaks)
+    ] = plcf_breaks
+    table_stream[
+        plcf_fields_offset : plcf_fields_offset + len(plcf_fields)
+    ] = plcf_fields
     return _wrap_regular_word_streams(word_document, table_stream)
 
 

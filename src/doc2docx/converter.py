@@ -24,6 +24,7 @@ from .msdoc import (
     read_font_table,
     read_formatting,
     read_header_footer_stories,
+    read_header_textboxes,
     read_piece_table,
     read_sections,
     read_style_sheet,
@@ -148,6 +149,29 @@ def convert(
         fonts=fonts,
         style_sheet=style_sheet,
     )
+    spa_headers = fib.plc_spa_hdr
+    header_textbox_table = fib.plcf_hdr_txbx_txt
+    header_textbox_fields = fib.plcf_fld_hdr_txbx
+    header_textbox_breaks = fib.plcf_txbx_hdr_bkd
+    header_textboxes = read_header_textboxes(
+        table_stream,
+        piece_table,
+        ccp_headers=fib.ccp_headers,
+        header_story_cp_start=fib.header_story_cp_start,
+        ccp_header_textboxes=fib.ccp_header_textboxes,
+        header_textbox_cp_start=fib.header_textbox_story_cp_start,
+        spa_offset=spa_headers.fc,
+        spa_size=spa_headers.lcb,
+        text_offset=header_textbox_table.fc,
+        text_size=header_textbox_table.lcb,
+        field_offset=header_textbox_fields.fc,
+        field_size=header_textbox_fields.lcb,
+        break_offset=header_textbox_breaks.fc,
+        break_size=header_textbox_breaks.lcb,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+        paragraph_properties_at=formatting.paragraph_properties_at,
+    )
     header_table = fib.plcf_hdd
     header_footers = read_header_footer_stories(
         table_stream,
@@ -160,6 +184,7 @@ def convert(
         report=report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
+        floating_textbox_at=header_textboxes.textbox_at,
     )
     sections = header_footers.sections
     main_characters = piece_table.extract_characters(
@@ -213,6 +238,8 @@ def convert(
             "section_count": len(sections),
             "header_footer_story_count": header_footers.story_count,
             "header_footer_paragraph_count": header_footers.paragraph_count,
+            "header_textbox_count": header_textboxes.textbox_count,
+            "header_textbox_field_count": header_textboxes.field_count,
         }
     )
     if fib.base.has_pictures:
@@ -222,10 +249,11 @@ def convert(
         )
     secondary_stories = fib.secondary_story_character_counts
     secondary_stories.pop("headers", None)
+    secondary_stories.pop("header_textboxes", None)
     if secondary_stories:
         report.warning(
             "SECONDARY_STORIES_DEFERRED",
-            "some secondary document stories remain unsupported after M5b",
+            "some secondary document stories remain unsupported after M5c",
             stories=secondary_stories,
         )
 
@@ -256,7 +284,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M5b conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M5c conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -300,6 +328,7 @@ def inspect_doc(
             "table_stream": fib.base.table_stream_name,
             "ccpText": fib.ccp_text,
             "ccpHdd": fib.ccp_headers,
+            "ccpHdrTxbx": fib.ccp_header_textboxes,
             "fcClx": fib.clx.fc,
             "lcbClx": fib.clx.lcb,
             "fcPlcfBteChpx": fib.plcf_bte_chpx.fc,
@@ -312,6 +341,14 @@ def inspect_doc(
             "lcbPlcfSed": fib.plcf_sed.lcb,
             "fcPlcfHdd": fib.plcf_hdd.fc,
             "lcbPlcfHdd": fib.plcf_hdd.lcb,
+            "fcPlcSpaHdr": fib.plc_spa_hdr.fc,
+            "lcbPlcSpaHdr": fib.plc_spa_hdr.lcb,
+            "fcPlcfHdrtxbxTxt": fib.plcf_hdr_txbx_txt.fc,
+            "lcbPlcfHdrtxbxTxt": fib.plcf_hdr_txbx_txt.lcb,
+            "fcPlcffldHdrTxbx": fib.plcf_fld_hdr_txbx.fc,
+            "lcbPlcffldHdrTxbx": fib.plcf_fld_hdr_txbx.lcb,
+            "fcPlcfTxbxHdrBkd": fib.plcf_txbx_hdr_bkd.fc,
+            "lcbPlcfTxbxHdrBkd": fib.plcf_txbx_hdr_bkd.lcb,
             "fcDop": fib.dop.fc,
             "lcbDop": fib.dop.lcb,
             "fcSttbfFfn": fib.sttbf_ffn.fc,

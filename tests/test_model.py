@@ -1,7 +1,7 @@
 import unittest
 
 from doc2docx.diagnostics import ConversionReport
-from doc2docx.model import Break, BreakType, Tab, TextRun, parse_main_story
+from doc2docx.model import Break, BreakType, Field, Tab, TextRun, parse_main_story
 
 
 class DocumentModelTests(unittest.TestCase):
@@ -31,3 +31,19 @@ class DocumentModelTests(unittest.TestCase):
         self.assertEqual(
             [warning.code for warning in report.warnings], ["FIELDS_FLATTENED"]
         )
+
+    def test_page_fields_remain_live_with_their_cached_result(self) -> None:
+        report = ConversionReport("fixture.doc")
+        document = parse_main_story(
+            "before \x13 PAGE \\* MERGEFORMAT \x141\x15 after\r",
+            report,
+        )
+        self.assertEqual(
+            document.paragraphs[0].inlines,
+            (
+                TextRun("before "),
+                Field(" PAGE \\* MERGEFORMAT ", (TextRun("1"),)),
+                TextRun(" after"),
+            ),
+        )
+        self.assertFalse(report.warnings)

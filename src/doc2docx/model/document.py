@@ -241,7 +241,40 @@ class Break:
     properties: CharacterProperties = field(default_factory=CharacterProperties)
 
 
-Inline = TextRun | Tab | Break
+@dataclass(slots=True, frozen=True)
+class Field:
+    """A live Word field whose cached result remains available for display."""
+
+    instruction: str
+    result: tuple["Inline", ...] = ()
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+
+
+@dataclass(slots=True, frozen=True)
+class FloatingTextBox:
+    """A positioned header/footer textbox reconstructed from a DOC Spa."""
+
+    shape_id: int
+    anchor_cp: int
+    left_twips: int
+    top_twips: int
+    width_twips: int
+    height_twips: int
+    horizontal_relative: str
+    vertical_relative: str
+    wrap_type: str
+    wrap_side: str
+    behind_text: bool
+    anchor_locked: bool
+    paragraphs: tuple["Paragraph", ...]
+    blocks: tuple["Paragraph | Table", ...] = ()
+
+    @property
+    def body_blocks(self) -> tuple["Paragraph | Table", ...]:
+        return self.blocks or self.paragraphs
+
+
+Inline = TextRun | Tab | Break | Field | FloatingTextBox
 
 
 @dataclass(slots=True, frozen=True)
@@ -350,6 +383,14 @@ class _TableContext:
     rows: list[TableRow] = field(default_factory=list)
     raw_cells: list[tuple[Block, ...]] = field(default_factory=list)
     cell_blocks: list[Block] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class _FieldContext:
+    instruction: list[str]
+    result: list[Inline]
+    properties: CharacterProperties
+    has_separator: bool = False
 
 
 def _replace_margin_sides(
@@ -553,6 +594,7 @@ def parse_main_story(
     *,
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
+    floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
     sections: Sequence[SectionProperties] = (),
     story_name: str = "main",
 ) -> Document:
@@ -575,7 +617,7 @@ def parse_main_story(
     unsupported_controls: dict[int, int] = {}
     deferred_markers: dict[str, int] = {}
     flattened_fields = 0
-    field_stack: list[bool] = []  # False=instruction, True=result
+    field_stack: list[_FieldContext] = []
     last_was_terminator = False
     section_values = tuple(sections)
     internal_sections_by_end = {
@@ -584,23 +626,45 @@ def parse_main_story(
     matched_section_ends: set[int] = set()
 
     def visible() -> bool:
-        return all(field_stack)
+        return all(context.has_separator for context in field_stack)
+
+    def current_inlines() -> list[Inline]:
+        return field_stack[-1].result if field_stack else inlines
+
+    def extend_visible_inlines(values: Sequence[Inline]) -> None:
+        target = current_inlines()
+        for value in values:
+            if (
+                target
+                and isinstance(target[-1], TextRun)
+                and isinstance(value, TextRun)
+                and target[-1].properties == value.properties
+            ):
+                previous = target[-1]
+                assert isinstance(previous, TextRun)
+                target[-1] = TextRun(
+                    previous.text + value.text,
+                    previous.properties,
+                )
+            else:
+                target.append(value)
 
     def flush_text() -> None:
         if text_buffer:
             buffered_text = "".join(text_buffer)
             if (
-                inlines
-                and isinstance(inlines[-1], TextRun)
-                and inlines[-1].properties == text_properties
+                current_inlines()
+                and isinstance(current_inlines()[-1], TextRun)
+                and current_inlines()[-1].properties == text_properties
             ):
-                previous = inlines[-1]
-                inlines[-1] = TextRun(
+                previous = current_inlines()[-1]
+                assert isinstance(previous, TextRun)
+                current_inlines()[-1] = TextRun(
                     previous.text + buffered_text,
                     previous.properties,
                 )
             else:
-                inlines.append(TextRun(buffered_text, text_properties))
+                current_inlines().append(TextRun(buffered_text, text_properties))
             text_buffer.clear()
 
     def append_text(character: str, properties: CharacterProperties) -> None:
@@ -631,19 +695,44 @@ def parse_main_story(
         )
 
         if value == 0x13:  # field begin
-            flush_text()
-            field_stack.append(False)
-            flattened_fields += 1
+            if visible():
+                flush_text()
+            field_stack.append(
+                _FieldContext([], [], character_properties)
+            )
             continue
         if value == 0x14 and field_stack:  # field separator
-            flush_text()
-            field_stack[-1] = True
+            if visible():
+                flush_text()
+            field_stack[-1].has_separator = True
             continue
         if value == 0x15 and field_stack:  # field end
-            flush_text()
-            field_stack.pop()
+            if visible():
+                flush_text()
+            context = field_stack.pop()
+            instruction = "".join(context.instruction)
+            instruction_tokens = instruction.lstrip().split(maxsplit=1)
+            field_type = instruction_tokens[0].upper() if instruction_tokens else ""
+            parent_is_visible = visible()
+            if field_type in {"PAGE", "NUMPAGES", "SECTIONPAGES"}:
+                if parent_is_visible:
+                    current_inlines().append(
+                        Field(
+                            instruction=instruction,
+                            result=tuple(context.result),
+                            properties=context.properties,
+                        )
+                    )
+            else:
+                if parent_is_visible:
+                    extend_visible_inlines(context.result)
+                flattened_fields += 1
             continue
         if not visible():
+            for context in reversed(field_stack):
+                if not context.has_separator:
+                    context.instruction.append(character)
+                    break
             continue
 
         if character == "\r":
@@ -711,6 +800,16 @@ def parse_main_story(
                 append_text("\uFFFC", character_properties)
                 last_was_terminator = False
         elif value in (0x01, 0x02, 0x08):
+            textbox = (
+                floating_textbox_at(cp_offset)
+                if value == 0x08 and floating_textbox_at is not None
+                else None
+            )
+            if textbox is not None:
+                flush_text()
+                current_inlines().append(textbox)
+                last_was_terminator = False
+                continue
             marker_code = {
                 0x01: "OBJECT_ANCHOR_DEFERRED",
                 0x02: "NOTE_REFERENCE_DEFERRED",
@@ -742,6 +841,7 @@ def parse_main_story(
         finish_paragraph(paragraph_properties)
 
     if field_stack:
+        flattened_fields += len(field_stack)
         report.warning(
             "UNTERMINATED_FIELD",
             f"{story_name} story contains an unterminated field; its instruction was hidden",
@@ -755,7 +855,7 @@ def parse_main_story(
     if flattened_fields:
         report.warning(
             "FIELDS_FLATTENED",
-            "field structures were flattened to their displayed result",
+            "unsupported field structures were flattened to their displayed result",
             location=SourceLocation(story=story_name),
             field_count=flattened_fields,
         )
