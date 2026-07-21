@@ -21,6 +21,7 @@ from ..model import (
     Endnote,
     EndnoteReference,
     Field,
+    FloatingPicture,
     FloatingTextBox,
     FootnoteReference,
     FontDefinition,
@@ -146,7 +147,7 @@ def _content_types_xml(
     has_footnotes: bool,
     has_endnotes: bool,
     has_comments: bool,
-    pictures: tuple[InlinePicture, ...],
+    pictures: tuple[InlinePicture | FloatingPicture, ...],
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
     # OPC consumers in the wild are more interoperable with the conventional
@@ -261,7 +262,7 @@ def _document_relationships_xml(
     has_footnotes: bool,
     has_endnotes: bool,
     has_comments: bool,
-    pictures: tuple[InlinePicture, ...],
+    pictures: tuple[InlinePicture | FloatingPicture, ...],
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
     root = ET.Element("Relationships", xmlns=REL_NS)
@@ -750,47 +751,29 @@ def _append_symbol(
     )
 
 
-def _append_inline_picture(
-    paragraph_element: ET.Element,
-    picture: InlinePicture,
+def _append_picture_graphic(
+    container: ET.Element,
+    picture: InlinePicture | FloatingPicture,
     *,
-    valid_style_ids: set[int],
+    width_emu: int,
+    height_emu: int,
 ) -> None:
-    run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
-    _append_run_properties(
-        run,
-        picture.properties,
-        valid_style_ids=valid_style_ids,
-    )
-    drawing = ET.SubElement(run, _qn(W_NS, "drawing"))
-    inline = ET.SubElement(
-        drawing,
-        _qn(WP_NS, "inline"),
-        {"distT": "0", "distB": "0", "distL": "0", "distR": "0"},
-    )
-    ET.SubElement(
-        inline,
-        _qn(WP_NS, "extent"),
-        {"cx": str(picture.width_emu), "cy": str(picture.height_emu)},
-    )
-    ET.SubElement(
-        inline,
-        _qn(WP_NS, "effectExtent"),
-        {"l": "0", "t": "0", "r": "0", "b": "0"},
-    )
     picture_name = picture.name or f"Picture {picture.picture_id}"
     ET.SubElement(
-        inline,
+        container,
         _qn(WP_NS, "docPr"),
         {"id": str(picture.picture_id), "name": picture_name},
     )
-    frame_properties = ET.SubElement(inline, _qn(WP_NS, "cNvGraphicFramePr"))
+    frame_properties = ET.SubElement(
+        container,
+        _qn(WP_NS, "cNvGraphicFramePr"),
+    )
     ET.SubElement(
         frame_properties,
         _qn(A_NS, "graphicFrameLocks"),
         {"noChangeAspect": "1"},
     )
-    graphic = ET.SubElement(inline, _qn(A_NS, "graphic"))
+    graphic = ET.SubElement(container, _qn(A_NS, "graphic"))
     graphic_data = ET.SubElement(
         graphic,
         _qn(A_NS, "graphicData"),
@@ -823,7 +806,7 @@ def _append_inline_picture(
     ET.SubElement(
         transform,
         _qn(A_NS, "ext"),
-        {"cx": str(picture.width_emu), "cy": str(picture.height_emu)},
+        {"cx": str(width_emu), "cy": str(height_emu)},
     )
     geometry = ET.SubElement(
         shape_properties,
@@ -831,6 +814,124 @@ def _append_inline_picture(
         {"prst": "rect"},
     )
     ET.SubElement(geometry, _qn(A_NS, "avLst"))
+
+
+def _append_inline_picture(
+    paragraph_element: ET.Element,
+    picture: InlinePicture,
+    *,
+    valid_style_ids: set[int],
+) -> None:
+    run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    _append_run_properties(
+        run,
+        picture.properties,
+        valid_style_ids=valid_style_ids,
+    )
+    drawing = ET.SubElement(run, _qn(W_NS, "drawing"))
+    inline = ET.SubElement(
+        drawing,
+        _qn(WP_NS, "inline"),
+        {"distT": "0", "distB": "0", "distL": "0", "distR": "0"},
+    )
+    ET.SubElement(
+        inline,
+        _qn(WP_NS, "extent"),
+        {"cx": str(picture.width_emu), "cy": str(picture.height_emu)},
+    )
+    ET.SubElement(
+        inline,
+        _qn(WP_NS, "effectExtent"),
+        {"l": "0", "t": "0", "r": "0", "b": "0"},
+    )
+    _append_picture_graphic(
+        inline,
+        picture,
+        width_emu=picture.width_emu,
+        height_emu=picture.height_emu,
+    )
+
+
+def _append_floating_picture(
+    paragraph_element: ET.Element,
+    picture: FloatingPicture,
+    *,
+    valid_style_ids: set[int],
+) -> None:
+    width_emu = picture.width_twips * 635
+    height_emu = picture.height_twips * 635
+    run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    _append_run_properties(
+        run,
+        picture.properties,
+        valid_style_ids=valid_style_ids,
+    )
+    drawing = ET.SubElement(run, _qn(W_NS, "drawing"))
+    anchor = ET.SubElement(
+        drawing,
+        _qn(WP_NS, "anchor"),
+        {
+            "distT": "0",
+            "distB": "0",
+            "distL": "0",
+            "distR": "0",
+            "simplePos": "0",
+            "relativeHeight": str(max(picture.shape_id, 1)),
+            "behindDoc": "1" if picture.behind_text else "0",
+            "locked": "1" if picture.anchor_locked else "0",
+            "layoutInCell": "1",
+            "allowOverlap": "1",
+        },
+    )
+    ET.SubElement(anchor, _qn(WP_NS, "simplePos"), {"x": "0", "y": "0"})
+    horizontal = ET.SubElement(
+        anchor,
+        _qn(WP_NS, "positionH"),
+        {"relativeFrom": picture.horizontal_relative},
+    )
+    ET.SubElement(horizontal, _qn(WP_NS, "posOffset")).text = str(
+        picture.left_twips * 635
+    )
+    vertical = ET.SubElement(
+        anchor,
+        _qn(WP_NS, "positionV"),
+        {"relativeFrom": picture.vertical_relative},
+    )
+    ET.SubElement(vertical, _qn(WP_NS, "posOffset")).text = str(
+        picture.top_twips * 635
+    )
+    ET.SubElement(
+        anchor,
+        _qn(WP_NS, "extent"),
+        {"cx": str(width_emu), "cy": str(height_emu)},
+    )
+    ET.SubElement(
+        anchor,
+        _qn(WP_NS, "effectExtent"),
+        {"l": "0", "t": "0", "r": "0", "b": "0"},
+    )
+    if picture.wrap_type == "topAndBottom":
+        ET.SubElement(anchor, _qn(WP_NS, "wrapTopAndBottom"))
+    elif picture.wrap_type == "none":
+        ET.SubElement(anchor, _qn(WP_NS, "wrapNone"))
+    else:
+        wrap_text = {
+            "both": "bothSides",
+            "left": "left",
+            "right": "right",
+            "largest": "largest",
+        }[picture.wrap_side]
+        ET.SubElement(
+            anchor,
+            _qn(WP_NS, "wrapSquare"),
+            {"wrapText": wrap_text},
+        )
+    _append_picture_graphic(
+        anchor,
+        picture,
+        width_emu=width_emu,
+        height_emu=height_emu,
+    )
 
 
 def _twips_as_points(value: int) -> str:
@@ -1043,6 +1144,7 @@ def _append_inline(
         | CommentRangeEnd
         | CommentReference
         | InlinePicture
+        | FloatingPicture
         | FloatingTextBox
     ),
     *,
@@ -1064,6 +1166,12 @@ def _append_inline(
         )
     elif isinstance(inline, InlinePicture):
         _append_inline_picture(
+            paragraph_element,
+            inline,
+            valid_style_ids=valid_character_style_ids,
+        )
+    elif isinstance(inline, FloatingPicture):
+        _append_floating_picture(
             paragraph_element,
             inline,
             valid_style_ids=valid_character_style_ids,

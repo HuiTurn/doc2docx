@@ -29,11 +29,13 @@ from .msdoc import (
     read_footnotes,
     read_header_footer_stories,
     read_header_textboxes,
+    read_main_floating_pictures,
     read_main_textboxes,
     read_officeart_shapes,
     read_inline_pictures,
     read_piece_table,
     read_sections,
+    read_shape_anchors,
     read_style_sheet,
 )
 from .ooxml import validate_docx, write_docx
@@ -222,8 +224,20 @@ def convert(
         table_stream,
         offset=dgg_info.fc,
         size=dgg_info.lcb,
+        delay_stream=word_document,
     )
     main_shape_table = fib.plc_spa_mom
+    main_shape_anchors = read_shape_anchors(
+        table_stream,
+        piece_table,
+        offset=main_shape_table.fc,
+        size=main_shape_table.lcb,
+        ccp_anchor_story=fib.ccp_text,
+        anchor_story_cp_start=0,
+        spa_structure="PlcSpaMom",
+        anchor_story_name="main",
+        report=report,
+    )
     main_textbox_table = fib.plcf_txbx_txt
     main_textbox_fields = fib.plcf_fld_txbx
     main_textbox_breaks = fib.plcf_txbx_bkd
@@ -313,6 +327,14 @@ def convert(
         report=report,
         character_properties_at=formatting.character_properties_at,
     )
+    floating_pictures = read_main_floating_pictures(
+        main_shape_anchors,
+        officeart_shapes,
+        excluded_shape_ids=main_textboxes.shape_ids,
+        first_picture_id=len(inline_pictures.pictures) + 1,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
     parsed_document = parse_main_story(
         main_characters,
         report,
@@ -320,6 +342,7 @@ def convert(
         paragraph_properties_at=formatting.paragraph_properties_at,
         floating_textbox_at=main_textboxes.textbox_at,
         inline_picture_at=inline_pictures.picture_at,
+        floating_picture_at=floating_pictures.picture_at,
         footnote_reference_at=footnotes.reference_at,
         endnote_reference_at=endnotes.reference_at,
         comment_reference_at=comments.reference_at,
@@ -335,7 +358,7 @@ def convert(
         footnotes=footnotes.footnotes,
         endnotes=endnotes.endnotes,
         comments=comments.comments,
-        pictures=inline_pictures.pictures,
+        pictures=inline_pictures.pictures + floating_pictures.pictures,
         even_and_odd_headers=document_settings.even_and_odd_headers,
         adjust_line_height_in_table=(
             document_settings.adjust_line_height_in_table
@@ -417,6 +440,11 @@ def convert(
             "inline_picture_count": len(inline_pictures.pictures),
             "deferred_inline_picture_count": inline_pictures.deferred_count,
             "inline_binary_data_count": inline_pictures.binary_data_count,
+            "floating_picture_count": len(floating_pictures.pictures),
+            "deferred_floating_picture_count": floating_pictures.deferred_count,
+            "non_picture_floating_shape_count": (
+                floating_pictures.non_picture_shape_count
+            ),
             "symbol_character_count": sum(
                 isinstance(inline, Symbol)
                 for paragraph in document.paragraphs
@@ -433,7 +461,11 @@ def convert(
             ),
         }
     )
-    if fib.base.has_pictures and not inline_pictures.pictures:
+    if (
+        fib.base.has_pictures
+        and not inline_pictures.pictures
+        and not floating_pictures.pictures
+    ):
         report.warning(
             "PICTURES_DEFERRED",
             "the FIB reports pictures, but no supported inline raster picture was recovered",
@@ -479,7 +511,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M8a conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M8b conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

@@ -43,13 +43,19 @@ class _OfficeArtRecord:
     end: int
 
 
-class _UnsupportedPictureFormat(InvalidWordDocument):
+class UnsupportedBlipFormat(InvalidWordDocument):
     def __init__(self, record_type: int) -> None:
         super().__init__(f"OfficeArt BLIP type 0x{record_type:04X} is unsupported")
         self.record_type = record_type
 
 
-def _record_at(data: bytes, offset: int, limit: int, *, label: str) -> _OfficeArtRecord:
+def _record_at(
+    data: bytes | memoryview,
+    offset: int,
+    limit: int,
+    *,
+    label: str,
+) -> _OfficeArtRecord:
     if offset < 0 or limit < offset or offset > limit - 8:
         raise InvalidWordDocument(f"{label} has a truncated OfficeArt record header")
     version_instance, record_type, record_length = struct.unpack_from(
@@ -112,7 +118,10 @@ def _dib_to_bmp(dib: bytes) -> bytes:
     return struct.pack("<2sIHHI", b"BM", file_size, 0, 0, 14 + pixel_offset) + dib
 
 
-def _decode_blip(data: bytes, record: _OfficeArtRecord) -> tuple[bytes, str, str]:
+def _decode_blip(
+    data: bytes | memoryview,
+    record: _OfficeArtRecord,
+) -> tuple[bytes, str, str]:
     if record.version != 0:
         raise InvalidWordDocument(
             f"OfficeArt BLIP 0x{record.record_type:04X} has invalid version "
@@ -134,7 +143,7 @@ def _decode_blip(data: bytes, record: _OfficeArtRecord) -> tuple[bytes, str, str
         extension = "bmp"
         content_type = "image/bmp"
     else:
-        raise _UnsupportedPictureFormat(record.record_type)
+        raise UnsupportedBlipFormat(record.record_type)
 
     if record.instance in one_uid_instances:
         uid_count = 1
@@ -148,7 +157,7 @@ def _decode_blip(data: bytes, record: _OfficeArtRecord) -> tuple[bytes, str, str
     file_start = record.payload_start + uid_count * 16 + 1
     if file_start > record.end:
         raise InvalidWordDocument("OfficeArt BLIP UID/tag fields exceed the record")
-    image_data = data[file_start:record.end]
+    image_data = bytes(data[file_start:record.end])
     if record.record_type == _BLIP_PNG:
         if not image_data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise InvalidWordDocument("OfficeArt PNG BLIP has no PNG signature")
@@ -160,6 +169,20 @@ def _decode_blip(data: bytes, record: _OfficeArtRecord) -> tuple[bytes, str, str
     return image_data, extension, content_type
 
 
+def decode_officeart_blip(
+    data: bytes | memoryview,
+    offset: int,
+    *,
+    limit: int | None = None,
+) -> tuple[bytes, str, str, int]:
+    """Decode one bounded PNG/JPEG/DIB OfficeArtBlip record."""
+
+    record_limit = len(data) if limit is None else limit
+    record = _record_at(data, offset, record_limit, label="OfficeArtBlip")
+    image_data, extension, content_type = _decode_blip(data, record)
+    return image_data, extension, content_type, record.end
+
+
 def _decode_file_block(
     data: bytes,
     record: _OfficeArtRecord,
@@ -168,7 +191,7 @@ def _decode_file_block(
         return _decode_blip(data, record)
     if record.record_type != _OFFICEART_FBSE:
         if 0xF018 <= record.record_type <= 0xF117:
-            raise _UnsupportedPictureFormat(record.record_type)
+            raise UnsupportedBlipFormat(record.record_type)
         raise InvalidWordDocument(
             f"inline OfficeArt container has unexpected record "
             f"0x{record.record_type:04X}"
@@ -279,7 +302,7 @@ def parse_inline_picture(
                 data_stream,
                 record,
             )
-        except _UnsupportedPictureFormat as exc:
+        except UnsupportedBlipFormat as exc:
             unsupported_type = exc.record_type
         else:
             display_properties = replace(
@@ -301,7 +324,7 @@ def parse_inline_picture(
             )
         position = record.end
     if unsupported_type is not None:
-        raise _UnsupportedPictureFormat(unsupported_type)
+        raise UnsupportedBlipFormat(unsupported_type)
     raise InvalidWordDocument("inline OfficeArt container contains no BLIP")
 
 
@@ -376,7 +399,7 @@ def read_inline_pictures(
                     picture_id=len(pictures) + 1,
                     properties=properties,
                 )
-            except _UnsupportedPictureFormat as exc:
+            except UnsupportedBlipFormat as exc:
                 report.warning(
                     "INLINE_PICTURE_FORMAT_DEFERRED",
                     "an inline picture uses an unsupported OfficeArt BLIP format",

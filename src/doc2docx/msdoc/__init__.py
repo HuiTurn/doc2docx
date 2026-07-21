@@ -5,14 +5,24 @@ from .fib import FileInformationBlock
 from .fonts import read_font_table
 from .formatting import FormattingMap, read_formatting
 from .footnotes import FootnoteCollection, read_footnotes
+from .floating_pictures import (
+    FloatingPictureCollection,
+    read_main_floating_pictures,
+)
 from .headers import HeaderFooterCollection, read_header_footer_stories
 from .header_textboxes import (
     HeaderTextBoxCollection,
+    ShapeAnchor,
     TextBoxCollection,
     read_header_textboxes,
     read_main_textboxes,
+    read_shape_anchors,
 )
-from .officeart import OfficeArtShapeCollection, read_officeart_shapes
+from .officeart import (
+    OfficeArtRasterImage,
+    OfficeArtShapeCollection,
+    read_officeart_shapes,
+)
 from .pieces import Piece, PieceTable, read_piece_table
 from .pictures import (
     InlinePictureCollection,
@@ -28,10 +38,13 @@ __all__ = [
     "EndnoteCollection",
     "FormattingMap",
     "FootnoteCollection",
+    "FloatingPictureCollection",
     "HeaderFooterCollection",
     "HeaderTextBoxCollection",
+    "ShapeAnchor",
     "TextBoxCollection",
     "OfficeArtShapeCollection",
+    "OfficeArtRasterImage",
     "Piece",
     "PieceTable",
     "InlinePictureCollection",
@@ -42,9 +55,11 @@ __all__ = [
     "read_font_table",
     "read_formatting",
     "read_footnotes",
+    "read_main_floating_pictures",
     "read_header_footer_stories",
     "read_header_textboxes",
     "read_main_textboxes",
+    "read_shape_anchors",
     "read_officeart_shapes",
     "read_piece_table",
     "parse_inline_picture",

@@ -3,27 +3,50 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import struct
 
 from ..errors import InvalidWordDocument
 from ..model import ShapeStyle
+from .pictures import UnsupportedBlipFormat, decode_officeart_blip
 
 
 _DGG_CONTAINER = 0xF000
+_BSTORE_CONTAINER = 0xF001
 _DG_CONTAINER = 0xF002
 _SP_CONTAINER = 0xF004
+_FBSE = 0xF007
 _FSP = 0xF00A
 _OPTION_RECORDS = (0xF00B, 0xF121, 0xF122)
 _MAX_RECORD_DEPTH = 32
 
 
 @dataclass(slots=True, frozen=True)
+class OfficeArtRasterImage:
+    data: bytes
+    extension: str
+    content_type: str
+    blip_index: int | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class OfficeArtShapeCollection:
     by_shape_id: Mapping[int, ShapeStyle]
+    images_by_shape_id: Mapping[int, OfficeArtRasterImage] = field(
+        default_factory=dict
+    )
+    unsupported_image_types_by_shape_id: Mapping[int, int] = field(
+        default_factory=dict
+    )
 
     def style_at(self, shape_id: int) -> ShapeStyle | None:
         return self.by_shape_id.get(shape_id)
+
+    def image_at(self, shape_id: int) -> OfficeArtRasterImage | None:
+        return self.images_by_shape_id.get(shape_id)
+
+    def unsupported_image_type_at(self, shape_id: int) -> int | None:
+        return self.unsupported_image_types_by_shape_id.get(shape_id)
 
 
 @dataclass(slots=True, frozen=True)
@@ -41,6 +64,13 @@ class _Property:
     value: int
     is_blip: bool
     is_complex: bool
+    complex_data: bytes | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class _BlipEntry:
+    image: OfficeArtRasterImage | None = None
+    unsupported_record_type: int | None = None
 
 
 def _read_record(
@@ -101,7 +131,7 @@ def _read_properties(
     if entries_end > record.payload_end:
         raise InvalidWordDocument("OfficeArt property table entries are truncated")
     properties: dict[int, _Property] = {}
-    complex_size = 0
+    entries: list[tuple[int, int, bool, bool]] = []
     for index in range(record.instance):
         raw_identifier, value = struct.unpack_from(
             "<HI", data, record.payload_start + index * 6
@@ -112,14 +142,27 @@ def _read_properties(
                 f"OfficeArt property table repeats property 0x{identifier:04X}"
             )
         is_complex = bool(raw_identifier & 0x8000)
+        entries.append(
+            (identifier, value, bool(raw_identifier & 0x4000), is_complex)
+        )
+    complex_position = entries_end
+    for identifier, value, is_blip, is_complex in entries:
+        complex_data = None
         if is_complex:
-            complex_size += value
+            complex_end = complex_position + value
+            if complex_end > record.payload_end:
+                raise InvalidWordDocument(
+                    "OfficeArt complex property data exceeds its table"
+                )
+            complex_data = bytes(data[complex_position:complex_end])
+            complex_position = complex_end
         properties[identifier] = _Property(
             value=value,
-            is_blip=bool(raw_identifier & 0x4000),
+            is_blip=is_blip,
             is_complex=is_complex,
+            complex_data=complex_data,
         )
-    if entries_end + complex_size != record.payload_end:
+    if complex_position != record.payload_end:
         raise InvalidWordDocument(
             "OfficeArt complex property data does not match its table"
         )
@@ -284,11 +327,163 @@ def _shape_containers(record: _Record):
         yield from _shape_containers(child)
 
 
+def _decode_blip_entry(
+    source: bytes | memoryview,
+    offset: int,
+    limit: int,
+    *,
+    blip_index: int | None,
+) -> tuple[_BlipEntry, int]:
+    try:
+        image_data, extension, content_type, end = decode_officeart_blip(
+            source,
+            offset,
+            limit=limit,
+        )
+    except UnsupportedBlipFormat as exc:
+        return _BlipEntry(unsupported_record_type=exc.record_type), limit
+    return (
+        _BlipEntry(
+            image=OfficeArtRasterImage(
+                image_data,
+                extension,
+                content_type,
+                blip_index,
+            )
+        ),
+        end,
+    )
+
+
+def _decode_fbse(
+    data: memoryview,
+    record: _Record,
+    *,
+    blip_index: int,
+    delay_stream: bytes | None,
+) -> _BlipEntry:
+    if record.version != 2 or record.payload_end - record.payload_start < 36:
+        raise InvalidWordDocument("OfficeArtFBSE header is invalid or truncated")
+    size, reference_count, delay_offset = struct.unpack_from(
+        "<III", data, record.payload_start + 20
+    )
+    name_length = data[record.payload_start + 33]
+    if name_length % 2 or name_length > 0xFE:
+        raise InvalidWordDocument("OfficeArtFBSE name length is invalid")
+    embedded_start = record.payload_start + 36 + name_length
+    if embedded_start > record.payload_end:
+        raise InvalidWordDocument("OfficeArtFBSE name exceeds its record")
+    if reference_count == 0:
+        return _BlipEntry()
+    if embedded_start < record.payload_end:
+        entry, end = _decode_blip_entry(
+            data,
+            embedded_start,
+            record.payload_end,
+            blip_index=blip_index,
+        )
+        if end != record.payload_end:
+            raise InvalidWordDocument("OfficeArtFBSE embedded BLIP has trailing data")
+        if size and size != end - embedded_start:
+            raise InvalidWordDocument("OfficeArtFBSE embedded BLIP size is inconsistent")
+        return entry
+    if delay_offset == 0xFFFFFFFF or delay_stream is None:
+        raise InvalidWordDocument("OfficeArtFBSE delayed BLIP stream is unavailable")
+    if size == 0 or delay_offset > len(delay_stream) - size:
+        raise InvalidWordDocument("OfficeArtFBSE delayed BLIP exceeds WordDocument")
+    limit = delay_offset + size
+    entry, end = _decode_blip_entry(
+        delay_stream,
+        delay_offset,
+        limit,
+        blip_index=blip_index,
+    )
+    if end != limit:
+        raise InvalidWordDocument("OfficeArtFBSE delayed BLIP size is inconsistent")
+    return entry
+
+
+def _read_blip_store(
+    data: memoryview,
+    drawing_group: _Record,
+    *,
+    delay_stream: bytes | None,
+) -> tuple[_BlipEntry, ...]:
+    stores = [
+        child
+        for child in drawing_group.children
+        if child.record_type == _BSTORE_CONTAINER
+    ]
+    if not stores:
+        return ()
+    if len(stores) != 1:
+        raise InvalidWordDocument("OfficeArtDggContainer repeats its BLIP store")
+    store = stores[0]
+    if store.version != 0xF or store.instance != len(store.children):
+        raise InvalidWordDocument("OfficeArtBStoreContainer count is inconsistent")
+    entries: list[_BlipEntry] = []
+    for blip_index, record in enumerate(store.children, start=1):
+        if record.record_type == _FBSE:
+            entries.append(
+                _decode_fbse(
+                    data,
+                    record,
+                    blip_index=blip_index,
+                    delay_stream=delay_stream,
+                )
+            )
+            continue
+        entry, end = _decode_blip_entry(
+            data,
+            record.payload_start - 8,
+            record.payload_end,
+            blip_index=blip_index,
+        )
+        if end != record.payload_end:
+            raise InvalidWordDocument("OfficeArt BLIP store record has trailing data")
+        entries.append(entry)
+    return tuple(entries)
+
+
+def _shape_image(
+    properties: Mapping[int, _Property],
+    blips: tuple[_BlipEntry, ...],
+) -> _BlipEntry:
+    pib = properties.get(0x0104)
+    if pib is None or pib.value == 0:
+        return _BlipEntry()
+    if pib.is_complex:
+        if pib.complex_data is None or len(pib.complex_data) != pib.value:
+            raise InvalidWordDocument("OfficeArt pib complex BLIP is missing")
+        entry, end = _decode_blip_entry(
+            pib.complex_data,
+            0,
+            len(pib.complex_data),
+            blip_index=None,
+        )
+        if end != len(pib.complex_data):
+            raise InvalidWordDocument("OfficeArt pib complex BLIP has trailing data")
+        return entry
+    if not pib.is_blip:
+        raise InvalidWordDocument("OfficeArt pib index does not set fBid")
+    if pib.value > len(blips):
+        raise InvalidWordDocument(
+            f"OfficeArt pib index {pib.value} exceeds the BLIP store"
+        )
+    entry = blips[pib.value - 1]
+    if entry.image is None and entry.unsupported_record_type is None:
+        raise InvalidWordDocument(
+            f"OfficeArt pib index {pib.value} references an empty BLIP slot"
+        )
+    return entry
+
+
 def read_officeart_shapes(
     table_stream: bytes,
     *,
     offset: int,
     size: int,
+    delay_stream: bytes | None = None,
 ) -> OfficeArtShapeCollection:
     """Read basic styles for shapes in the OfficeArt main/header drawings."""
 
@@ -305,6 +500,11 @@ def read_officeart_shapes(
             "OfficeArtContent does not begin with OfficeArtDggContainer"
         )
     defaults = _option_properties(data, drawing_group.children)
+    blips = _read_blip_store(
+        data,
+        drawing_group,
+        delay_stream=delay_stream,
+    )
     drawings: list[tuple[int, _Record]] = []
     drawing_labels: set[int] = set()
     while position < len(data):
@@ -326,6 +526,8 @@ def read_officeart_shapes(
         drawings.append((drawing_label, drawing))
 
     by_shape_id: dict[int, ShapeStyle] = {}
+    images_by_shape_id: dict[int, OfficeArtRasterImage] = {}
+    unsupported_image_types_by_shape_id: dict[int, int] = {}
     for drawing_label, drawing in drawings:
         for container in _shape_containers(drawing):
             shape_records = [
@@ -354,4 +556,15 @@ def read_officeart_shapes(
             properties = dict(defaults)
             properties.update(_option_properties(data, container.children))
             by_shape_id[shape_id] = _shape_style(properties)
-    return OfficeArtShapeCollection(by_shape_id)
+            image_entry = _shape_image(properties, blips)
+            if image_entry.image is not None:
+                images_by_shape_id[shape_id] = image_entry.image
+            elif image_entry.unsupported_record_type is not None:
+                unsupported_image_types_by_shape_id[shape_id] = (
+                    image_entry.unsupported_record_type
+                )
+    return OfficeArtShapeCollection(
+        by_shape_id,
+        images_by_shape_id,
+        unsupported_image_types_by_shape_id,
+    )

@@ -362,6 +362,30 @@ class InlinePicture:
 
 
 @dataclass(slots=True, frozen=True)
+class FloatingPicture:
+    """One main-story raster picture positioned by a DOC Spa anchor."""
+
+    picture_id: int
+    shape_id: int
+    anchor_cp: int
+    data: bytes
+    extension: str
+    content_type: str
+    left_twips: int
+    top_twips: int
+    width_twips: int
+    height_twips: int
+    horizontal_relative: str
+    vertical_relative: str
+    wrap_type: str
+    wrap_side: str
+    behind_text: bool
+    anchor_locked: bool
+    name: str | None = None
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+
+
+@dataclass(slots=True, frozen=True)
 class ShapeStyle:
     """Basic OfficeArt appearance retained for a floating shape."""
 
@@ -416,6 +440,7 @@ Inline = (
     | CommentRangeEnd
     | CommentReference
     | InlinePicture
+    | FloatingPicture
     | FloatingTextBox
 )
 
@@ -557,7 +582,7 @@ class Document:
     footnotes: tuple[Footnote, ...] = ()
     endnotes: tuple[Endnote, ...] = ()
     comments: tuple[Comment, ...] = ()
-    pictures: tuple[InlinePicture, ...] = ()
+    pictures: tuple[InlinePicture | FloatingPicture, ...] = ()
     even_and_odd_headers: bool = False
     adjust_line_height_in_table: bool | None = None
 
@@ -841,6 +866,7 @@ def parse_main_story(
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
     inline_picture_at: Callable[[int], InlinePicture | None] | None = None,
+    floating_picture_at: Callable[[int], FloatingPicture | None] | None = None,
     footnote_reference_at: Callable[[int], FootnoteReference | None] | None = None,
     endnote_reference_at: Callable[[int], EndnoteReference | None] | None = None,
     comment_reference_at: Callable[[int], CommentReference | None] | None = None,
@@ -1034,6 +1060,17 @@ def parse_main_story(
         if inline_picture is not None:
             flush_text()
             current_inlines().append(inline_picture)
+            last_was_terminator = False
+            continue
+
+        floating_picture = (
+            floating_picture_at(cp_offset)
+            if value == 0x08 and floating_picture_at is not None
+            else None
+        )
+        if floating_picture is not None:
+            flush_text()
+            current_inlines().append(floating_picture)
             last_was_terminator = False
             continue
 

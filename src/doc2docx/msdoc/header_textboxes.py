@@ -43,13 +43,17 @@ class TextBoxCollection:
     def textbox_at(self, cp: int) -> FloatingTextBox | None:
         return self.by_anchor_cp.get(cp)
 
+    @property
+    def shape_ids(self) -> frozenset[int]:
+        return frozenset(textbox.shape_id for textbox in self.by_anchor_cp.values())
+
 
 # Preserve the public M5c name while exposing the shared collection to M7d.
 HeaderTextBoxCollection = TextBoxCollection
 
 
 @dataclass(slots=True, frozen=True)
-class _Spa:
+class ShapeAnchor:
     anchor_cp: int
     shape_id: int
     left: int
@@ -167,7 +171,7 @@ def _read_textbox_fields(
     return begin_count
 
 
-def _read_spas(
+def read_shape_anchors(
     table_stream: bytes,
     piece_table: PieceTable,
     *,
@@ -178,7 +182,8 @@ def _read_spas(
     spa_structure: str,
     anchor_story_name: str,
     report: ConversionReport,
-) -> dict[int, _Spa]:
+) -> dict[int, ShapeAnchor]:
+    """Read and validate one main/header PlcSpa anchor table."""
     if size == 0:
         return {}
     raw = _checked_range(
@@ -199,7 +204,7 @@ def _read_spas(
             f"{spa_structure} anchor CP points beyond its document story"
         )
     data_offset = 4 * (count + 1)
-    spas: dict[int, _Spa] = {}
+    spas: dict[int, ShapeAnchor] = {}
     for index, anchor_cp in enumerate(anchor_cps):
         shape_id, left, top, right, bottom, flags, _ = struct.unpack_from(
             "<I4iHI", raw, data_offset + index * 26
@@ -240,7 +245,7 @@ def _read_spas(
             raise InvalidWordDocument(
                 f"{spa_structure} anchor at CP {anchor_cp} is not a shape character"
             )
-        spas[shape_id] = _Spa(
+        spas[shape_id] = ShapeAnchor(
             anchor_cp=anchor_cp,
             shape_id=shape_id,
             left=left,
@@ -437,7 +442,7 @@ def _read_textboxes(
     textbox_story_name = "header-textbox" if is_header else "textbox"
     textbox_location_story = "header-textboxes" if is_header else "textboxes"
 
-    structure_sizes = (spa_size, text_size, field_size, break_size)
+    structure_sizes = (text_size, field_size, break_size)
     if ccp_textboxes == 0:
         if any(structure_sizes):
             raise InvalidWordDocument(
@@ -466,7 +471,7 @@ def _read_textboxes(
         textbox_story_name=textbox_location_story,
         report=report,
     )
-    spas = _read_spas(
+    spas = read_shape_anchors(
         table_stream,
         piece_table,
         offset=spa_offset,

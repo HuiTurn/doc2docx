@@ -1,3 +1,5 @@
+import base64
+import struct
 import unittest
 
 from doc2docx.errors import InvalidWordDocument
@@ -6,7 +8,101 @@ from doc2docx.msdoc import read_officeart_shapes
 from .fixtures import _header_textbox_officeart
 
 
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+    "/w8AAgMBgN+X2ioAAAAASUVORK5CYII="
+)
+
+
+def _record(
+    record_type: int,
+    payload: bytes,
+    *,
+    version: int,
+    instance: int = 0,
+) -> bytes:
+    return struct.pack(
+        "<HHI",
+        (instance << 4) | version,
+        record_type,
+        len(payload),
+    ) + payload
+
+
+def _floating_picture_officeart(*, complex_pib: bool = False, pib_index: int = 1):
+    blip = _record(
+        0xF01E,
+        b"\0" * 16 + b"\xFF" + _PNG,
+        version=0,
+        instance=0x6E0,
+    )
+    if complex_pib:
+        dgg_payload = b""
+        property_id = 0x8104
+        property_value = len(blip)
+        complex_data = blip
+        delay_stream = None
+    else:
+        fbse_payload = (
+            b"\x06\x06"
+            + b"\0" * 16
+            + struct.pack("<HIII", 0, len(blip), 1, 32)
+            + b"\0\0\0\0"
+        )
+        fbse = _record(0xF007, fbse_payload, version=2, instance=6)
+        dgg_payload = _record(0xF001, fbse, version=0xF, instance=1)
+        property_id = 0x4104
+        property_value = pib_index
+        complex_data = b""
+        delay_stream = b"\0" * 32 + blip
+    dgg = _record(0xF000, dgg_payload, version=0xF)
+    fsp = _record(0xF00A, struct.pack("<II", 1026, 0), version=2, instance=75)
+    fopt = _record(
+        0xF00B,
+        struct.pack("<HI", property_id, property_value) + complex_data,
+        version=3,
+        instance=1,
+    )
+    shape = _record(0xF004, fsp + fopt, version=0xF)
+    drawing = _record(0xF002, shape, version=0xF)
+    return dgg + b"\0" + drawing, delay_stream
+
+
 class OfficeArtParsingTests(unittest.TestCase):
+    def test_resolves_delayed_bstore_blip_through_shape_pib(self) -> None:
+        data, delay_stream = _floating_picture_officeart()
+
+        shapes = read_officeart_shapes(
+            data,
+            offset=0,
+            size=len(data),
+            delay_stream=delay_stream,
+        )
+
+        image = shapes.image_at(1026)
+        assert image is not None
+        self.assertEqual(image.extension, "png")
+        self.assertEqual(image.data, _PNG)
+        self.assertEqual(image.blip_index, 1)
+
+    def test_resolves_complex_pib_and_rejects_invalid_bstore_index(self) -> None:
+        complex_data, _ = _floating_picture_officeart(complex_pib=True)
+        shapes = read_officeart_shapes(
+            complex_data,
+            offset=0,
+            size=len(complex_data),
+        )
+        self.assertEqual(shapes.image_at(1026).data, _PNG)  # type: ignore[union-attr]
+
+        invalid_data, delay_stream = _floating_picture_officeart(pib_index=2)
+        with self.assertRaises(InvalidWordDocument):
+            read_officeart_shapes(
+                invalid_data,
+                offset=0,
+                size=len(invalid_data),
+                delay_stream=delay_stream,
+            )
+
     def test_reads_basic_header_textbox_shape_style(self) -> None:
         data = _header_textbox_officeart(1025)
 
