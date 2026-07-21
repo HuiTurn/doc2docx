@@ -11,10 +11,12 @@ from doc2docx.model import (
     CharacterProperties,
     Document,
     Field,
+    NoBreakHyphen,
     Paragraph,
     ParagraphFrameProperties,
     ParagraphProperties,
     ShadingProperties,
+    SoftHyphen,
     Symbol,
     Tab,
     TextRun,
@@ -168,7 +170,7 @@ class DocumentModelTests(unittest.TestCase):
 
     def test_story_control_characters_map_to_ir(self) -> None:
         report = ConversionReport("fixture.doc")
-        document = parse_main_story("a\tb\vc\fd\r", report)
+        document = parse_main_story("a\tb\x1ec\x1fd\ve\ff\r", report)
         paragraph = document.paragraphs[0]
         self.assertEqual(
             paragraph.inlines,
@@ -176,12 +178,40 @@ class DocumentModelTests(unittest.TestCase):
                 TextRun("a"),
                 Tab(),
                 TextRun("b"),
-                Break(BreakType.LINE),
+                NoBreakHyphen(),
                 TextRun("c"),
-                Break(BreakType.PAGE),
+                SoftHyphen(),
                 TextRun("d"),
+                Break(BreakType.LINE),
+                TextRun("e"),
+                Break(BreakType.PAGE),
+                TextRun("f"),
             ),
         )
+
+    def test_word_hyphen_controls_are_written_natively(self) -> None:
+        document = Document(
+            (
+                Paragraph(
+                    (
+                        TextRun("non"),
+                        NoBreakHyphen(),
+                        TextRun("breaking soft"),
+                        SoftHyphen(),
+                        TextRun("hyphen"),
+                    )
+                ),
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "hyphens.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        self.assertEqual(len(root.findall(f".//{W}noBreakHyphen")), 1)
+        self.assertEqual(len(root.findall(f".//{W}softHyphen")), 1)
 
     def test_fields_are_flattened_to_displayed_result(self) -> None:
         report = ConversionReport("fixture.doc")

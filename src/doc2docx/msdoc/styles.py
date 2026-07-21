@@ -21,6 +21,7 @@ from .sprm import (
     merge_character_properties,
     merge_paragraph_properties,
     parse_grpprl,
+    unassigned_language_lids,
 )
 
 
@@ -233,6 +234,7 @@ def read_style_sheet(
     unsupported_character: set[int] = set()
     unsupported_paragraph: set[int] = set()
     unsupported_table: set[int] = set()
+    repaired_language_lids: set[int] = set()
 
     def resolve(index: int) -> None:
         if definitions[index] is not None or raw_styles[index] is None:
@@ -242,6 +244,9 @@ def read_style_sheet(
         visiting.add(index)
         raw = raw_styles[index]
         assert raw is not None
+        repaired_language_lids.update(
+            unassigned_language_lids(raw.character_modifiers)
+        )
         parent_paragraph = ParagraphProperties()
         parent_character = default_character
         if raw.based_on is not None and 0 <= raw.based_on < style_count:
@@ -304,6 +309,13 @@ def read_style_sheet(
             "UNSUPPORTED_STYLE_CHARACTER_SPRMS",
             "some character properties in the DOC style sheet are not yet supported",
             opcodes=[f"0x{value:04X}" for value in sorted(unsupported_character)],
+        )
+    if repaired_language_lids:
+        report.warning(
+            "UNASSIGNED_STYLE_LANGUAGE_LID_REPAIRED",
+            "unassigned language IDs in the DOC style sheet were mapped to no linguistic content",
+            lids=[f"0x{value:04X}" for value in sorted(repaired_language_lids)],
+            output_language="zxx",
         )
     if unsupported_paragraph:
         report.warning(

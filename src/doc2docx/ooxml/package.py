@@ -32,10 +32,12 @@ from ..model import (
     InlinePicture,
     NumberingDefinitions,
     NumberingLevel,
+    NoBreakHyphen,
     Paragraph,
     ParagraphProperties,
     SectionProperties,
     ShadingProperties,
+    SoftHyphen,
     StyleSheet,
     Symbol,
     Tab,
@@ -1380,6 +1382,8 @@ def _append_inline(
         TextRun
         | Symbol
         | Tab
+        | NoBreakHyphen
+        | SoftHyphen
         | Break
         | Field
         | BookmarkStart
@@ -1430,6 +1434,22 @@ def _append_inline(
             valid_style_ids=valid_character_style_ids,
         )
         ET.SubElement(run, _qn(W_NS, "tab"))
+    elif isinstance(inline, (NoBreakHyphen, SoftHyphen)):
+        run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+        _append_run_properties(
+            run,
+            inline.properties,
+            valid_style_ids=valid_character_style_ids,
+        )
+        ET.SubElement(
+            run,
+            _qn(
+                W_NS,
+                "noBreakHyphen"
+                if isinstance(inline, NoBreakHyphen)
+                else "softHyphen",
+            ),
+        )
     elif isinstance(inline, Break):
         run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
         _append_run_properties(

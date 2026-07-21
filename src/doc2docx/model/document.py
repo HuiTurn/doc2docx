@@ -479,6 +479,16 @@ class Tab:
 
 
 @dataclass(slots=True, frozen=True)
+class NoBreakHyphen:
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+
+
+@dataclass(slots=True, frozen=True)
+class SoftHyphen:
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+
+
+@dataclass(slots=True, frozen=True)
 class Break:
     kind: BreakType
     properties: CharacterProperties = field(default_factory=CharacterProperties)
@@ -650,6 +660,8 @@ Inline = (
     TextRun
     | Symbol
     | Tab
+    | NoBreakHyphen
+    | SoftHyphen
     | Break
     | Field
     | BookmarkStart
@@ -1586,6 +1598,14 @@ def parse_main_story(
         elif character == "\t":
             flush_text()
             inlines.append(Tab(character_properties))
+            last_was_terminator = False
+        elif value == 0x1E:
+            flush_text()
+            inlines.append(NoBreakHyphen(character_properties))
+            last_was_terminator = False
+        elif value == 0x1F:
+            flush_text()
+            inlines.append(SoftHyphen(character_properties))
             last_was_terminator = False
         elif character in ("\n", "\v"):
             flush_text()

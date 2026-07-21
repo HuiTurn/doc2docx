@@ -5,6 +5,18 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+### M15c
+
+- Repair the observed unassigned East Asian language ID `0x00FF` to the BCP 47
+  no-linguistic-content tag `zxx`, while retaining targeted style/direct
+  diagnostics instead of silently treating the value as a concrete language.
+- Preserve Word's internal `0x001E` nonbreaking hyphen and `0x001F` optional
+  hyphen as native `w:noBreakHyphen` and `w:softHyphen` run content.
+- Validate with 161 focused tests and the 42-file regression batch. All 40
+  in-scope files convert with no remaining `UNSUPPORTED_*` diagnostics; the
+  two rejected inputs remain Word 6/95 files outside the declared scope. Reopen
+  the repaired language/hyphen sample and export it to PDF successfully.
+
 ### M15b
 
 - Preserve MS-DOC paragraph-frame anchors and wrapping, regular and margin

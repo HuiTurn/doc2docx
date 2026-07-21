@@ -14,6 +14,7 @@ from .sprm import (
     apply_character_modifiers,
     apply_paragraph_modifiers,
     parse_grpprl,
+    unassigned_language_lids,
 )
 
 
@@ -196,6 +197,7 @@ def read_formatting(
     paragraph_spans: list[ParagraphFormatSpan] = []
     unsupported_character_sprms: set[int] = set()
     unsupported_paragraph_sprms: set[int] = set()
+    repaired_language_lids: set[int] = set()
     style_relative_toggles = 0
     character_run_count = 0
     paragraph_run_count = 0
@@ -346,6 +348,9 @@ def read_formatting(
                     page[chpx_offset + 1 : grpprl_end],
                     label="Chpx.grpprl",
                 )
+                repaired_language_lids.update(
+                    unassigned_language_lids(modifiers)
+                )
             for cp_start, cp_end in piece_table.fc_range_to_cp_ranges(
                 run_fc_start,
                 run_fc_end,
@@ -410,6 +415,9 @@ def read_formatting(
         if piece is not None:
             modifiers = piece_table.modifiers_for_piece(piece, property_group=2)
             if modifiers:
+                repaired_language_lids.update(
+                    unassigned_language_lids(modifiers)
+                )
                 properties, unsupported, relative_count = apply_character_modifiers(
                     modifiers,
                     initial_properties=properties,
@@ -429,6 +437,13 @@ def read_formatting(
             "UNSUPPORTED_CHARACTER_SPRMS",
             "some direct character properties are not yet supported",
             opcodes=[f"0x{value:04X}" for value in sorted(unsupported_character_sprms)],
+        )
+    if repaired_language_lids:
+        report.warning(
+            "UNASSIGNED_LANGUAGE_LID_REPAIRED",
+            "unassigned direct-formatting language IDs were mapped to no linguistic content",
+            lids=[f"0x{value:04X}" for value in sorted(repaired_language_lids)],
+            output_language="zxx",
         )
     if unsupported_paragraph_sprms:
         report.warning(

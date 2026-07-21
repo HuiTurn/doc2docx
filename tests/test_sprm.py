@@ -7,10 +7,22 @@ from doc2docx.msdoc.sprm import (
     apply_character_modifiers,
     apply_paragraph_modifiers,
     parse_grpprl,
+    unassigned_language_lids,
 )
 
 
 class SprmTests(unittest.TestCase):
+    def test_unassigned_language_lid_is_repaired_to_no_linguistic_content(self) -> None:
+        modifiers = parse_grpprl(
+            struct.pack("<HH", 0x486E, 0x00FF),
+            label="unassigned-language.grpprl",
+        )
+        properties, unsupported, _ = apply_character_modifiers(modifiers)
+
+        self.assertFalse(unsupported)
+        self.assertEqual(properties.east_asia_language, "zxx")
+        self.assertEqual(unassigned_language_lids(modifiers), {0x00FF})
+
     def test_paragraph_frame_drop_cap_and_shading_are_parsed(self) -> None:
         properties, unsupported = apply_paragraph_modifiers(
             parse_grpprl(

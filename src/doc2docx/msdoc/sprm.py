@@ -180,6 +180,10 @@ _NEUTRAL_LANGUAGE_TAGS = {
 
 
 def _language_tag_from_lid(lid: int) -> str | None:
+    if lid == 0x00FF:
+        # 0x00FF is not assigned by MS-LCID, but has been observed in Word 97
+        # files where consumers treat it as an undefined proofing language.
+        return "zxx"
     neutral_tag = _NEUTRAL_LANGUAGE_TAGS.get(lid)
     if neutral_tag is not None:
         return neutral_tag
@@ -195,6 +199,19 @@ def _language_tag_from_lid(lid: int) -> str | None:
     for part in parts[1:]:
         normalized.append(part.title() if len(part) == 4 else part.upper())
     return "-".join(normalized)
+
+
+def unassigned_language_lids(
+    modifiers: tuple[PropertyModifier, ...],
+) -> set[int]:
+    """Return observed unassigned LIDs that receive a bounded repair."""
+
+    return {
+        struct.unpack("<H", modifier.operand)[0]
+        for modifier in modifiers
+        if modifier.opcode in _LANGUAGE_ATTRIBUTES
+        and struct.unpack("<H", modifier.operand)[0] == 0x00FF
+    }
 
 _UNDERLINES = {
     0x00: "none",

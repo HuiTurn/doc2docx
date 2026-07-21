@@ -152,6 +152,40 @@ def _table_style_sheet() -> bytes:
 
 
 class FontAndStyleTests(unittest.TestCase):
+    def test_repairs_unassigned_style_language_lid(self) -> None:
+        normal = _paragraph_std(
+            "Normal",
+            index=0,
+            based_on=None,
+            character_grpprl=struct.pack("<HH", 0x486E, 0x00FF),
+        )
+        stshif = struct.pack("<6H3h", 1, 10, 0, 1, 0, 0, 0, 0, 0)
+        style_bytes = b"".join(
+            (
+                struct.pack("<H", len(stshif)),
+                stshif,
+                struct.pack("<H", len(normal)),
+                normal,
+            )
+        )
+        report = ConversionReport("unassigned-language.doc")
+
+        styles = read_style_sheet(
+            style_bytes,
+            offset=0,
+            size=len(style_bytes),
+            fonts=(),
+            report=report,
+        )
+
+        normal_style = styles.styles[0]
+        assert normal_style is not None
+        self.assertEqual(normal_style.character_properties.east_asia_language, "zxx")
+        self.assertEqual(
+            [warning.code for warning in report.warnings],
+            ["UNASSIGNED_STYLE_LANGUAGE_LID_REPAIRED"],
+        )
+
     def test_repairs_empty_libreoffice_font_slot_without_shifting_index(self) -> None:
         payload = bytes(39) + b"\0\0"
         table = struct.pack("<HHB", 1, 0, len(payload)) + payload
