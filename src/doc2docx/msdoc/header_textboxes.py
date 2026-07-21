@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 import struct
 
@@ -209,6 +209,8 @@ def _read_textbox_entries(
     character_properties_at: Callable[[int], CharacterProperties] | None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None,
     field_end_properties_at: Callable[[int], FieldEndProperties | None] | None,
+    bookmark_names: Collection[str] | None,
+    style_names: Collection[str] | None,
 ) -> tuple[_TextBoxEntry, ...]:
     raw = _checked_range(
         table_stream,
@@ -279,6 +281,8 @@ def _read_textbox_entries(
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
             field_end_properties_at=field_end_properties_at,
+            bookmark_names=bookmark_names,
+            style_names=style_names,
             story_name=f"{textbox_story_name}-{index}",
         )
         entries.append(
@@ -363,6 +367,8 @@ def _read_textboxes(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
+    bookmark_names: Collection[str] | None = None,
+    style_names: Collection[str] | None = None,
     is_header: bool,
 ) -> TextBoxCollection:
     """Read one textbox story and associate its contents with shape anchors."""
@@ -430,6 +436,8 @@ def _read_textboxes(
         character_properties_at=character_properties_at,
         paragraph_properties_at=paragraph_properties_at,
         field_end_properties_at=fields.end_properties_at,
+        bookmark_names=bookmark_names,
+        style_names=style_names,
     )
     _validate_break_descriptors(
         table_stream,
@@ -529,6 +537,8 @@ def read_header_textboxes(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
+    bookmark_names: Collection[str] | None = None,
+    style_names: Collection[str] | None = None,
 ) -> TextBoxCollection:
     """Read header textbox contents and associate them with header anchors."""
 
@@ -551,6 +561,8 @@ def read_header_textboxes(
         character_properties_at=character_properties_at,
         paragraph_properties_at=paragraph_properties_at,
         shape_style_at=shape_style_at,
+        bookmark_names=bookmark_names,
+        style_names=style_names,
         is_header=True,
     )
 
@@ -574,6 +586,8 @@ def read_main_textboxes(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
+    bookmark_names: Collection[str] | None = None,
+    style_names: Collection[str] | None = None,
 ) -> TextBoxCollection:
     """Read main-story textbox contents and associate them with main anchors."""
 
@@ -596,5 +610,7 @@ def read_main_textboxes(
         character_properties_at=character_properties_at,
         paragraph_properties_at=paragraph_properties_at,
         shape_style_at=shape_style_at,
+        bookmark_names=bookmark_names,
+        style_names=style_names,
         is_header=False,
     )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 import struct
 
@@ -336,6 +336,8 @@ def read_comments(
     field_end_properties_at: (
         Callable[[int], FieldEndProperties | None] | None
     ) = None,
+    bookmark_names: Collection[str] | None = None,
+    style_names: Collection[str] | None = None,
 ) -> CommentCollection:
     """Parse comment bodies, authors, references, and optional range anchors."""
 
@@ -472,6 +474,8 @@ def read_comments(
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
             field_end_properties_at=field_end_properties_at,
+            bookmark_names=bookmark_names,
+            style_names=style_names,
             story_name=story_name,
         )
         comments.append(

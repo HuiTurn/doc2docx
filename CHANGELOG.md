@@ -8,6 +8,22 @@ current capabilities without release-by-release notes.
 - Continue expanding MS-DOC compatibility with specification-backed parsers,
   focused tests, and real Word 97 sample rendering.
 
+## 0.26.0 - 2026-07-22 (M11b)
+
+- Preserve declared `NOTEREF` fields when their bookmark target exists, and
+  normalize the legacy `FTNREF` spelling to the WordprocessingML field name.
+- Preserve `SEQ` fields with a sequence identifier and `STYLEREF` fields whose
+  case-insensitive style target exists in the parsed style sheet; broken local
+  fields remain cached display text with targeted diagnostics.
+- Share emitted bookmark and parsed style-name context with footnotes,
+  endnotes, comments, headers, footers, and both textbox stories so fields are
+  evaluated consistently outside the main story.
+- Keep `LISTNUM` cached until its legacy list-name table can be matched safely
+  to native list definitions instead of activating an ambiguous field.
+- Validate with 138 focused tests and a real Word 97 DOC containing `NOTEREF`,
+  `SEQ`, and `STYLEREF`, followed by package inspection and rendered visual
+  verification.
+
 ## 0.25.0 - 2026-07-22 (M11a)
 
 - Parse standard bookmark names and ranges from `SttbfBkmk`, `Plcfbkf`, and

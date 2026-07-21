@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, replace
 import struct
 
@@ -94,6 +94,8 @@ def read_header_footer_stories(
     field_end_properties_at: (
         Callable[[int], FieldEndProperties | None] | None
     ) = None,
+    bookmark_names: Collection[str] | None = None,
+    style_names: Collection[str] | None = None,
 ) -> HeaderFooterCollection:
     """Read non-empty header/footer stories and attach them to their sections."""
 
@@ -179,6 +181,8 @@ def read_header_footer_stories(
                 inline_picture_at=inline_picture_at,
                 floating_picture_at=floating_picture_at,
                 field_end_properties_at=field_end_properties_at,
+                bookmark_names=bookmark_names,
+                style_names=style_names,
                 story_name=story_name,
             )
             replacements[field_name] = HeaderFooterStory(

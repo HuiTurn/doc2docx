@@ -158,6 +158,9 @@ def convert(
         fonts=fonts,
         report=report,
     )
+    available_style_names = frozenset(
+        style.name for style in style_sheet.styles if style is not None
+    )
     list_table = fib.plf_lst
     list_override_table = fib.plf_lfo
     numbering = read_numbering(
@@ -297,6 +300,8 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         field_end_properties_at=footnote_fields.end_properties_at,
+        bookmark_names=bookmarks.names,
+        style_names=available_style_names,
     )
     comment_reference_table = fib.plcf_and_ref
     comment_text_table = fib.plcf_and_txt
@@ -326,6 +331,8 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         field_end_properties_at=comment_fields.end_properties_at,
+        bookmark_names=bookmarks.names,
+        style_names=available_style_names,
     )
     endnote_reference_table = fib.plcf_end_ref
     endnote_text_table = fib.plcf_end_txt
@@ -343,6 +350,8 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         field_end_properties_at=endnote_fields.end_properties_at,
+        bookmark_names=bookmarks.names,
+        style_names=available_style_names,
     )
     spa_headers = fib.plc_spa_hdr
     dgg_info = fib.dgg_info
@@ -385,6 +394,8 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         shape_style_at=officeart_shapes.style_at,
+        bookmark_names=bookmarks.names,
+        style_names=available_style_names,
     )
     header_textbox_table = fib.plcf_hdr_txbx_txt
     header_textbox_fields = fib.plcf_fld_hdr_txbx
@@ -408,6 +419,8 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         shape_style_at=officeart_shapes.style_at,
+        bookmark_names=bookmarks.names,
+        style_names=available_style_names,
     )
     main_characters = piece_table.extract_characters(
         0,
@@ -503,6 +516,8 @@ def convert(
         inline_picture_at=header_inline_pictures.picture_at,
         floating_picture_at=header_floating_pictures.picture_at,
         field_end_properties_at=header_fields.end_properties_at,
+        bookmark_names=bookmarks.names,
+        style_names=available_style_names,
     )
     sections = header_footers.sections
     parsed_document = parse_main_story(
@@ -520,6 +535,7 @@ def convert(
         field_end_properties_at=main_fields.end_properties_at,
         bookmark_boundaries_at=bookmarks.boundaries_at,
         bookmark_names=bookmarks.names,
+        style_names=available_style_names,
         sections=sections,
     )
     document = Document(
@@ -760,7 +776,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M11a conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M11b conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

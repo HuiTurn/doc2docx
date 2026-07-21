@@ -149,6 +149,68 @@ class DocumentModelTests(unittest.TestCase):
         self.assertTrue(all(field.has_separator for field in fields))
         self.assertFalse(report.warnings)
 
+    def test_local_reference_sequence_and_style_fields_remain_live(self) -> None:
+        report = ConversionReport("local-fields.doc")
+        story = " ".join(
+            (
+                "\x13 NOTEREF Target \\h \x14note\x15",
+                "\x13 FTNREF Target \x14note\x15",
+                "\x13 SEQ Figure \\* ARABIC \x141\x15",
+                '\x13 STYLEREF "Heading 1" \x14Chapter\x15',
+            )
+        ) + "\r"
+
+        document = parse_main_story(
+            story,
+            report,
+            bookmark_names={"Target"},
+            style_names={"Heading 1"},
+        )
+
+        fields = [
+            inline
+            for inline in document.paragraphs[0].inlines
+            if isinstance(inline, Field)
+        ]
+        self.assertEqual(len(fields), 4)
+        self.assertEqual(
+            [field.instruction.strip().split()[0] for field in fields],
+            ["NOTEREF", "NOTEREF", "SEQ", "STYLEREF"],
+        )
+        self.assertFalse(report.warnings)
+
+    def test_broken_local_fields_and_listnum_remain_cached_text(self) -> None:
+        report = ConversionReport("broken-local-fields.doc")
+        story = " ".join(
+            (
+                "\x13 NOTEREF Missing \x14note\x15",
+                "\x13 SEQ \\* ARABIC \x141\x15",
+                "\x13 STYLEREF MissingStyle \x14heading\x15",
+                "\x13 LISTNUM LegalDefault \x141\x15",
+            )
+        ) + "\r"
+
+        document = parse_main_story(
+            story,
+            report,
+            bookmark_names={"Target"},
+            style_names={"Heading 1"},
+        )
+
+        self.assertEqual(
+            document.paragraphs[0].inlines,
+            (TextRun("note 1 heading 1"),),
+        )
+        self.assertEqual(
+            [warning.code for warning in report.warnings],
+            [
+                "FIELDS_FLATTENED",
+                "BROKEN_BOOKMARK_FIELDS_FLATTENED",
+                "BROKEN_SEQUENCE_FIELDS_FLATTENED",
+                "BROKEN_STYLE_FIELDS_FLATTENED",
+            ],
+        )
+
     def test_active_external_fields_are_kept_as_cached_text(self) -> None:
         report = ConversionReport("fixture.doc")
         document = parse_main_story(

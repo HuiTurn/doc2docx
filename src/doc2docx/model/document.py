@@ -56,10 +56,14 @@ _EXTERNAL_OR_ACTIVE_FIELD_TYPES = frozenset(
         "PRINT",
     }
 )
-_BOOKMARK_LIVE_FIELD_TYPES = frozenset({"PAGEREF", "REF"})
+_BOOKMARK_LIVE_FIELD_TYPES = frozenset(
+    {"FTNREF", "NOTEREF", "PAGEREF", "REF"}
+)
+_SEQUENCE_LIVE_FIELD_TYPES = frozenset({"SEQ"})
+_STYLE_LIVE_FIELD_TYPES = frozenset({"STYLEREF"})
 
 
-def _bookmark_field_target(instruction: str) -> str | None:
+def _field_first_argument(instruction: str) -> str | None:
     """Return the first field argument without interpreting field switches."""
 
     tokens = instruction.lstrip().split(maxsplit=1)
@@ -83,6 +87,14 @@ def _bookmark_field_target(instruction: str) -> str | None:
                 characters.append(character)
         return None
     return remainder.split(maxsplit=1)[0]
+
+
+def _normalized_field_instruction(instruction: str, field_type: str) -> str:
+    if field_type != "FTNREF":
+        return instruction
+    leading_length = len(instruction) - len(instruction.lstrip())
+    token_end = leading_length + len(field_type)
+    return instruction[:leading_length] + "NOTEREF" + instruction[token_end:]
 
 
 class BreakType(StrEnum):
@@ -1072,6 +1084,7 @@ def parse_main_story(
         Callable[[int], Sequence[BookmarkStart | BookmarkEnd]] | None
     ) = None,
     bookmark_names: Collection[str] | None = None,
+    style_names: Collection[str] | None = None,
     footnote_reference_at: Callable[[int], FootnoteReference | None] | None = None,
     endnote_reference_at: Callable[[int], EndnoteReference | None] | None = None,
     comment_reference_at: Callable[[int], CommentReference | None] | None = None,
@@ -1106,6 +1119,8 @@ def parse_main_story(
     active_field_types: set[str] = set()
     undeclared_field_types: set[str] = set()
     broken_bookmark_targets: set[str] = set()
+    broken_sequence_targets: set[str] = set()
+    broken_style_targets: set[str] = set()
     field_instruction_controls: dict[int, int] = {}
     field_stack: list[_FieldContext] = []
     last_was_terminator = False
@@ -1117,6 +1132,7 @@ def parse_main_story(
     available_bookmark_names = {
         name.casefold() for name in (bookmark_names or ())
     }
+    available_style_names = {name.casefold() for name in (style_names or ())}
 
     def visible() -> bool:
         return all(context.has_separator for context in field_stack)
@@ -1301,7 +1317,7 @@ def parse_main_story(
                 or field_end_properties is not None
             )
             bookmark_target = (
-                _bookmark_field_target(instruction)
+                _field_first_argument(instruction)
                 if field_type in _BOOKMARK_LIVE_FIELD_TYPES
                 else None
             )
@@ -1309,9 +1325,30 @@ def parse_main_story(
                 bookmark_target is not None
                 and bookmark_target.casefold() in available_bookmark_names
             )
+            sequence_target = (
+                _field_first_argument(instruction)
+                if field_type in _SEQUENCE_LIVE_FIELD_TYPES
+                else None
+            )
+            sequence_field_is_valid = sequence_target is not None
+            style_target = (
+                _field_first_argument(instruction)
+                if field_type in _STYLE_LIVE_FIELD_TYPES
+                else None
+            )
+            style_field_is_valid = (
+                style_target is not None
+                and style_target.casefold() in available_style_names
+            )
             safe_live_field = field_type in _SAFE_LIVE_FIELD_TYPES or (
                 field_type in _BOOKMARK_LIVE_FIELD_TYPES
                 and bookmark_field_is_valid
+            ) or (
+                field_type in _SEQUENCE_LIVE_FIELD_TYPES
+                and sequence_field_is_valid
+            ) or (
+                field_type in _STYLE_LIVE_FIELD_TYPES
+                and style_field_is_valid
             )
             private_bookmark_boundaries = (
                 contained_bookmark_boundaries(context.result)
@@ -1323,7 +1360,10 @@ def parse_main_story(
                 if parent_is_visible:
                     current_inlines().append(
                         Field(
-                            instruction=instruction,
+                            instruction=_normalized_field_instruction(
+                                instruction,
+                                field_type,
+                            ),
                             result=(
                                 ()
                                 if field_end_properties is not None
@@ -1372,6 +1412,18 @@ def parse_main_story(
                     and not bookmark_field_is_valid
                 ):
                     broken_bookmark_targets.add(bookmark_target or "UNKNOWN")
+                if (
+                    field_type in _SEQUENCE_LIVE_FIELD_TYPES
+                    and declared_field
+                    and not sequence_field_is_valid
+                ):
+                    broken_sequence_targets.add(sequence_target or "UNKNOWN")
+                if (
+                    field_type in _STYLE_LIVE_FIELD_TYPES
+                    and declared_field
+                    and not style_field_is_valid
+                ):
+                    broken_style_targets.add(style_target or "UNKNOWN")
             continue
         if not visible():
             for context in reversed(field_stack):
@@ -1627,6 +1679,20 @@ def parse_main_story(
             "REF or PAGEREF fields without an emitted bookmark were kept as cached text",
             location=SourceLocation(story=story_name),
             bookmark_names=sorted(broken_bookmark_targets),
+        )
+    if broken_sequence_targets:
+        report.warning(
+            "BROKEN_SEQUENCE_FIELDS_FLATTENED",
+            "SEQ fields without a sequence identifier were kept as cached text",
+            location=SourceLocation(story=story_name),
+            sequence_names=sorted(broken_sequence_targets),
+        )
+    if broken_style_targets:
+        report.warning(
+            "BROKEN_STYLE_FIELDS_FLATTENED",
+            "STYLEREF fields without an emitted style were kept as cached text",
+            location=SourceLocation(story=story_name),
+            style_names=sorted(broken_style_targets),
         )
     if field_instruction_controls:
         report.warning(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 
 from ..diagnostics import ConversionReport, SourceLocation
@@ -50,6 +50,8 @@ def read_endnotes(
     field_end_properties_at: (
         Callable[[int], FieldEndProperties | None] | None
     ) = None,
+    bookmark_names: Collection[str] | None = None,
+    style_names: Collection[str] | None = None,
 ) -> EndnoteCollection:
     """Parse endnote bodies and map their main-story reference CPs."""
 
@@ -151,6 +153,8 @@ def read_endnotes(
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
             field_end_properties_at=field_end_properties_at,
+            bookmark_names=bookmark_names,
+            style_names=style_names,
             story_name=story_name,
         )
         endnotes.append(
