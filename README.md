@@ -26,11 +26,13 @@ facing-pages setting are written as native DOCX package parts.
 ## Usage
 
 ```console
-python -m pip install .
+python -m pip install msdoc2docx
 doc2docx input.doc
 doc2docx input.doc -o output.docx --report report.json
 doc2docx inspect input.doc --json
 ```
+
+To install from a local source checkout instead, run `python -m pip install .`.
 
 Python API:
 

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "doc2docx"
+name = "msdoc2docx"
 version = "0.7.0"
 description = "A specification-driven, pure-Python Word binary .doc to .docx converter"
 readme = "README.md"
