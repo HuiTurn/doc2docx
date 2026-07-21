@@ -323,6 +323,28 @@ class EndnoteReference:
 
 
 @dataclass(slots=True, frozen=True)
+class CommentRangeStart:
+    """The start of a main-story range associated with a comment."""
+
+    comment_id: int
+
+
+@dataclass(slots=True, frozen=True)
+class CommentRangeEnd:
+    """The end of a main-story range associated with a comment."""
+
+    comment_id: int
+
+
+@dataclass(slots=True, frozen=True)
+class CommentReference:
+    """A main-story comment reference character."""
+
+    comment_id: int
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+
+
+@dataclass(slots=True, frozen=True)
 class ShapeStyle:
     """Basic OfficeArt appearance retained for a floating shape."""
 
@@ -373,6 +395,9 @@ Inline = (
     | Field
     | FootnoteReference
     | EndnoteReference
+    | CommentRangeStart
+    | CommentRangeEnd
+    | CommentReference
     | FloatingTextBox
 )
 
@@ -476,6 +501,21 @@ class Endnote:
 
 
 @dataclass(slots=True, frozen=True)
+class Comment:
+    """One parsed comment body and its legacy author metadata."""
+
+    comment_id: int
+    author: str
+    initials: str
+    paragraphs: tuple[Paragraph, ...]
+    blocks: tuple[Block, ...] = ()
+
+    @property
+    def body_blocks(self) -> tuple[Block, ...]:
+        return self.blocks or self.paragraphs
+
+
+@dataclass(slots=True, frozen=True)
 class HeaderFooterStory:
     """One non-empty header/footer story after removing its guard paragraph."""
 
@@ -498,6 +538,7 @@ class Document:
     sections: tuple[SectionProperties, ...] = ()
     footnotes: tuple[Footnote, ...] = ()
     endnotes: tuple[Endnote, ...] = ()
+    comments: tuple[Comment, ...] = ()
     even_and_odd_headers: bool = False
     adjust_line_height_in_table: bool | None = None
 
@@ -782,6 +823,10 @@ def parse_main_story(
     floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
     footnote_reference_at: Callable[[int], FootnoteReference | None] | None = None,
     endnote_reference_at: Callable[[int], EndnoteReference | None] | None = None,
+    comment_reference_at: Callable[[int], CommentReference | None] | None = None,
+    comment_boundaries_at: (
+        Callable[[int], Sequence[CommentRangeStart | CommentRangeEnd]] | None
+    ) = None,
     sections: Sequence[SectionProperties] = (),
     story_name: str = "main",
 ) -> Document:
@@ -887,6 +932,12 @@ def parse_main_story(
             else default_character_properties
         )
 
+        if visible() and comment_boundaries_at is not None:
+            comment_boundaries = comment_boundaries_at(cp_offset)
+            if comment_boundaries:
+                flush_text()
+                current_inlines().extend(comment_boundaries)
+
         if value == 0x13:  # field begin
             if visible():
                 flush_text()
@@ -926,6 +977,17 @@ def parse_main_story(
                 if not context.has_separator:
                     context.instruction.append(character)
                     break
+            continue
+
+        comment_reference = (
+            comment_reference_at(cp_offset)
+            if comment_reference_at is not None
+            else None
+        )
+        if comment_reference is not None:
+            flush_text()
+            current_inlines().append(comment_reference)
+            last_was_terminator = False
             continue
 
         footnote_reference = (

@@ -69,12 +69,19 @@ def _build_fib(
     ccp_text: int,
     clx_size: int,
     ccp_footnotes: int = 0,
+    ccp_comments: int = 0,
     ccp_endnotes: int = 0,
     ccp_headers: int = 0,
     ccp_header_textboxes: int = 0,
     section_plc: tuple[int, int] = (0, 0),
     footnote_ref_plc: tuple[int, int] = (0, 0),
     footnote_text_plc: tuple[int, int] = (0, 0),
+    comment_ref_plc: tuple[int, int] = (0, 0),
+    comment_text_plc: tuple[int, int] = (0, 0),
+    comment_owners: tuple[int, int] = (0, 0),
+    comment_bookmark_tags: tuple[int, int] = (0, 0),
+    comment_bookmark_starts: tuple[int, int] = (0, 0),
+    comment_bookmark_ends: tuple[int, int] = (0, 0),
     endnote_ref_plc: tuple[int, int] = (0, 0),
     endnote_text_plc: tuple[int, int] = (0, 0),
     header_plc: tuple[int, int] = (0, 0),
@@ -112,6 +119,7 @@ def _build_fib(
     fib_rg_lw[3] = ccp_text
     fib_rg_lw[4] = ccp_footnotes
     fib_rg_lw[5] = ccp_headers
+    fib_rg_lw[7] = ccp_comments
     fib_rg_lw[8] = ccp_endnotes
     fib_rg_lw[10] = ccp_header_textboxes
     struct.pack_into("<22I", fib, position, *fib_rg_lw)
@@ -121,13 +129,19 @@ def _build_fib(
     pairs = [(0, 0)] * 93
     pairs[2] = footnote_ref_plc
     pairs[3] = footnote_text_plc
+    pairs[4] = comment_ref_plc
+    pairs[5] = comment_text_plc
     pairs[6] = section_plc
     pairs[11] = header_plc
     pairs[12] = chpx_plc
     pairs[13] = papx_plc
     pairs[31] = dop
     pairs[33] = (0, clx_size)
+    pairs[36] = comment_owners
+    pairs[37] = comment_bookmark_tags
     pairs[41] = header_shape_plc
+    pairs[42] = comment_bookmark_starts
+    pairs[43] = comment_bookmark_ends
     pairs[46] = endnote_ref_plc
     pairs[47] = endnote_text_plc
     pairs[50] = dgg_info
@@ -911,6 +925,151 @@ def build_endnote_word_cfb(
     table_stream[
         endnote_text_offset : endnote_text_offset + len(endnote_text)
     ] = endnote_text
+    table_stream[chpx_plc_offset : chpx_plc_offset + len(chpx_plc)] = chpx_plc
+    return _wrap_regular_word_streams(word_document, table_stream)
+
+
+def build_comment_word_cfb(
+    *,
+    insertion_point: bool = False,
+    missing_special: bool = False,
+    malformed_reference_character: bool = False,
+    malformed_text_marker: bool = False,
+    malformed_text_end: bool = False,
+    invalid_author_index: bool = False,
+    missing_bookmark_table: bool = False,
+) -> bytes:
+    """A one-comment DOC with legacy author and annotation bookmark tables."""
+
+    reference_character = b"!" if malformed_reference_character else b"\x05"
+    main_text = b"Some text" + reference_character + b"\r"
+    reference_cp = 9
+    comment_marker = b"!" if malformed_text_marker else b"\x05"
+    comment_content = comment_marker + b"Comment body\r"
+    if malformed_text_end:
+        comment_content = comment_marker + b"Comment bodyX"
+    comment_document = comment_content + b"\r"
+    all_text = main_text + comment_document + b"\r"
+
+    text_fc = 1024
+    text_fc_end = text_fc + len(all_text)
+    compressed_fc = (text_fc * 2) | 0x40000000
+    plc_pcd = struct.pack("<2I", 0, len(all_text))
+    plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
+    clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
+
+    comment_ref_offset = 128
+    comment_text_offset = 192
+    owners_offset = 224
+    bookmark_tags_offset = 256
+    bookmark_starts_offset = 288
+    bookmark_ends_offset = 320
+    chpx_plc_offset = 352
+
+    initials = "AL".encode("utf-16le")
+    initials_buffer = struct.pack("<H", 2) + initials + b"\0" * (18 - len(initials))
+    bookmark_tag = 0xFFFFFFFF if insertion_point else 1234
+    atrd = initials_buffer + struct.pack(
+        "<HHHI",
+        1 if invalid_author_index else 0,
+        0,
+        0,
+        bookmark_tag,
+    )
+    comment_ref = struct.pack("<2I", reference_cp, len(main_text)) + atrd
+    comment_text = struct.pack(
+        "<3I",
+        0,
+        len(comment_document) - 1,
+        len(comment_document),
+    )
+    author_name = "Alice".encode("utf-16le")
+    owners = struct.pack("<H", 5) + author_name
+
+    bookmark_tags = struct.pack(
+        "<HHHHHII",
+        0xFFFF,
+        1,
+        10,
+        0,
+        0x0100,
+        1234,
+        0xFFFFFFFF,
+    )
+    bookmark_starts = struct.pack("<2IHH", 5, len(main_text) + 1, 0, 0)
+    bookmark_ends = struct.pack("<2I", 9, len(main_text) + 1)
+
+    chpx_plc = struct.pack("<3I", text_fc, text_fc_end, 4)
+    chpx_fkp = bytearray(SECTOR_SIZE)
+    comment_marker_cp = len(main_text)
+    boundaries = (
+        text_fc,
+        text_fc + reference_cp,
+        text_fc + reference_cp + 1,
+        text_fc + comment_marker_cp,
+        text_fc + comment_marker_cp + 1,
+        text_fc_end,
+    )
+    struct.pack_into("<6I", chpx_fkp, 0, *boundaries)
+    if not missing_special:
+        chpx_fkp[24:29] = bytes((0, 32, 0, 32, 0))
+        special_grpprl = struct.pack("<HB", 0x0855, 1)
+        chpx_fkp[64] = len(special_grpprl)
+        chpx_fkp[65 : 65 + len(special_grpprl)] = special_grpprl
+    chpx_fkp[-1] = 5
+
+    include_bookmarks = not insertion_point
+    tag_pair = (
+        (bookmark_tags_offset, len(bookmark_tags)) if include_bookmarks else (0, 0)
+    )
+    start_pair = (
+        (bookmark_starts_offset, len(bookmark_starts))
+        if include_bookmarks
+        else (0, 0)
+    )
+    end_pair = (
+        (bookmark_ends_offset, len(bookmark_ends))
+        if include_bookmarks and not missing_bookmark_table
+        else (0, 0)
+    )
+
+    word_document = bytearray(4096)
+    word_document[:1024] = _build_fib(
+        ccp_text=len(main_text),
+        ccp_comments=len(comment_document),
+        clx_size=len(clx),
+        comment_ref_plc=(comment_ref_offset, len(comment_ref)),
+        comment_text_plc=(comment_text_offset, len(comment_text)),
+        comment_owners=(owners_offset, len(owners)),
+        comment_bookmark_tags=tag_pair,
+        comment_bookmark_starts=start_pair,
+        comment_bookmark_ends=end_pair,
+        chpx_plc=(chpx_plc_offset, len(chpx_plc)),
+        cb_mac=5 * SECTOR_SIZE,
+    )
+    word_document[text_fc:text_fc_end] = all_text
+    word_document[4 * SECTOR_SIZE : 5 * SECTOR_SIZE] = chpx_fkp
+
+    table_stream = bytearray(4096)
+    table_stream[: len(clx)] = clx
+    table_stream[
+        comment_ref_offset : comment_ref_offset + len(comment_ref)
+    ] = comment_ref
+    table_stream[
+        comment_text_offset : comment_text_offset + len(comment_text)
+    ] = comment_text
+    table_stream[owners_offset : owners_offset + len(owners)] = owners
+    if include_bookmarks:
+        table_stream[
+            bookmark_tags_offset : bookmark_tags_offset + len(bookmark_tags)
+        ] = bookmark_tags
+        table_stream[
+            bookmark_starts_offset : bookmark_starts_offset
+            + len(bookmark_starts)
+        ] = bookmark_starts
+        table_stream[
+            bookmark_ends_offset : bookmark_ends_offset + len(bookmark_ends)
+        ] = bookmark_ends
     table_stream[chpx_plc_offset : chpx_plc_offset + len(chpx_plc)] = chpx_plc
     return _wrap_regular_word_streams(word_document, table_stream)
 

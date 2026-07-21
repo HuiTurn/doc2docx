@@ -14,6 +14,8 @@ FIB_IDENT = 0xA5EC
 FCLCB97_STSHF_INDEX = 1
 FCLCB97_PLCF_FND_REF_INDEX = 2
 FCLCB97_PLCF_FND_TXT_INDEX = 3
+FCLCB97_PLCF_AND_REF_INDEX = 4
+FCLCB97_PLCF_AND_TXT_INDEX = 5
 FCLCB97_PLCF_SED_INDEX = 6
 FCLCB97_PLCF_HDD_INDEX = 11
 FCLCB97_PLCF_BTE_CHPX_INDEX = 12
@@ -22,7 +24,11 @@ FCLCB97_STTBF_FFN_INDEX = 15
 FCLCB97_PLCF_FLD_HDR_INDEX = 17
 FCLCB97_DOP_INDEX = 31
 FCLCB97_CLX_INDEX = 33
+FCLCB97_GRP_XST_ATN_OWNERS_INDEX = 36
+FCLCB97_STTBF_ATN_BKMK_INDEX = 37
 FCLCB97_PLC_SPA_HDR_INDEX = 41
+FCLCB97_PLCF_ATN_BKF_INDEX = 42
+FCLCB97_PLCF_ATN_BKL_INDEX = 43
 FCLCB97_PLCF_END_REF_INDEX = 46
 FCLCB97_PLCF_END_TXT_INDEX = 47
 FCLCB97_DGG_INFO_INDEX = 50
@@ -109,6 +115,15 @@ class FileInformationBlock:
         return self.fib_rg_lw[5] if len(self.fib_rg_lw) > 5 else 0
 
     @property
+    def ccp_comments(self) -> int:
+        return self.fib_rg_lw[7] if len(self.fib_rg_lw) > 7 else 0
+
+    @property
+    def comment_story_cp_start(self) -> int:
+        # Main, footnote, header and macro documents precede comments.
+        return sum(self.fib_rg_lw[3:7])
+
+    @property
     def ccp_endnotes(self) -> int:
         return self.fib_rg_lw[8] if len(self.fib_rg_lw) > 8 else 0
 
@@ -176,6 +191,42 @@ class FileInformationBlock:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_FND_TXT_INDEX:
             return FcLcb(0, 0)
         return self.fib_rg_fc_lcb[FCLCB97_PLCF_FND_TXT_INDEX]
+
+    @property
+    def plcf_and_ref(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_AND_REF_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_AND_REF_INDEX]
+
+    @property
+    def plcf_and_txt(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_AND_TXT_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_AND_TXT_INDEX]
+
+    @property
+    def grp_xst_atn_owners(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_GRP_XST_ATN_OWNERS_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_GRP_XST_ATN_OWNERS_INDEX]
+
+    @property
+    def sttbf_atn_bkmk(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_STTBF_ATN_BKMK_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_STTBF_ATN_BKMK_INDEX]
+
+    @property
+    def plcf_atn_bkf(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_ATN_BKF_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_ATN_BKF_INDEX]
+
+    @property
+    def plcf_atn_bkl(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_ATN_BKL_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_ATN_BKL_INDEX]
 
     @property
     def plcf_sed(self) -> FcLcb:

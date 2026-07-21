@@ -9,12 +9,18 @@ from doc2docx.diagnostics import ConversionReport
 from doc2docx.errors import InvalidWordDocument
 from doc2docx.model import (
     CharacterProperties,
+    Comment,
+    CommentRangeEnd,
+    CommentRangeStart,
+    CommentReference,
     Document,
     Endnote,
     EndnoteReference,
     Footnote,
     FootnoteReference,
+    HeaderFooterStory,
     Paragraph,
+    SectionProperties,
     TextRun,
 )
 from doc2docx.msdoc.footnotes import read_footnotes
@@ -26,16 +32,44 @@ REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
 
 class FootnoteParsingTests(unittest.TestCase):
-    def test_footnote_and_endnote_relationship_ids_do_not_collide(self) -> None:
+    def test_note_and_comment_relationship_ids_do_not_collide(self) -> None:
         document = Document(
             paragraphs=(
-                Paragraph((FootnoteReference(1), EndnoteReference(1))),
+                Paragraph(
+                    (
+                        FootnoteReference(1),
+                        EndnoteReference(1),
+                        CommentRangeStart(0),
+                        TextRun("Commented"),
+                        CommentRangeEnd(0),
+                        CommentReference(0),
+                    )
+                ),
             ),
             footnotes=(
                 Footnote(1, (Paragraph((TextRun("Footnote"),)),)),
             ),
             endnotes=(
                 Endnote(1, (Paragraph((TextRun("Endnote"),)),)),
+            ),
+            comments=(
+                Comment(
+                    0,
+                    "Alice",
+                    "AL",
+                    (Paragraph((TextRun("Comment"),)),),
+                ),
+            ),
+            sections=(
+                SectionProperties(
+                    0,
+                    1,
+                    default_header=HeaderFooterStory(
+                        0,
+                        1,
+                        (Paragraph((TextRun("Header"),)),),
+                    ),
+                ),
             ),
         )
         with tempfile.TemporaryDirectory() as directory:
@@ -50,16 +84,27 @@ class FootnoteParsingTests(unittest.TestCase):
         note_relationships = [
             value
             for value in relationships.findall(f"{REL}Relationship")
-            if value.get("Target") in {"footnotes.xml", "endnotes.xml"}
+            if value.get("Target")
+            in {"footnotes.xml", "endnotes.xml", "comments.xml"}
         ]
         self.assertEqual(
             {value.get("Target") for value in note_relationships},
-            {"footnotes.xml", "endnotes.xml"},
+            {"footnotes.xml", "endnotes.xml", "comments.xml"},
         )
-        self.assertEqual(len({value.get("Id") for value in note_relationships}), 2)
+        self.assertEqual(len({value.get("Id") for value in note_relationships}), 3)
+        all_relationships = relationships.findall(f"{REL}Relationship")
+        self.assertEqual(
+            len({value.get("Id") for value in all_relationships}),
+            len(all_relationships),
+        )
         self.assertTrue(
-            {"word/footnotes.xml", "word/endnotes.xml"}.issubset(names)
+            {
+                "word/footnotes.xml",
+                "word/endnotes.xml",
+                "word/comments.xml",
+            }.issubset(names)
         )
+        self.assertIn("word/header1.xml", names)
 
     @staticmethod
     def _piece_table() -> PieceTable:

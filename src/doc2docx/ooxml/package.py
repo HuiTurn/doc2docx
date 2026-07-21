@@ -14,6 +14,9 @@ from ..model import (
     Break,
     BreakType,
     CharacterProperties,
+    CommentRangeEnd,
+    CommentRangeStart,
+    CommentReference,
     Document,
     Endnote,
     EndnoteReference,
@@ -68,6 +71,9 @@ FOOTNOTES_CONTENT_TYPE = (
 ENDNOTES_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"
 )
+COMMENTS_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"
+)
 STYLES_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
 )
@@ -88,6 +94,9 @@ FOOTNOTES_REL = (
 )
 ENDNOTES_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes"
+)
+COMMENTS_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
 )
 XML_NS = "http://www.w3.org/XML/1998/namespace"
 VML_NS = "urn:schemas-microsoft-com:vml"
@@ -126,6 +135,7 @@ def _content_types_xml(
     has_settings: bool,
     has_footnotes: bool,
     has_endnotes: bool,
+    has_comments: bool,
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
     # OPC consumers in the wild are more interoperable with the conventional
@@ -184,6 +194,13 @@ def _content_types_xml(
             PartName="/word/endnotes.xml",
             ContentType=ENDNOTES_CONTENT_TYPE,
         )
+    if has_comments:
+        ET.SubElement(
+            root,
+            "Override",
+            PartName="/word/comments.xml",
+            ContentType=COMMENTS_CONTENT_TYPE,
+        )
     for part in header_footer_parts:
         ET.SubElement(
             root,
@@ -215,6 +232,7 @@ def _document_relationships_xml(
     has_settings: bool,
     has_footnotes: bool,
     has_endnotes: bool,
+    has_comments: bool,
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
     root = ET.Element("Relationships", xmlns=REL_NS)
@@ -263,6 +281,15 @@ def _document_relationships_xml(
             Type=ENDNOTES_REL,
             Target="endnotes.xml",
         )
+        relationship_id += 1
+    if has_comments:
+        ET.SubElement(
+            root,
+            "Relationship",
+            Id=f"rId{relationship_id}",
+            Type=COMMENTS_REL,
+            Target="comments.xml",
+        )
     for part in header_footer_parts:
         ET.SubElement(
             root,
@@ -282,9 +309,17 @@ def _build_header_footer_parts(
     has_settings: bool,
     has_footnotes: bool,
     has_endnotes: bool,
+    has_comments: bool,
 ) -> tuple[_HeaderFooterPart, ...]:
     relationship_number = 1 + sum(
-        (has_styles, has_fonts, has_settings, has_footnotes, has_endnotes)
+        (
+            has_styles,
+            has_fonts,
+            has_settings,
+            has_footnotes,
+            has_endnotes,
+            has_comments,
+        )
     )
     header_number = 0
     footer_number = 0
@@ -880,6 +915,9 @@ def _append_inline(
         | Field
         | FootnoteReference
         | EndnoteReference
+        | CommentRangeStart
+        | CommentRangeEnd
+        | CommentReference
         | FloatingTextBox
     ),
     *,
@@ -958,6 +996,38 @@ def _append_inline(
                     else inline.endnote_id
                 )
             },
+        )
+    elif isinstance(inline, (CommentRangeStart, CommentRangeEnd)):
+        ET.SubElement(
+            paragraph_element,
+            _qn(
+                W_NS,
+                "commentRangeStart"
+                if isinstance(inline, CommentRangeStart)
+                else "commentRangeEnd",
+            ),
+            {_qn(W_NS, "id"): str(inline.comment_id)},
+        )
+    elif isinstance(inline, CommentReference):
+        run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+        _append_run_properties(
+            run,
+            inline.properties,
+            valid_style_ids=valid_character_style_ids,
+        )
+        run_properties = run.find(_qn(W_NS, "rPr"))
+        if run_properties is None:
+            run_properties = ET.Element(_qn(W_NS, "rPr"))
+            run.insert(0, run_properties)
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "vertAlign"),
+            {_qn(W_NS, "val"): "superscript"},
+        )
+        ET.SubElement(
+            run,
+            _qn(W_NS, "commentReference"),
+            {_qn(W_NS, "id"): str(inline.comment_id)},
         )
     elif isinstance(inline, FloatingTextBox):
         _append_floating_textbox(
@@ -1589,6 +1659,54 @@ def _endnotes_xml(document: Document) -> bytes:
     )
 
 
+def _comments_xml(document: Document) -> bytes:
+    valid_paragraph_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "paragraph"
+    }
+    valid_character_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "character"
+    }
+    valid_table_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "table"
+    }
+    root = ET.Element(_qn(W_NS, "comments"))
+    for value in document.comments:
+        comment = ET.SubElement(
+            root,
+            _qn(W_NS, "comment"),
+            {
+                _qn(W_NS, "id"): str(value.comment_id),
+                _qn(W_NS, "author"): value.author,
+                _qn(W_NS, "initials"): value.initials,
+            },
+        )
+        for block in value.body_blocks:
+            if isinstance(block, Paragraph):
+                _append_paragraph(
+                    comment,
+                    block,
+                    valid_paragraph_style_ids=valid_paragraph_style_ids,
+                    valid_character_style_ids=valid_character_style_ids,
+                )
+            elif isinstance(block, Table):
+                _append_table(
+                    comment,
+                    block,
+                    valid_paragraph_style_ids=valid_paragraph_style_ids,
+                    valid_character_style_ids=valid_character_style_ids,
+                    valid_table_style_ids=valid_table_style_ids,
+                )
+        if not value.body_blocks:
+            ET.SubElement(comment, _qn(W_NS, "p"))
+    return _xml_bytes(root)
+
+
 def _settings_xml(
     *,
     even_and_odd_headers: bool,
@@ -1777,6 +1895,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
     )
     has_footnotes = bool(document.footnotes)
     has_endnotes = bool(document.endnotes)
+    has_comments = bool(document.comments)
     header_footer_parts = _build_header_footer_parts(
         document,
         has_styles=has_styles,
@@ -1784,6 +1903,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
         has_settings=has_settings,
         has_footnotes=has_footnotes,
         has_endnotes=has_endnotes,
+        has_comments=has_comments,
     )
     try:
         with zipfile.ZipFile(output, mode="w") as package:
@@ -1796,6 +1916,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     has_settings=has_settings,
                     has_footnotes=has_footnotes,
                     has_endnotes=has_endnotes,
+                    has_comments=has_comments,
                     header_footer_parts=header_footer_parts,
                 ),
             )
@@ -1811,6 +1932,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                 or has_settings
                 or has_footnotes
                 or has_endnotes
+                or has_comments
                 or header_footer_parts
             ):
                 _write_part(
@@ -1822,6 +1944,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                         has_settings=has_settings,
                         has_footnotes=has_footnotes,
                         has_endnotes=has_endnotes,
+                        has_comments=has_comments,
                         header_footer_parts=header_footer_parts,
                     ),
                 )
@@ -1855,6 +1978,12 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     package,
                     "word/endnotes.xml",
                     _endnotes_xml(document),
+                )
+            if has_comments:
+                _write_part(
+                    package,
+                    "word/comments.xml",
+                    _comments_xml(document),
                 )
             for part in header_footer_parts:
                 _write_part(

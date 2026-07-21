@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "msdoc2docx"
-version = "0.14.0"
+version = "0.15.0"
 description = "A specification-driven, pure-Python Word binary .doc to .docx converter"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
 authors = [{name = "doc2docx contributors"}]
 dependencies = []
 

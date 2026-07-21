@@ -1,3 +1,4 @@
+from .comments import CommentCollection, read_comments
 from .document_properties import WordDocumentSettings, read_document_settings
 from .endnotes import EndnoteCollection, read_endnotes
 from .fib import FileInformationBlock
@@ -12,6 +13,7 @@ from .sections import read_sections
 from .styles import read_style_sheet
 
 __all__ = [
+    "CommentCollection",
     "FileInformationBlock",
     "EndnoteCollection",
     "FormattingMap",
@@ -23,6 +25,7 @@ __all__ = [
     "PieceTable",
     "WordDocumentSettings",
     "read_document_settings",
+    "read_comments",
     "read_endnotes",
     "read_font_table",
     "read_formatting",

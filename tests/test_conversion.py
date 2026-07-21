@@ -13,6 +13,7 @@ from doc2docx.errors import (
 )
 
 from .fixtures import (
+    build_comment_word_cfb,
     build_endnote_word_cfb,
     build_formatted_word_cfb,
     build_footnote_word_cfb,
@@ -32,6 +33,89 @@ V = "{urn:schemas-microsoft-com:vml}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_ranged_comment_is_anchored_and_packaged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "comment.doc"
+            destination = temporary / "comment.docx"
+            source.write_bytes(build_comment_word_cfb())
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.warnings, [])
+            self.assertEqual(result.report.statistics["comment_count"], 1)
+            self.assertEqual(result.report.statistics["comment_reference_count"], 1)
+            self.assertEqual(result.report.statistics["comment_range_count"], 1)
+            inspected = inspect_doc(source)
+            self.assertGreater(inspected["fib"]["ccpAtn"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcfandRef"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcfandTxt"], 0)
+            self.assertGreater(inspected["fib"]["lcbGrpXstAtnOwners"], 0)
+
+            with zipfile.ZipFile(destination) as package:
+                names = set(package.namelist())
+                document_root = ET.fromstring(package.read("word/document.xml"))
+                comments_root = ET.fromstring(package.read("word/comments.xml"))
+                relationships_root = ET.fromstring(
+                    package.read("word/_rels/document.xml.rels")
+                )
+                content_types = package.read("[Content_Types].xml").decode()
+
+            self.assertIn("word/comments.xml", names)
+            start = document_root.find(f".//{W}commentRangeStart")
+            end = document_root.find(f".//{W}commentRangeEnd")
+            reference = document_root.find(f".//{W}commentReference")
+            assert start is not None and end is not None and reference is not None
+            self.assertEqual(start.get(f"{W}id"), "0")
+            self.assertEqual(end.get(f"{W}id"), "0")
+            self.assertEqual(reference.get(f"{W}id"), "0")
+            comment = comments_root.find(f"{W}comment")
+            assert comment is not None
+            self.assertEqual(comment.get(f"{W}id"), "0")
+            self.assertEqual(comment.get(f"{W}author"), "Alice")
+            self.assertEqual(comment.get(f"{W}initials"), "AL")
+            self.assertEqual("".join(comment.itertext()), "Comment body")
+            relationship = next(
+                value
+                for value in relationships_root.findall(f"{REL}Relationship")
+                if value.get("Target") == "comments.xml"
+            )
+            self.assertTrue(relationship.get("Type", "").endswith("/comments"))
+            self.assertIn("/word/comments.xml", content_types)
+
+    def test_insertion_point_comment_has_no_range_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "point-comment.doc"
+            destination = temporary / "point-comment.docx"
+            source.write_bytes(build_comment_word_cfb(insertion_point=True))
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.statistics["comment_range_count"], 0)
+            with zipfile.ZipFile(destination) as package:
+                document_root = ET.fromstring(package.read("word/document.xml"))
+            self.assertIsNone(document_root.find(f".//{W}commentRangeStart"))
+            self.assertIsNone(document_root.find(f".//{W}commentRangeEnd"))
+            self.assertIsNotNone(document_root.find(f".//{W}commentReference"))
+
+    def test_malformed_comments_are_rejected(self) -> None:
+        fixtures = (
+            build_comment_word_cfb(missing_special=True),
+            build_comment_word_cfb(malformed_reference_character=True),
+            build_comment_word_cfb(malformed_text_marker=True),
+            build_comment_word_cfb(malformed_text_end=True),
+            build_comment_word_cfb(invalid_author_index=True),
+            build_comment_word_cfb(missing_bookmark_table=True),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for index, payload in enumerate(fixtures):
+                with self.subTest(index=index):
+                    source = Path(directory) / f"bad-comment-{index}.doc"
+                    source.write_bytes(payload)
+                    with self.assertRaises(InvalidWordDocument):
+                        convert(source)
+
     def test_automatic_endnote_is_linked_and_packaged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)

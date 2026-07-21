@@ -4,7 +4,7 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M7b implementation supports unencrypted CFB/OLE Word documents,
+The current M0–M7c implementation supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
 UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
 preserves a useful first set of direct character and paragraph properties. It
@@ -43,6 +43,10 @@ PLCs, linked to main-story reference CPs, and emitted as native
 `footnotes.xml`/`endnotes.xml` content with package relationships and automatic
 reference marks. Malformed PLC layouts, invalid automatic reference characters,
 and missing `sprmCFSpec` formatting are rejected instead of being guessed.
+Legacy comments are resolved through `PlcfandRef`/`PlcfandTxt`, author XSTs,
+and annotation bookmark tables. Ordinary range and insertion-point comments are
+emitted as native main-story anchors plus `comments.xml`, preserving author
+names and initials.
 
 ## Usage
 
@@ -64,7 +68,7 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-M7b currently preserves bold, italic, strike, double strike, capitalization,
+M7c currently preserves bold, italic, strike, double strike, capitalization,
 hidden text, underline, text color, highlight, font size, vertical alignment,
 paragraph justification, indents, spacing, line spacing, and keep/page-break
 flags, font names, paragraph/character style references, style inheritance,
@@ -102,7 +106,8 @@ Sepx page-layout parsing, multi-section break placement, PlcfHdd guard and story
 mapping, header textbox/shape/field PLC validation, live PAGE-field output,
 basic OfficeArt record/property validation and VML shape styling, header/footer
 OPC relationships, automatic footnote/endnote PLC validation and package
-output, East Asian document grids and paragraph controls, script-specific language/font
+output, legacy comment author/range PLC validation and package output, East
+Asian document grids and paragraph controls, script-specific language/font
 properties, malformed input checks, CLI
 coverage, symbol characters, paragraph-mark formatting, paragraph borders and
 outline levels, custom tab stops, unconditional table-style inheritance, modern

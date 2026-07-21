@@ -20,6 +20,7 @@ from .errors import (
 from .model import Document, Paragraph, Symbol, Table, parse_main_story
 from .msdoc import (
     FileInformationBlock,
+    read_comments,
     read_document_settings,
     read_endnotes,
     read_font_table,
@@ -167,6 +168,34 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
     )
+    comment_reference_table = fib.plcf_and_ref
+    comment_text_table = fib.plcf_and_txt
+    comment_owners = fib.grp_xst_atn_owners
+    comment_bookmark_tags = fib.sttbf_atn_bkmk
+    comment_bookmark_starts = fib.plcf_atn_bkf
+    comment_bookmark_ends = fib.plcf_atn_bkl
+    comments = read_comments(
+        table_stream,
+        piece_table,
+        ccp_text=fib.ccp_text,
+        ccp_comments=fib.ccp_comments,
+        comment_story_cp_start=fib.comment_story_cp_start,
+        reference_offset=comment_reference_table.fc,
+        reference_size=comment_reference_table.lcb,
+        text_offset=comment_text_table.fc,
+        text_size=comment_text_table.lcb,
+        owners_offset=comment_owners.fc,
+        owners_size=comment_owners.lcb,
+        bookmark_tags_offset=comment_bookmark_tags.fc,
+        bookmark_tags_size=comment_bookmark_tags.lcb,
+        bookmark_starts_offset=comment_bookmark_starts.fc,
+        bookmark_starts_size=comment_bookmark_starts.lcb,
+        bookmark_ends_offset=comment_bookmark_ends.fc,
+        bookmark_ends_size=comment_bookmark_ends.lcb,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+        paragraph_properties_at=formatting.paragraph_properties_at,
+    )
     endnote_reference_table = fib.plcf_end_ref
     endnote_text_table = fib.plcf_end_txt
     endnotes = read_endnotes(
@@ -241,6 +270,8 @@ def convert(
         paragraph_properties_at=formatting.paragraph_properties_at,
         footnote_reference_at=footnotes.reference_at,
         endnote_reference_at=endnotes.reference_at,
+        comment_reference_at=comments.reference_at,
+        comment_boundaries_at=comments.boundaries_at,
         sections=sections,
     )
     document = Document(
@@ -251,6 +282,7 @@ def convert(
         sections=sections,
         footnotes=footnotes.footnotes,
         endnotes=endnotes.endnotes,
+        comments=comments.comments,
         even_and_odd_headers=document_settings.even_and_odd_headers,
         adjust_line_height_in_table=(
             document_settings.adjust_line_height_in_table
@@ -323,6 +355,9 @@ def convert(
             "endnote_count": len(endnotes.endnotes),
             "endnote_reference_count": endnotes.reference_count,
             "custom_endnote_mark_count": endnotes.custom_mark_count,
+            "comment_count": len(comments.comments),
+            "comment_reference_count": comments.reference_count,
+            "comment_range_count": comments.range_count,
             "symbol_character_count": sum(
                 isinstance(inline, Symbol)
                 for paragraph in document.paragraphs
@@ -347,12 +382,13 @@ def convert(
     secondary_stories = fib.secondary_story_character_counts
     secondary_stories.pop("footnotes", None)
     secondary_stories.pop("endnotes", None)
+    secondary_stories.pop("comments", None)
     secondary_stories.pop("headers", None)
     secondary_stories.pop("header_textboxes", None)
     if secondary_stories:
         report.warning(
             "SECONDARY_STORIES_DEFERRED",
-            "some secondary document stories remain unsupported after M7b",
+            "some secondary document stories remain unsupported after M7c",
             stories=secondary_stories,
         )
 
@@ -383,7 +419,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M7b conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M7c conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -428,6 +464,7 @@ def inspect_doc(
             "ccpText": fib.ccp_text,
             "ccpFtn": fib.ccp_footnotes,
             "ccpEdn": fib.ccp_endnotes,
+            "ccpAtn": fib.ccp_comments,
             "ccpHdd": fib.ccp_headers,
             "ccpHdrTxbx": fib.ccp_header_textboxes,
             "fcClx": fib.clx.fc,
@@ -436,6 +473,18 @@ def inspect_doc(
             "lcbPlcffndRef": fib.plcf_fnd_ref.lcb,
             "fcPlcffndTxt": fib.plcf_fnd_txt.fc,
             "lcbPlcffndTxt": fib.plcf_fnd_txt.lcb,
+            "fcPlcfandRef": fib.plcf_and_ref.fc,
+            "lcbPlcfandRef": fib.plcf_and_ref.lcb,
+            "fcPlcfandTxt": fib.plcf_and_txt.fc,
+            "lcbPlcfandTxt": fib.plcf_and_txt.lcb,
+            "fcGrpXstAtnOwners": fib.grp_xst_atn_owners.fc,
+            "lcbGrpXstAtnOwners": fib.grp_xst_atn_owners.lcb,
+            "fcSttbfAtnBkmk": fib.sttbf_atn_bkmk.fc,
+            "lcbSttbfAtnBkmk": fib.sttbf_atn_bkmk.lcb,
+            "fcPlcfAtnBkf": fib.plcf_atn_bkf.fc,
+            "lcbPlcfAtnBkf": fib.plcf_atn_bkf.lcb,
+            "fcPlcfAtnBkl": fib.plcf_atn_bkl.fc,
+            "lcbPlcfAtnBkl": fib.plcf_atn_bkl.lcb,
             "fcPlcfendRef": fib.plcf_end_ref.fc,
             "lcbPlcfendRef": fib.plcf_end_ref.lcb,
             "fcPlcfendTxt": fib.plcf_end_txt.fc,
