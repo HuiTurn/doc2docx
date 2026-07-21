@@ -4,7 +4,7 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M5c implementation supports unencrypted CFB/OLE Word documents,
+The current M0–M6a implementation supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
 UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
 preserves a useful first set of direct character and paragraph properties. It
@@ -26,7 +26,10 @@ stories are resolved through `PlcfHdrtxbxTxt`, `PlcfTxbxHdrBkd`, and
 `PlcSpaHdr`; their shape rectangle, relative positioning, wrapping, and anchor
 flags are emitted as compatible VML textboxes. `PAGE`, `NUMPAGES`, and
 `SECTIONPAGES` are preserved as live WordprocessingML fields with their cached
-display results.
+display results. East Asian section document grids, grid-aware paragraph
+controls, script-specific font hints, language/proofing metadata, complex-script
+font size and emphasis, and Word's table-grid line-height compatibility setting
+are also carried into the DOCX package.
 
 ## Usage
 
@@ -48,18 +51,20 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-M5c currently preserves bold, italic, strike, double strike, capitalization,
+M6a currently preserves bold, italic, strike, double strike, capitalization,
 hidden text, underline, text color, highlight, font size, vertical alignment,
 paragraph justification, indents, spacing, line spacing, and keep/page-break
 flags, font names, paragraph/character style references, style inheritance,
 basic section/page layout, ordinary paragraph/table content in headers and
 footers, positioned header/footer textboxes, and basic dynamic page-number
-fields.
+fields. It additionally distinguishes Latin/East Asian/complex-script run
+properties and preserves East Asian document-grid pagination controls.
 Conditional table styles, newer color-based table shading, cell spacing,
 numbering styles, multi-column layout, page-number settings, header/footer
 non-textbox shapes and full OfficeArt styling, main-story textboxes, other
 secondary stories, images, fields beyond the supported page-number family,
-embedded objects, and encrypted documents are intentionally deferred to later iterations.
+embedded objects, exact Word 97–2003 table-row pagination in every legacy
+compatibility case, and encrypted documents are intentionally deferred to later iterations.
 Unsupported or lossy content is reported rather than silently treated as fully
 converted.
 
@@ -77,5 +82,6 @@ pair coordinates, CHPX/PAPX and piece-level PRM formatting, font/style table
 parsing, nested table reconstruction, grids, cell margins and shading, PlcfSed and
 Sepx page-layout parsing, multi-section break placement, PlcfHdd guard and story
 mapping, header textbox/shape/field PLC validation, live PAGE-field output,
-header/footer OPC relationships, malformed input checks, CLI coverage, and
-end-to-end DOCX package validation.
+header/footer OPC relationships, East Asian document grids and paragraph
+controls, script-specific language/font properties, malformed input checks, CLI
+coverage, and end-to-end DOCX package validation.

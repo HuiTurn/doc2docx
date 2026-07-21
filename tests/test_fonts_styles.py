@@ -6,7 +6,7 @@ import zipfile
 from xml.etree import ElementTree as ET
 
 from doc2docx.diagnostics import ConversionReport
-from doc2docx.model import Document, Paragraph, TextRun
+from doc2docx.model import CharacterProperties, Document, Paragraph, TextRun
 from doc2docx.msdoc import read_font_table, read_style_sheet
 from doc2docx.ooxml import write_docx
 
@@ -84,6 +84,67 @@ def _style_sheet() -> bytes:
 
 
 class FontAndStyleTests(unittest.TestCase):
+    def test_writes_script_specific_character_properties(self) -> None:
+        properties = CharacterProperties(
+            east_asia_font="SimSun",
+            font_hint="eastAsia",
+            bold=True,
+            complex_script_bold=False,
+            italic=False,
+            complex_script_italic=True,
+            size_half_points=21,
+            complex_script_size_half_points=24,
+            kerning_half_points=2,
+            no_proof=True,
+            language="en-US",
+            east_asia_language="zh-CN",
+            complex_script_language="ar-SA",
+        )
+        document = Document(
+            (Paragraph((TextRun("中文", properties),)),),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "scripts.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        run_properties = root.find(f".//{W}rPr")
+        assert run_properties is not None
+        fonts = run_properties.find(f"{W}rFonts")
+        assert fonts is not None
+        self.assertEqual(fonts.get(f"{W}eastAsia"), "SimSun")
+        self.assertEqual(fonts.get(f"{W}hint"), "eastAsia")
+        self.assertIsNotNone(run_properties.find(f"{W}b"))
+        self.assertEqual(
+            run_properties.find(f"{W}bCs").get(f"{W}val"),  # type: ignore[union-attr]
+            "0",
+        )
+        self.assertEqual(
+            run_properties.find(f"{W}i").get(f"{W}val"),  # type: ignore[union-attr]
+            "0",
+        )
+        self.assertIsNotNone(run_properties.find(f"{W}iCs"))
+        self.assertEqual(
+            run_properties.find(f"{W}sz").get(f"{W}val"),  # type: ignore[union-attr]
+            "21",
+        )
+        self.assertEqual(
+            run_properties.find(f"{W}szCs").get(f"{W}val"),  # type: ignore[union-attr]
+            "24",
+        )
+        self.assertEqual(
+            run_properties.find(f"{W}kern").get(f"{W}val"),  # type: ignore[union-attr]
+            "2",
+        )
+        self.assertIsNotNone(run_properties.find(f"{W}noProof"))
+        language = run_properties.find(f"{W}lang")
+        assert language is not None
+        self.assertEqual(language.get(f"{W}val"), "en-US")
+        self.assertEqual(language.get(f"{W}eastAsia"), "zh-CN")
+        self.assertEqual(language.get(f"{W}bidi"), "ar-SA")
+
     def test_parses_fonts_and_resolves_style_relative_toggle(self) -> None:
         font_bytes = _font_table()
         fonts = read_font_table(font_bytes, offset=0, size=len(font_bytes))

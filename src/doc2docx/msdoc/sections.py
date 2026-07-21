@@ -19,6 +19,13 @@ _BREAK_TYPES = {
     0x04: SectionBreakType.ODD_PAGE,
 }
 
+_DOCUMENT_GRID_TYPES = {
+    0x0000: None,
+    0x0001: "linesAndChars",
+    0x0002: "lines",
+    0x0003: "snapToChars",
+}
+
 _HEADER_DISTANCE_708_LCIDS = {
     1026,
     1027,
@@ -71,6 +78,10 @@ def _u16(operand: bytes) -> int:
 
 def _i16(operand: bytes) -> int:
     return struct.unpack("<h", operand)[0]
+
+
+def _i32(operand: bytes) -> int:
+    return struct.unpack("<i", operand)[0]
 
 
 def _apply_section_modifiers(
@@ -138,6 +149,37 @@ def _apply_section_modifiers(
             section = replace(section, margin_bottom_twips=margin)
         elif opcode == 0xB025:  # sprmSDzaGutter
             section = replace(section, gutter_twips=_u16(operand))
+        elif opcode == 0x7030:  # sprmSDxtCharSpace
+            character_space = _i32(operand)
+            if not -670925 <= character_space <= 6488064:
+                raise InvalidWordDocument(
+                    "section document-grid character spacing "
+                    f"{character_space} is outside [-670925, 6488064]"
+                )
+            section = replace(
+                section,
+                document_grid_character_space=character_space,
+            )
+        elif opcode == 0x9031:  # sprmSDyaLinePitch
+            line_pitch = _u16(operand)
+            if not 1 <= line_pitch <= 31680:
+                raise InvalidWordDocument(
+                    "section document-grid line pitch "
+                    f"{line_pitch} is outside [1, 31680] twips"
+                )
+            section = replace(
+                section,
+                document_grid_line_pitch_twips=line_pitch,
+            )
+        elif opcode == 0x5032:  # sprmSClm
+            grid_mode = _u16(operand)
+            if grid_mode not in _DOCUMENT_GRID_TYPES:
+                unsupported.add(opcode)
+            else:
+                section = replace(
+                    section,
+                    document_grid_type=_DOCUMENT_GRID_TYPES[grid_mode],
+                )
         else:
             unsupported.add(opcode)
     return section, unsupported, seen
@@ -248,6 +290,24 @@ def read_sections(
                 section_index=index,
                 margins=missing_margins,
             )
+        if (
+            section.document_grid_type is not None
+            and section.document_grid_line_pitch_twips is None
+        ):
+            report.warning(
+                "SECTION_GRID_INCOMPLETE",
+                "the DOC section enables a document grid without its required line pitch; the grid was omitted",
+                location=SourceLocation(
+                    story="main",
+                    cp_start=section.cp_start,
+                    cp_end=section.cp_end,
+                    stream="WordDocument" if fc_sepx >= 0 else "Table",
+                    fc_start=fc_sepx if fc_sepx >= 0 else offset + record_offset,
+                ),
+                section_index=index,
+                grid_type=section.document_grid_type,
+            )
+            section = replace(section, document_grid_type=None)
         sections.append(section)
 
     if unsupported:

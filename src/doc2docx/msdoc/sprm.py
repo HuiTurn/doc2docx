@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import locale
 import struct
 from typing import Callable
 
@@ -95,8 +96,60 @@ _CHARACTER_TOGGLES = {
     0x083A: "small_caps",
     0x083B: "caps",
     0x083C: "hidden",
+    0x0855: "no_proof",
+    0x085C: "complex_script_bold",
+    0x085D: "complex_script_italic",
+    0x0868: "snap_to_grid",
     0x2A53: "double_strike",
 }
+
+_PARAGRAPH_TOGGLES = {
+    0x2431: "widow_control",
+    0x2433: "kinsoku",
+    0x2434: "word_wrap",
+    0x2435: "overflow_punctuation",
+    0x2436: "top_line_punctuation",
+    0x2437: "auto_space_east_asian_latin",
+    0x2438: "auto_space_east_asian_numbers",
+    0x2447: "snap_to_grid",
+    0x2448: "adjust_right_indent",
+}
+
+_FONT_HINTS = {
+    0x00: "default",
+    0x01: "eastAsia",
+    0x02: "cs",
+}
+
+_LANGUAGE_ATTRIBUTES = {
+    0x485F: "complex_script_language",
+    0x486D: "language",
+    0x486E: "east_asia_language",
+    0x4873: "language",
+    0x4874: "east_asia_language",
+}
+
+_NEUTRAL_LANGUAGE_TAGS = {
+    0x0001: "ar",
+}
+
+
+def _language_tag_from_lid(lid: int) -> str | None:
+    neutral_tag = _NEUTRAL_LANGUAGE_TAGS.get(lid)
+    if neutral_tag is not None:
+        return neutral_tag
+    name = locale.windows_locale.get(lid)
+    if name is None:
+        return None
+    if name == "zh_CHS":
+        return "zh-CN"
+    if name == "zh_CHT":
+        return "zh-TW"
+    parts = name.split("_")
+    normalized = [parts[0].lower()]
+    for part in parts[1:]:
+        normalized.append(part.title() if len(part) == 4 else part.upper())
+    return "-".join(normalized)
 
 _UNDERLINES = {
     0x00: "none",
@@ -474,6 +527,24 @@ def apply_character_modifiers(
                 properties = replace(properties, size_half_points=size)
             else:
                 unsupported.add(opcode)
+        elif opcode == 0x4A61:  # sprmCHpsBi
+            size = struct.unpack("<H", operand)[0]
+            if size <= 3276:
+                properties = replace(
+                    properties,
+                    complex_script_size_half_points=size,
+                )
+            else:
+                unsupported.add(opcode)
+        elif opcode == 0x484B:  # sprmCHpsKern
+            threshold = struct.unpack("<h", operand)[0]
+            if 0 <= threshold <= 3276:
+                properties = replace(
+                    properties,
+                    kerning_half_points=threshold,
+                )
+            else:
+                unsupported.add(opcode)
         elif opcode == 0x4845:
             position = struct.unpack("<h", operand)[0]
             properties = replace(properties, position_half_points=position)
@@ -485,6 +556,31 @@ def apply_character_modifiers(
                 unsupported.add(opcode)
             else:
                 properties = replace(properties, vertical_align=vertical_align)
+        elif opcode == 0x286F:  # sprmCIdctHint
+            if operand[0] == 0xFF:
+                properties = replace(properties, font_hint=None)
+                continue
+            hint = _FONT_HINTS.get(operand[0])
+            if hint is None:
+                unsupported.add(opcode)
+            else:
+                properties = replace(properties, font_hint=hint)
+        elif opcode in _LANGUAGE_ATTRIBUTES:
+            lid = struct.unpack("<H", operand)[0]
+            # MS-DOC uses the otherwise special LID 0x0400 to mean that
+            # proofing is disabled for this text, rather than to name a
+            # concrete language that can be written to w:lang.
+            if lid == 0x0400:
+                properties = replace(properties, no_proof=True)
+                continue
+            language = _language_tag_from_lid(lid)
+            if language is None:
+                unsupported.add(opcode)
+            else:
+                properties = replace(
+                    properties,
+                    **{_LANGUAGE_ATTRIBUTES[opcode]: language},
+                )
         elif opcode == 0x6870:
             if operand[3] == 0xFF:
                 properties = replace(properties, color="auto")
@@ -672,6 +768,14 @@ def apply_paragraph_modifiers(
             properties = replace(properties, keep_next=bool(operand[0]))
         elif opcode == 0x2407:
             properties = replace(properties, page_break_before=bool(operand[0]))
+        elif opcode in _PARAGRAPH_TOGGLES:
+            if operand[0] not in (0x00, 0x01):
+                unsupported.add(opcode)
+            else:
+                properties = replace(
+                    properties,
+                    **{_PARAGRAPH_TOGGLES[opcode]: bool(operand[0])},
+                )
         elif opcode in (0x840F, 0x845E):
             properties = replace(
                 properties,

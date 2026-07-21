@@ -306,20 +306,40 @@ def _append_character_property_elements(
         font_attributes[_qn(W_NS, "eastAsia")] = properties.east_asia_font
     if properties.complex_script_font is not None:
         font_attributes[_qn(W_NS, "cs")] = properties.complex_script_font
+    if properties.font_hint is not None:
+        font_attributes[_qn(W_NS, "hint")] = properties.font_hint
     if font_attributes:
         ET.SubElement(run_properties, _qn(W_NS, "rFonts"), font_attributes)
     _append_boolean_property(run_properties, "b", properties.bold)
+    _append_boolean_property(
+        run_properties,
+        "bCs",
+        properties.complex_script_bold,
+    )
     _append_boolean_property(run_properties, "i", properties.italic)
+    _append_boolean_property(
+        run_properties,
+        "iCs",
+        properties.complex_script_italic,
+    )
     _append_boolean_property(run_properties, "caps", properties.caps)
     _append_boolean_property(run_properties, "smallCaps", properties.small_caps)
     _append_boolean_property(run_properties, "strike", properties.strike)
     _append_boolean_property(run_properties, "dstrike", properties.double_strike)
+    _append_boolean_property(run_properties, "noProof", properties.no_proof)
+    _append_boolean_property(run_properties, "snapToGrid", properties.snap_to_grid)
     _append_boolean_property(run_properties, "vanish", properties.hidden)
     if properties.color is not None:
         ET.SubElement(
             run_properties,
             _qn(W_NS, "color"),
             {_qn(W_NS, "val"): properties.color},
+        )
+    if properties.kerning_half_points is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "kern"),
+            {_qn(W_NS, "val"): str(properties.kerning_half_points)},
         )
     if properties.position_half_points is not None:
         ET.SubElement(
@@ -330,7 +350,16 @@ def _append_character_property_elements(
     if properties.size_half_points is not None:
         attributes = {_qn(W_NS, "val"): str(properties.size_half_points)}
         ET.SubElement(run_properties, _qn(W_NS, "sz"), attributes)
-        ET.SubElement(run_properties, _qn(W_NS, "szCs"), attributes)
+    if properties.complex_script_size_half_points is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "szCs"),
+            {
+                _qn(W_NS, "val"): str(
+                    properties.complex_script_size_half_points
+                )
+            },
+        )
     if properties.highlight is not None:
         ET.SubElement(
             run_properties,
@@ -349,6 +378,15 @@ def _append_character_property_elements(
             _qn(W_NS, "vertAlign"),
             {_qn(W_NS, "val"): properties.vertical_align},
         )
+    language_attributes: dict[str, str] = {}
+    if properties.language is not None:
+        language_attributes[_qn(W_NS, "val")] = properties.language
+    if properties.east_asia_language is not None:
+        language_attributes[_qn(W_NS, "eastAsia")] = properties.east_asia_language
+    if properties.complex_script_language is not None:
+        language_attributes[_qn(W_NS, "bidi")] = properties.complex_script_language
+    if language_attributes:
+        ET.SubElement(run_properties, _qn(W_NS, "lang"), language_attributes)
 
 
 def _append_run_properties(
@@ -382,6 +420,15 @@ def _append_paragraph_properties(
         or properties.keep_lines is not None
         or properties.keep_next is not None
         or properties.page_break_before is not None
+        or properties.widow_control is not None
+        or properties.kinsoku is not None
+        or properties.word_wrap is not None
+        or properties.overflow_punctuation is not None
+        or properties.top_line_punctuation is not None
+        or properties.auto_space_east_asian_latin is not None
+        or properties.auto_space_east_asian_numbers is not None
+        or properties.snap_to_grid is not None
+        or properties.adjust_right_indent is not None
         or properties.left_indent_twips is not None
         or properties.right_indent_twips is not None
         or properties.first_line_indent_twips is not None
@@ -415,6 +462,43 @@ def _append_paragraph_properties(
         paragraph_properties,
         "pageBreakBefore",
         properties.page_break_before,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "widowControl",
+        properties.widow_control,
+    )
+    _append_boolean_property(paragraph_properties, "kinsoku", properties.kinsoku)
+    _append_boolean_property(paragraph_properties, "wordWrap", properties.word_wrap)
+    _append_boolean_property(
+        paragraph_properties,
+        "overflowPunct",
+        properties.overflow_punctuation,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "topLinePunct",
+        properties.top_line_punctuation,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "autoSpaceDE",
+        properties.auto_space_east_asian_latin,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "autoSpaceDN",
+        properties.auto_space_east_asian_numbers,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "adjustRightInd",
+        properties.adjust_right_indent,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "snapToGrid",
+        properties.snap_to_grid,
     )
     spacing: dict[str, str] = {}
     if properties.space_before_twips is not None:
@@ -710,6 +794,21 @@ def _append_section_properties(
     )
     if section.title_page:
         ET.SubElement(section_properties, _qn(W_NS, "titlePg"))
+    if (
+        section.document_grid_type is not None
+        and section.document_grid_line_pitch_twips is not None
+    ):
+        attributes = {
+            _qn(W_NS, "type"): section.document_grid_type,
+            _qn(W_NS, "linePitch"): str(
+                section.document_grid_line_pitch_twips
+            ),
+        }
+        if section.document_grid_character_space is not None:
+            attributes[_qn(W_NS, "charSpace")] = str(
+                section.document_grid_character_space
+            )
+        ET.SubElement(section_properties, _qn(W_NS, "docGrid"), attributes)
 
 
 def _append_paragraph(
@@ -1104,10 +1203,20 @@ def _header_footer_xml(
     return _xml_bytes(root)
 
 
-def _settings_xml(*, even_and_odd_headers: bool) -> bytes:
+def _settings_xml(
+    *,
+    even_and_odd_headers: bool,
+    adjust_line_height_in_table: bool | None,
+) -> bytes:
     root = ET.Element(_qn(W_NS, "settings"))
     if even_and_odd_headers:
         ET.SubElement(root, _qn(W_NS, "evenAndOddHeaders"))
+    if adjust_line_height_in_table:
+        compatibility = ET.SubElement(root, _qn(W_NS, "compat"))
+        ET.SubElement(
+            compatibility,
+            _qn(W_NS, "adjustLineHeightInTable"),
+        )
     return _xml_bytes(root)
 
 
@@ -1258,7 +1367,10 @@ def write_docx(document: Document, destination: str | Path) -> None:
         for style in document.styles.styles
     )
     has_fonts = bool(document.fonts)
-    has_settings = document.even_and_odd_headers
+    has_settings = (
+        document.even_and_odd_headers
+        or document.adjust_line_height_in_table is True
+    )
     header_footer_parts = _build_header_footer_parts(
         document,
         has_styles=has_styles,
@@ -1306,7 +1418,12 @@ def write_docx(document: Document, destination: str | Path) -> None:
                 _write_part(
                     package,
                     "word/settings.xml",
-                    _settings_xml(even_and_odd_headers=True),
+                    _settings_xml(
+                        even_and_odd_headers=document.even_and_odd_headers,
+                        adjust_line_height_in_table=(
+                            document.adjust_line_height_in_table
+                        ),
+                    ),
                 )
             for part in header_footer_parts:
                 _write_part(

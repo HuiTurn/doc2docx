@@ -207,6 +207,9 @@ def convert(
         blocks=parsed_document.blocks,
         sections=sections,
         even_and_odd_headers=document_settings.even_and_odd_headers,
+        adjust_line_height_in_table=(
+            document_settings.adjust_line_height_in_table
+        ),
     )
     tables = tuple(_iter_tables(document.body_blocks))
 
@@ -236,6 +239,12 @@ def convert(
                 len(row.cells) for table in tables for row in table.rows
             ),
             "section_count": len(sections),
+            "document_grid_section_count": sum(
+                section.document_grid_type is not None for section in sections
+            ),
+            "adjust_line_height_in_table": (
+                document.adjust_line_height_in_table is True
+            ),
             "header_footer_story_count": header_footers.story_count,
             "header_footer_paragraph_count": header_footers.paragraph_count,
             "header_textbox_count": header_textboxes.textbox_count,
@@ -253,7 +262,7 @@ def convert(
     if secondary_stories:
         report.warning(
             "SECONDARY_STORIES_DEFERRED",
-            "some secondary document stories remain unsupported after M5c",
+            "some secondary document stories remain unsupported after M6a",
             stories=secondary_stories,
         )
 
@@ -284,7 +293,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M5c conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M6a conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

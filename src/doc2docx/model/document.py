@@ -34,19 +34,29 @@ class CharacterProperties:
     high_ansi_font: str | None = None
     east_asia_font: str | None = None
     complex_script_font: str | None = None
+    font_hint: str | None = None
     bold: bool | None = None
+    complex_script_bold: bool | None = None
     italic: bool | None = None
+    complex_script_italic: bool | None = None
     strike: bool | None = None
     double_strike: bool | None = None
     small_caps: bool | None = None
     caps: bool | None = None
     hidden: bool | None = None
+    no_proof: bool | None = None
     underline: str | None = None
     color: str | None = None
     highlight: str | None = None
     size_half_points: int | None = None
+    complex_script_size_half_points: int | None = None
+    kerning_half_points: int | None = None
     vertical_align: str | None = None
     position_half_points: int | None = None
+    snap_to_grid: bool | None = None
+    language: str | None = None
+    east_asia_language: str | None = None
+    complex_script_language: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -131,6 +141,15 @@ class ParagraphProperties:
     keep_lines: bool | None = None
     keep_next: bool | None = None
     page_break_before: bool | None = None
+    widow_control: bool | None = None
+    kinsoku: bool | None = None
+    word_wrap: bool | None = None
+    overflow_punctuation: bool | None = None
+    top_line_punctuation: bool | None = None
+    auto_space_east_asian_latin: bool | None = None
+    auto_space_east_asian_numbers: bool | None = None
+    snap_to_grid: bool | None = None
+    adjust_right_indent: bool | None = None
     left_indent_twips: int | None = None
     right_indent_twips: int | None = None
     first_line_indent_twips: int | None = None
@@ -295,6 +314,9 @@ class SectionProperties:
     footer_distance_twips: int = 720
     gutter_twips: int = 0
     title_page: bool = False
+    document_grid_type: str | None = None
+    document_grid_line_pitch_twips: int | None = None
+    document_grid_character_space: int | None = None
     even_header: HeaderFooterStory | None = None
     default_header: HeaderFooterStory | None = None
     even_footer: HeaderFooterStory | None = None
@@ -365,6 +387,7 @@ class Document:
     blocks: tuple[Block, ...] = ()
     sections: tuple[SectionProperties, ...] = ()
     even_and_odd_headers: bool = False
+    adjust_line_height_in_table: bool | None = None
 
     @property
     def body_blocks(self) -> tuple[Block, ...]:

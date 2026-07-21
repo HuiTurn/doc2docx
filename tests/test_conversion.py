@@ -161,6 +161,10 @@ class ConversionTests(unittest.TestCase):
             result = convert(source, destination)
 
             self.assertEqual(result.report.statistics["section_count"], 2)
+            self.assertEqual(
+                result.report.statistics["document_grid_section_count"],
+                2,
+            )
             self.assertFalse(result.report.warnings)
             self.assertEqual(len(result.document.sections), 2)
             self.assertEqual(result.document.sections[0].break_type, "continuous")
@@ -191,6 +195,11 @@ class ConversionTests(unittest.TestCase):
             assert first_page is not None
             self.assertEqual(first_page.get(f"{W}w"), "12240")
             self.assertEqual(first_page.get(f"{W}orient"), "portrait")
+            first_grid = first_section.find(f"{W}docGrid")
+            assert first_grid is not None
+            self.assertEqual(first_grid.get(f"{W}type"), "lines")
+            self.assertEqual(first_grid.get(f"{W}linePitch"), "312")
+            self.assertEqual(first_grid.get(f"{W}charSpace"), "0")
 
             final_section = body.find(f"{W}sectPr")
             assert final_section is not None
@@ -205,6 +214,11 @@ class ConversionTests(unittest.TestCase):
             self.assertEqual(final_margins.get(f"{W}header"), "500")
             self.assertEqual(final_margins.get(f"{W}footer"), "600")
             self.assertEqual(final_margins.get(f"{W}gutter"), "100")
+            final_grid = final_section.find(f"{W}docGrid")
+            assert final_grid is not None
+            self.assertEqual(final_grid.get(f"{W}type"), "snapToChars")
+            self.assertEqual(final_grid.get(f"{W}linePitch"), "360")
+            self.assertEqual(final_grid.get(f"{W}charSpace"), "4096")
 
     def test_nested_doc_table_is_emitted_and_counted_recursively(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

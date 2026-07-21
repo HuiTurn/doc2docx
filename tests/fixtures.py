@@ -184,6 +184,9 @@ def build_sectioned_word_cfb() -> bytes:
         header: int,
         footer: int,
         gutter: int,
+        grid_type: int,
+        grid_line_pitch: int,
+        grid_character_space: int,
     ) -> bytes:
         return b"".join(
             (
@@ -198,6 +201,9 @@ def build_sectioned_word_cfb() -> bytes:
                 struct.pack("<HH", 0xB017, header),
                 struct.pack("<HH", 0xB018, footer),
                 struct.pack("<HH", 0xB025, gutter),
+                struct.pack("<Hi", 0x7030, grid_character_space),
+                struct.pack("<HH", 0x9031, grid_line_pitch),
+                struct.pack("<HH", 0x5032, grid_type),
             )
         )
 
@@ -215,6 +221,9 @@ def build_sectioned_word_cfb() -> bytes:
         header=720,
         footer=720,
         gutter=0,
+        grid_type=2,
+        grid_line_pitch=312,
+        grid_character_space=0,
     )
     second_grpprl = section_grpprl(
         break_kind=2,
@@ -228,6 +237,9 @@ def build_sectioned_word_cfb() -> bytes:
         header=500,
         footer=600,
         gutter=100,
+        grid_type=3,
+        grid_line_pitch=360,
+        grid_character_space=4096,
     )
 
     first_section_end = len(b"Portrait\f")
