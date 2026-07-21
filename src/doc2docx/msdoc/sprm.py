@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import struct
+from typing import Callable
 
 from ..errors import InvalidWordDocument
 from ..model import CharacterProperties, ParagraphProperties
@@ -141,14 +142,34 @@ _ICO_HIGHLIGHT = {
 
 def apply_character_modifiers(
     modifiers: tuple[PropertyModifier, ...],
+    *,
+    initial_properties: CharacterProperties | None = None,
+    base_properties: CharacterProperties | None = None,
+    font_names: dict[int, str] | None = None,
+    style_properties_at: Callable[[int], CharacterProperties] | None = None,
 ) -> tuple[CharacterProperties, set[int], int]:
-    properties = CharacterProperties()
+    properties = initial_properties or CharacterProperties()
+    paragraph_style_properties = base_properties or CharacterProperties()
+    style_baseline = paragraph_style_properties
+    font_names = font_names or {}
     unsupported: set[int] = set()
     style_relative_toggle_count = 0
     for modifier in modifiers:
         opcode = modifier.opcode
         operand = modifier.operand
-        if opcode in _CHARACTER_TOGGLES:
+        if opcode == 0x2A33:  # sprmCPlain
+            properties = CharacterProperties()
+            style_baseline = paragraph_style_properties
+        elif opcode == 0x4A30:  # sprmCIstd
+            style_id = struct.unpack("<H", operand)[0]
+            properties = CharacterProperties(style_id=style_id)
+            style_baseline = paragraph_style_properties
+            if style_properties_at is not None:
+                style_baseline = merge_character_properties(
+                    paragraph_style_properties,
+                    style_properties_at(style_id),
+                )
+        elif opcode in _CHARACTER_TOGGLES:
             value = operand[0]
             if value in (0x00, 0x01):
                 properties = replace(
@@ -157,8 +178,27 @@ def apply_character_modifiers(
                 )
             elif value in (0x80, 0x81):
                 style_relative_toggle_count += 1
+                attribute = _CHARACTER_TOGGLES[opcode]
+                style_value = bool(getattr(style_baseline, attribute))
+                properties = replace(
+                    properties,
+                    **{attribute: style_value if value == 0x80 else not style_value},
+                )
             else:
                 unsupported.add(opcode)
+        elif opcode in (0x4A4F, 0x4A50, 0x4A51, 0x4A5E):
+            font_index = struct.unpack("<H", operand)[0]
+            font_name = font_names.get(font_index)
+            if font_name is None:
+                unsupported.add(opcode)
+                continue
+            attribute = {
+                0x4A4F: "ascii_font",
+                0x4A50: "east_asia_font",
+                0x4A51: "high_ansi_font",
+                0x4A5E: "complex_script_font",
+            }[opcode]
+            properties = replace(properties, **{attribute: font_name})
         elif opcode == 0x2A3E:
             underline = _UNDERLINES.get(operand[0])
             if underline is None:
@@ -224,9 +264,10 @@ _JUSTIFICATION = {
 def apply_paragraph_modifiers(
     modifiers: tuple[PropertyModifier, ...],
     *,
-    style_id: int,
+    style_id: int | None,
+    initial_properties: ParagraphProperties | None = None,
 ) -> tuple[ParagraphProperties, set[int]]:
-    properties = ParagraphProperties(style_id=style_id)
+    properties = initial_properties or ParagraphProperties(style_id=style_id)
     unsupported: set[int] = set()
     for modifier in modifiers:
         opcode = modifier.opcode
@@ -299,3 +340,31 @@ def apply_paragraph_modifiers(
         else:
             unsupported.add(opcode)
     return properties, unsupported
+
+
+def merge_character_properties(
+    base: CharacterProperties,
+    overlay: CharacterProperties,
+) -> CharacterProperties:
+    """Overlay only explicitly specified character-property values."""
+
+    updates = {
+        field_name: getattr(overlay, field_name)
+        for field_name in CharacterProperties.__dataclass_fields__
+        if getattr(overlay, field_name) is not None
+    }
+    return replace(base, **updates) if updates else base
+
+
+def merge_paragraph_properties(
+    base: ParagraphProperties,
+    overlay: ParagraphProperties,
+) -> ParagraphProperties:
+    """Overlay only explicitly specified paragraph-property values."""
+
+    updates = {
+        field_name: getattr(overlay, field_name)
+        for field_name in ParagraphProperties.__dataclass_fields__
+        if getattr(overlay, field_name) is not None
+    }
+    return replace(base, **updates) if updates else base

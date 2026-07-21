@@ -18,6 +18,11 @@ class BreakType(StrEnum):
 class CharacterProperties:
     """Direct character properties; ``None`` means not specified by the DOC run."""
 
+    style_id: int | None = None
+    ascii_font: str | None = None
+    high_ansi_font: str | None = None
+    east_asia_font: str | None = None
+    complex_script_font: str | None = None
     bold: bool | None = None
     italic: bool | None = None
     strike: bool | None = None
@@ -49,6 +54,69 @@ class ParagraphProperties:
     space_after_twips: int | None = None
     line_spacing_twips: int | None = None
     line_rule: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class FontDefinition:
+    """One font from the DOC SttbfFfn table."""
+
+    index: int
+    name: str
+    alternate_name: str | None = None
+    charset: int = 0
+    family: str | None = None
+    pitch: str | None = None
+    weight: int | None = None
+    panose: bytes = b""
+    signature: bytes = b""
+
+
+@dataclass(slots=True, frozen=True)
+class StyleDefinition:
+    """A paragraph or character style, retaining its DOC style-table index."""
+
+    index: int
+    name: str
+    kind: str
+    based_on: int | None = None
+    next_style: int | None = None
+    paragraph_properties: ParagraphProperties = field(
+        default_factory=ParagraphProperties
+    )
+    character_properties: CharacterProperties = field(
+        default_factory=CharacterProperties
+    )
+
+    @property
+    def ooxml_style_id(self) -> str:
+        return f"DocStyle{self.index}"
+
+
+@dataclass(slots=True, frozen=True)
+class StyleSheet:
+    """Parsed style definitions plus resolved properties used for toggles."""
+
+    styles: tuple[StyleDefinition | None, ...] = ()
+    default_character_properties: CharacterProperties = field(
+        default_factory=CharacterProperties
+    )
+    effective_character_properties: tuple[CharacterProperties | None, ...] = ()
+
+    def style_at(self, index: int | None) -> StyleDefinition | None:
+        if index is None or index < 0 or index >= len(self.styles):
+            return None
+        return self.styles[index]
+
+    def effective_character_at(self, index: int | None) -> CharacterProperties:
+        if (
+            index is not None
+            and 0 <= index < len(self.effective_character_properties)
+            and self.effective_character_properties[index] is not None
+        ):
+            value = self.effective_character_properties[index]
+            assert value is not None
+            return value
+        return self.default_character_properties
 
 
 @dataclass(slots=True, frozen=True)
@@ -89,6 +157,8 @@ class Paragraph:
 @dataclass(slots=True, frozen=True)
 class Document:
     paragraphs: tuple[Paragraph, ...]
+    fonts: tuple[FontDefinition, ...] = ()
+    styles: StyleSheet = field(default_factory=StyleSheet)
 
 
 def _is_xml_character(character: str) -> bool:

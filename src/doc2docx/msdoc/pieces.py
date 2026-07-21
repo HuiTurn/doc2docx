@@ -9,6 +9,7 @@ from ..binary import BinaryReader
 from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import BinaryBoundsError, InvalidWordDocument
 from ..model import StoryCharacter
+from .sprm import PropertyModifier, parse_grpprl
 
 
 _COMPRESSED_SPECIAL_CHARACTERS = {
@@ -39,6 +40,28 @@ _COMPRESSED_SPECIAL_CHARACTERS = {
 }
 
 
+# Prm0 stores a seven-bit isprm instead of a full Sprm. These are the useful
+# one-byte mappings from the MS-DOC Prm0 table; unknown values stay diagnostic.
+_PRM0_SPRMS = {
+    0x05: 0x2461,
+    0x07: 0x2405,
+    0x08: 0x2406,
+    0x09: 0x2407,
+    0x4D: 0x2A0C,
+    0x53: 0x2A33,
+    0x55: 0x0835,
+    0x56: 0x0836,
+    0x57: 0x0837,
+    0x5A: 0x083A,
+    0x5B: 0x083B,
+    0x5C: 0x083C,
+    0x5E: 0x2A3E,
+    0x62: 0x2A42,
+    0x68: 0x2A48,
+    0x73: 0x2A53,
+}
+
+
 @dataclass(slots=True, frozen=True)
 class Piece:
     cp_start: int
@@ -56,6 +79,7 @@ class Piece:
 class PieceTable:
     pieces: tuple[Piece, ...]
     word_document_stream: bytes
+    prcs: tuple[tuple[PropertyModifier, ...], ...] = ()
 
     @property
     def cp_start(self) -> int:
@@ -219,8 +243,41 @@ class PieceTable:
             ranges.append((cp_range_start, cp_range_end))
         return tuple(ranges)
 
+    def modifiers_for_piece(
+        self,
+        piece: Piece,
+        *,
+        property_group: int,
+    ) -> tuple[PropertyModifier, ...]:
+        """Resolve a PCD Prm and retain only modifiers for one sgc group."""
 
-def _parse_plc_pcd(data: bytes, word_document_stream: bytes) -> PieceTable:
+        if piece.prm == 0:
+            return ()
+        if piece.prm & 1:
+            index = piece.prm >> 1
+            if index >= len(self.prcs):
+                raise InvalidWordDocument(
+                    f"piece Prm references PRC {index}, but CLX has {len(self.prcs)}"
+                )
+            modifiers = self.prcs[index]
+        else:
+            isprm = (piece.prm >> 1) & 0x7F
+            opcode = _PRM0_SPRMS.get(isprm)
+            if opcode is None:
+                return ()
+            modifiers = (PropertyModifier(opcode, bytes((piece.prm >> 8,))),)
+        return tuple(
+            modifier
+            for modifier in modifiers
+            if ((modifier.opcode >> 10) & 0x07) == property_group
+        )
+
+
+def _parse_plc_pcd(
+    data: bytes,
+    word_document_stream: bytes,
+    prcs: tuple[tuple[PropertyModifier, ...], ...],
+) -> PieceTable:
     if len(data) < 4 or (len(data) - 4) % 12:
         raise InvalidWordDocument(
             f"PlcPcd size {len(data)} does not match the 12*n+4 layout"
@@ -264,7 +321,7 @@ def _parse_plc_pcd(data: bytes, word_document_stream: bytes) -> PieceTable:
                 prm=prm,
             )
         )
-    return PieceTable(tuple(pieces), word_document_stream)
+    return PieceTable(tuple(pieces), word_document_stream, prcs)
 
 
 def read_piece_table(
@@ -287,16 +344,22 @@ def read_piece_table(
         label="CLX",
         base_offset=fc_clx,
     )
+    prcs: list[tuple[PropertyModifier, ...]] = []
     try:
         while reader.remaining:
             clxt = reader.u8()
             if clxt == 0x01:
                 grpprl_size = reader.u16()
-                reader.skip(grpprl_size)
-                report.info(
-                    "CLX_PRM_SKIPPED",
-                    "CLX contains a property-modifier group deferred beyond M2",
-                    size=grpprl_size,
+                if grpprl_size > 0x3FA2:
+                    raise InvalidWordDocument(
+                        f"CLX PRC has invalid grpprl size {grpprl_size}"
+                    )
+                grpprl = reader.read(grpprl_size)
+                prcs.append(
+                    parse_grpprl(
+                        grpprl,
+                        label=f"CLX.Prc[{len(prcs)}].grpprl",
+                    )
                 )
                 continue
             if clxt == 0x02:
@@ -308,7 +371,35 @@ def read_piece_table(
                         "bytes after the Pcdt in CLX were ignored",
                         byte_count=reader.remaining,
                     )
-                return _parse_plc_pcd(plc_data, word_document_stream)
+                piece_table = _parse_plc_pcd(
+                    plc_data,
+                    word_document_stream,
+                    tuple(prcs),
+                )
+                unknown_prm0 = sorted(
+                    {
+                        (piece.prm >> 1) & 0x7F
+                        for piece in piece_table.pieces
+                        if piece.prm
+                        and not piece.prm & 1
+                        and ((piece.prm >> 1) & 0x7F) not in _PRM0_SPRMS
+                    }
+                )
+                if unknown_prm0:
+                    report.warning(
+                        "UNSUPPORTED_PRM0_VALUES",
+                        "some compact piece-level property modifiers are not supported",
+                        isprm=[f"0x{value:02X}" for value in unknown_prm0],
+                    )
+                # Validate all complex references even if their property group
+                # is not implemented yet.
+                for piece in piece_table.pieces:
+                    if piece.prm & 1 and piece.prm >> 1 >= len(prcs):
+                        raise InvalidWordDocument(
+                            f"piece Prm references PRC {piece.prm >> 1}, "
+                            f"but CLX has {len(prcs)}"
+                        )
+                return piece_table
             raise InvalidWordDocument(f"CLX contains unknown clxt 0x{clxt:02X}")
     except BinaryBoundsError as exc:
         raise InvalidWordDocument(f"truncated CLX/Piece Table: {exc}") from exc

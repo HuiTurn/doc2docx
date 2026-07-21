@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import struct
 import zipfile
 from xml.etree import ElementTree as ET
 
@@ -12,7 +13,9 @@ from ..model import (
     BreakType,
     CharacterProperties,
     Document,
+    FontDefinition,
     ParagraphProperties,
+    StyleSheet,
     Tab,
     TextRun,
 )
@@ -27,6 +30,18 @@ OFFICE_DOCUMENT_REL = (
 WORD_DOCUMENT_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
 )
+STYLES_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"
+)
+FONT_TABLE_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"
+)
+STYLES_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
+)
+FONT_TABLE_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable"
+)
 XML_NS = "http://www.w3.org/XML/1998/namespace"
 
 ET.register_namespace("w", W_NS)
@@ -40,7 +55,7 @@ def _xml_bytes(root: ET.Element) -> bytes:
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def _content_types_xml() -> bytes:
+def _content_types_xml(*, has_styles: bool, has_fonts: bool) -> bytes:
     # OPC consumers in the wild are more interoperable with the conventional
     # default namespace form than with an equivalent generated prefix.
     root = ET.Element("Types", xmlns=CONTENT_TYPES_NS)
@@ -62,6 +77,20 @@ def _content_types_xml() -> bytes:
         PartName="/word/document.xml",
         ContentType=WORD_DOCUMENT_CONTENT_TYPE,
     )
+    if has_styles:
+        ET.SubElement(
+            root,
+            "Override",
+            PartName="/word/styles.xml",
+            ContentType=STYLES_CONTENT_TYPE,
+        )
+    if has_fonts:
+        ET.SubElement(
+            root,
+            "Override",
+            PartName="/word/fontTable.xml",
+            ContentType=FONT_TABLE_CONTENT_TYPE,
+        )
     return _xml_bytes(root)
 
 
@@ -77,6 +106,29 @@ def _root_relationships_xml() -> bytes:
     return _xml_bytes(root)
 
 
+def _document_relationships_xml(*, has_styles: bool, has_fonts: bool) -> bytes:
+    root = ET.Element("Relationships", xmlns=REL_NS)
+    relationship_id = 1
+    if has_styles:
+        ET.SubElement(
+            root,
+            "Relationship",
+            Id=f"rId{relationship_id}",
+            Type=STYLES_REL,
+            Target="styles.xml",
+        )
+        relationship_id += 1
+    if has_fonts:
+        ET.SubElement(
+            root,
+            "Relationship",
+            Id=f"rId{relationship_id}",
+            Type=FONT_TABLE_REL,
+            Target="fontTable.xml",
+        )
+    return _xml_bytes(root)
+
+
 def _append_boolean_property(
     parent: ET.Element,
     name: str,
@@ -89,13 +141,36 @@ def _append_boolean_property(
         element.set(_qn(W_NS, "val"), "0")
 
 
-def _append_run_properties(
-    run: ET.Element,
+def _has_character_properties(properties: CharacterProperties) -> bool:
+    return properties != CharacterProperties()
+
+
+def _append_character_property_elements(
+    run_properties: ET.Element,
     properties: CharacterProperties,
+    *,
+    valid_style_ids: set[int] | None = None,
 ) -> None:
-    if properties == CharacterProperties():
-        return
-    run_properties = ET.SubElement(run, _qn(W_NS, "rPr"))
+    if (
+        properties.style_id is not None
+        and (valid_style_ids is None or properties.style_id in valid_style_ids)
+    ):
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "rStyle"),
+            {_qn(W_NS, "val"): f"DocStyle{properties.style_id}"},
+        )
+    font_attributes: dict[str, str] = {}
+    if properties.ascii_font is not None:
+        font_attributes[_qn(W_NS, "ascii")] = properties.ascii_font
+    if properties.high_ansi_font is not None:
+        font_attributes[_qn(W_NS, "hAnsi")] = properties.high_ansi_font
+    if properties.east_asia_font is not None:
+        font_attributes[_qn(W_NS, "eastAsia")] = properties.east_asia_font
+    if properties.complex_script_font is not None:
+        font_attributes[_qn(W_NS, "cs")] = properties.complex_script_font
+    if font_attributes:
+        ET.SubElement(run_properties, _qn(W_NS, "rFonts"), font_attributes)
     _append_boolean_property(run_properties, "b", properties.bold)
     _append_boolean_property(run_properties, "i", properties.italic)
     _append_boolean_property(run_properties, "caps", properties.caps)
@@ -139,14 +214,34 @@ def _append_run_properties(
         )
 
 
+def _append_run_properties(
+    run: ET.Element,
+    properties: CharacterProperties,
+    *,
+    valid_style_ids: set[int] | None = None,
+) -> None:
+    if not _has_character_properties(properties):
+        return
+    run_properties = ET.SubElement(run, _qn(W_NS, "rPr"))
+    _append_character_property_elements(
+        run_properties,
+        properties,
+        valid_style_ids=valid_style_ids,
+    )
+
+
 def _append_paragraph_properties(
     paragraph: ET.Element,
     properties: ParagraphProperties,
+    *,
+    valid_style_ids: set[int] | None = None,
 ) -> None:
-    # style_id is intentionally not serialized until the DOC style hierarchy
-    # and a corresponding DOCX styles part are available.
     serializable = (
-        properties.justification is not None
+        (
+            properties.style_id is not None
+            and (valid_style_ids is None or properties.style_id in valid_style_ids)
+        )
+        or properties.justification is not None
         or properties.keep_lines is not None
         or properties.keep_next is not None
         or properties.page_break_before is not None
@@ -160,6 +255,15 @@ def _append_paragraph_properties(
     if not serializable:
         return
     paragraph_properties = ET.SubElement(paragraph, _qn(W_NS, "pPr"))
+    if (
+        properties.style_id is not None
+        and (valid_style_ids is None or properties.style_id in valid_style_ids)
+    ):
+        ET.SubElement(
+            paragraph_properties,
+            _qn(W_NS, "pStyle"),
+            {_qn(W_NS, "val"): f"DocStyle{properties.style_id}"},
+        )
     _append_boolean_property(
         paragraph_properties,
         "keepNext",
@@ -214,9 +318,11 @@ def _append_text_run(
     paragraph_element: ET.Element,
     text: str,
     properties: CharacterProperties,
+    *,
+    valid_style_ids: set[int],
 ) -> None:
     run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
-    _append_run_properties(run, properties)
+    _append_run_properties(run, properties, valid_style_ids=valid_style_ids)
     text_element = ET.SubElement(run, _qn(W_NS, "t"))
     if text[:1].isspace() or text[-1:].isspace() or "  " in text:
         text_element.set(_qn(XML_NS, "space"), "preserve")
@@ -224,31 +330,187 @@ def _append_text_run(
 
 
 def _document_xml(document: Document) -> bytes:
+    valid_paragraph_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "paragraph"
+    }
+    valid_character_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "character"
+    }
     root = ET.Element(_qn(W_NS, "document"))
     body = ET.SubElement(root, _qn(W_NS, "body"))
     for paragraph in document.paragraphs:
         paragraph_element = ET.SubElement(body, _qn(W_NS, "p"))
-        _append_paragraph_properties(paragraph_element, paragraph.properties)
+        _append_paragraph_properties(
+            paragraph_element,
+            paragraph.properties,
+            valid_style_ids=valid_paragraph_style_ids,
+        )
         for inline in paragraph.inlines:
             if isinstance(inline, TextRun):
                 _append_text_run(
                     paragraph_element,
                     inline.text,
                     inline.properties,
+                    valid_style_ids=valid_character_style_ids,
                 )
             elif isinstance(inline, Tab):
                 run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
-                _append_run_properties(run, inline.properties)
+                _append_run_properties(
+                    run,
+                    inline.properties,
+                    valid_style_ids=valid_character_style_ids,
+                )
                 ET.SubElement(run, _qn(W_NS, "tab"))
             elif isinstance(inline, Break):
                 run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
-                _append_run_properties(run, inline.properties)
+                _append_run_properties(
+                    run,
+                    inline.properties,
+                    valid_style_ids=valid_character_style_ids,
+                )
                 attributes = (
                     {_qn(W_NS, "type"): "page"}
                     if inline.kind is BreakType.PAGE
                     else {}
                 )
                 ET.SubElement(run, _qn(W_NS, "br"), attributes)
+    return _xml_bytes(root)
+
+
+def _font_table_xml(fonts: tuple[FontDefinition, ...]) -> bytes:
+    root = ET.Element(_qn(W_NS, "fonts"))
+    for font in fonts:
+        element = ET.SubElement(
+            root,
+            _qn(W_NS, "font"),
+            {_qn(W_NS, "name"): font.name},
+        )
+        if font.alternate_name:
+            ET.SubElement(
+                element,
+                _qn(W_NS, "altName"),
+                {_qn(W_NS, "val"): font.alternate_name},
+            )
+        ET.SubElement(
+            element,
+            _qn(W_NS, "charset"),
+            {_qn(W_NS, "val"): f"{font.charset:02X}"},
+        )
+        if font.family:
+            ET.SubElement(
+                element,
+                _qn(W_NS, "family"),
+                {_qn(W_NS, "val"): font.family},
+            )
+        if font.pitch:
+            ET.SubElement(
+                element,
+                _qn(W_NS, "pitch"),
+                {_qn(W_NS, "val"): font.pitch},
+            )
+        if len(font.panose) == 10 and any(font.panose):
+            ET.SubElement(
+                element,
+                _qn(W_NS, "panose1"),
+                {_qn(W_NS, "val"): font.panose.hex().upper()},
+            )
+        if len(font.signature) == 24 and any(font.signature):
+            values = struct.unpack("<6I", font.signature)
+            ET.SubElement(
+                element,
+                _qn(W_NS, "sig"),
+                {
+                    _qn(W_NS, "usb0"): f"{values[0]:08X}",
+                    _qn(W_NS, "usb1"): f"{values[1]:08X}",
+                    _qn(W_NS, "usb2"): f"{values[2]:08X}",
+                    _qn(W_NS, "usb3"): f"{values[3]:08X}",
+                    _qn(W_NS, "csb0"): f"{values[4]:08X}",
+                    _qn(W_NS, "csb1"): f"{values[5]:08X}",
+                },
+            )
+    return _xml_bytes(root)
+
+
+def _styles_xml(style_sheet: StyleSheet) -> bytes:
+    root = ET.Element(_qn(W_NS, "styles"))
+    if _has_character_properties(style_sheet.default_character_properties):
+        defaults = ET.SubElement(root, _qn(W_NS, "docDefaults"))
+        run_default = ET.SubElement(defaults, _qn(W_NS, "rPrDefault"))
+        run_properties = ET.SubElement(run_default, _qn(W_NS, "rPr"))
+        _append_character_property_elements(
+            run_properties,
+            style_sheet.default_character_properties,
+        )
+
+    emitted_ids = {
+        style.index
+        for style in style_sheet.styles
+        if style is not None and style.kind in ("paragraph", "character")
+    }
+    emitted_by_id = {
+        style.index: style
+        for style in style_sheet.styles
+        if style is not None and style.kind in ("paragraph", "character")
+    }
+    for style in style_sheet.styles:
+        if style is None or style.kind not in ("paragraph", "character"):
+            continue
+        attributes = {
+            _qn(W_NS, "type"): style.kind,
+            _qn(W_NS, "styleId"): style.ooxml_style_id,
+        }
+        if style.kind == "paragraph" and style.index == 0:
+            attributes[_qn(W_NS, "default")] = "1"
+        element = ET.SubElement(root, _qn(W_NS, "style"), attributes)
+        ET.SubElement(
+            element,
+            _qn(W_NS, "name"),
+            {_qn(W_NS, "val"): style.name},
+        )
+        parent = emitted_by_id.get(style.based_on)
+        same_kind_parent = parent is not None and parent.kind == style.kind
+        if same_kind_parent:
+            ET.SubElement(
+                element,
+                _qn(W_NS, "basedOn"),
+                {_qn(W_NS, "val"): f"DocStyle{style.based_on}"},
+            )
+        next_style = emitted_by_id.get(style.next_style)
+        if style.kind == "paragraph" and (
+            next_style is not None and next_style.kind == "paragraph"
+        ):
+            ET.SubElement(
+                element,
+                _qn(W_NS, "next"),
+                {_qn(W_NS, "val"): f"DocStyle{style.next_style}"},
+            )
+        paragraph_holder = ET.Element("holder")
+        _append_paragraph_properties(
+            paragraph_holder,
+            style.paragraph_properties,
+            valid_style_ids=emitted_ids,
+        )
+        paragraph_properties = paragraph_holder.find(_qn(W_NS, "pPr"))
+        if paragraph_properties is not None:
+            element.append(paragraph_properties)
+        character_properties = style.character_properties
+        if parent is not None and not same_kind_parent:
+            # WordprocessingML ignores basedOn across style types. DOC files
+            # can base a character style on Normal, so materialize the resolved
+            # character properties in that case instead of emitting an invalid
+            # cross-type reference.
+            character_properties = style_sheet.effective_character_at(style.index)
+        if _has_character_properties(character_properties):
+            run_properties = ET.SubElement(element, _qn(W_NS, "rPr"))
+            _append_character_property_elements(
+                run_properties,
+                character_properties,
+                valid_style_ids=emitted_ids,
+            )
     return _xml_bytes(root)
 
 
@@ -261,11 +523,37 @@ def _write_part(package: zipfile.ZipFile, name: str, data: bytes) -> None:
 
 def write_docx(document: Document, destination: str | Path) -> None:
     output = Path(destination)
+    has_styles = any(
+        style is not None and style.kind in ("paragraph", "character")
+        for style in document.styles.styles
+    )
+    has_fonts = bool(document.fonts)
     try:
         with zipfile.ZipFile(output, mode="w") as package:
-            _write_part(package, "[Content_Types].xml", _content_types_xml())
+            _write_part(
+                package,
+                "[Content_Types].xml",
+                _content_types_xml(has_styles=has_styles, has_fonts=has_fonts),
+            )
             _write_part(package, "_rels/.rels", _root_relationships_xml())
             _write_part(package, "word/document.xml", _document_xml(document))
+            if has_styles or has_fonts:
+                _write_part(
+                    package,
+                    "word/_rels/document.xml.rels",
+                    _document_relationships_xml(
+                        has_styles=has_styles,
+                        has_fonts=has_fonts,
+                    ),
+                )
+            if has_styles:
+                _write_part(package, "word/styles.xml", _styles_xml(document.styles))
+            if has_fonts:
+                _write_part(
+                    package,
+                    "word/fontTable.xml",
+                    _font_table_xml(document.fonts),
+                )
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         raise PackageWriteError(f"could not write DOCX package: {exc}") from exc
 
@@ -289,7 +577,7 @@ def validate_docx(path: str | Path) -> None:
                 raise PackageWriteError(
                     f"generated DOCX contains corrupt ZIP part {corrupt_part!r}"
                 )
-            for name in required_parts:
+            for name in names:
                 if name.endswith(".xml") or name.endswith(".rels"):
                     ET.fromstring(package.read(name))
     except PackageWriteError:

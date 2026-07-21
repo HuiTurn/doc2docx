@@ -17,7 +17,13 @@ from .errors import (
     UnsafeOutputPathError,
 )
 from .model import Document, parse_main_story
-from .msdoc import FileInformationBlock, read_formatting, read_piece_table
+from .msdoc import (
+    FileInformationBlock,
+    read_font_table,
+    read_formatting,
+    read_piece_table,
+    read_style_sheet,
+)
 from .ooxml import validate_docx, write_docx
 
 
@@ -71,6 +77,20 @@ def convert(
 
     table_name = fib.base.table_stream_name
     table_stream = compound.open_stream(table_name)
+    font_table = fib.sttbf_ffn
+    fonts = read_font_table(
+        table_stream,
+        offset=font_table.fc,
+        size=font_table.lcb,
+    )
+    style_table = fib.stshf
+    style_sheet = read_style_sheet(
+        table_stream,
+        offset=style_table.fc,
+        size=style_table.lcb,
+        fonts=fonts,
+        report=report,
+    )
     clx = fib.clx
     piece_table = read_piece_table(
         table_stream,
@@ -95,6 +115,8 @@ def convert(
         fc_plcf_bte_papx=papx.fc,
         lcb_plcf_bte_papx=papx.lcb,
         report=report,
+        fonts=fonts,
+        style_sheet=style_sheet,
     )
     main_characters = piece_table.extract_characters(
         0,
@@ -102,20 +124,13 @@ def convert(
         report,
         story="main",
     )
-    document = parse_main_story(
+    parsed_document = parse_main_story(
         main_characters,
         report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
     )
-
-    prm_pieces = sum(1 for piece in piece_table.pieces if piece.prm)
-    if prm_pieces:
-        report.warning(
-            "PIECE_PRM_DEFERRED",
-            "piece-level Prm formatting is deferred beyond M3a",
-            piece_count=prm_pieces,
-        )
+    document = Document(parsed_document.paragraphs, fonts, style_sheet)
 
     report.statistics.update(
         {
@@ -129,6 +144,14 @@ def convert(
             "paragraph_format_span_count": len(formatting.paragraph_spans),
             "character_fkp_run_count": formatting.character_fkp_run_count,
             "paragraph_fkp_run_count": formatting.paragraph_fkp_run_count,
+            "font_count": len(fonts),
+            "style_count": sum(
+                1 for style in style_sheet.styles if style is not None
+            ),
+            "piece_prm_count": sum(
+                1 for piece in piece_table.pieces if piece.prm
+            ),
+            "clx_prc_count": len(piece_table.prcs),
         }
     )
     if fib.base.has_pictures:
@@ -171,7 +194,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M3a conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M3b conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -220,6 +243,10 @@ def inspect_doc(
             "lcbPlcfBteChpx": fib.plcf_bte_chpx.lcb,
             "fcPlcfBtePapx": fib.plcf_bte_papx.fc,
             "lcbPlcfBtePapx": fib.plcf_bte_papx.lcb,
+            "fcStshf": fib.stshf.fc,
+            "lcbStshf": fib.stshf.lcb,
+            "fcSttbfFfn": fib.sttbf_ffn.fc,
+            "lcbSttbfFfn": fib.sttbf_ffn.lcb,
         },
         "entries": sorted(entries, key=lambda item: item["path"]),
     }

@@ -1,10 +1,64 @@
 import unittest
+import struct
 
 from doc2docx.diagnostics import ConversionReport
 from doc2docx.msdoc import Piece, PieceTable
+from doc2docx.msdoc import read_formatting, read_piece_table
 
 
 class PieceTableTests(unittest.TestCase):
+    def test_compact_piece_prm_is_mapped_to_full_sprm(self) -> None:
+        # Prm0 isprm 0x56 maps to sprmCFItalic; val is stored in the high byte.
+        prm = (1 << 8) | (0x56 << 1)
+        word_stream = b"A\r"
+        piece_table = PieceTable((Piece(0, 2, 0, True, prm),), word_stream)
+        report = ConversionReport("prm0.doc")
+
+        formatting = read_formatting(
+            b"",
+            word_stream,
+            piece_table,
+            fc_plcf_bte_chpx=0,
+            lcb_plcf_bte_chpx=0,
+            fc_plcf_bte_papx=0,
+            lcb_plcf_bte_papx=0,
+            report=report,
+        )
+
+        self.assertTrue(formatting.character_properties_at(0).italic)
+        self.assertFalse(report.warnings)
+
+    def test_complex_piece_prm_is_applied_after_fkp_formatting(self) -> None:
+        grpprl = struct.pack("<HB", 0x0835, 1)
+        word_stream = b"A\r"
+        plc_pcd = struct.pack("<2I", 0, 2)
+        plc_pcd += struct.pack("<HIH", 0, 0x40000000, 1)
+        clx = b"\x01" + struct.pack("<H", len(grpprl)) + grpprl
+        clx += b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
+        report = ConversionReport("prm.doc")
+
+        piece_table = read_piece_table(
+            clx,
+            word_stream,
+            fc_clx=0,
+            lcb_clx=len(clx),
+            report=report,
+        )
+        formatting = read_formatting(
+            b"",
+            word_stream,
+            piece_table,
+            fc_plcf_bte_chpx=0,
+            lcb_plcf_bte_chpx=0,
+            fc_plcf_bte_papx=0,
+            lcb_plcf_bte_papx=0,
+            report=report,
+        )
+
+        self.assertEqual(len(piece_table.prcs), 1)
+        self.assertTrue(formatting.character_properties_at(0).bold)
+        self.assertFalse(report.warnings)
+
     def test_utf16_surrogate_pair_retains_two_cp_units(self) -> None:
         raw = "A😀B".encode("utf-16le")
         table = PieceTable((Piece(0, 4, 0, False, 0),), raw)

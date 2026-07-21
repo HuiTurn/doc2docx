@@ -8,7 +8,7 @@ import struct
 
 from ..diagnostics import ConversionReport
 from ..errors import InvalidWordDocument
-from ..model import CharacterProperties, ParagraphProperties
+from ..model import CharacterProperties, FontDefinition, ParagraphProperties, StyleSheet
 from .pieces import PieceTable
 from .sprm import (
     apply_character_modifiers,
@@ -173,7 +173,11 @@ def read_formatting(
     fc_plcf_bte_papx: int,
     lcb_plcf_bte_papx: int,
     report: ConversionReport,
+    fonts: tuple[FontDefinition, ...] = (),
+    style_sheet: StyleSheet | None = None,
 ) -> FormattingMap:
+    style_sheet = style_sheet or StyleSheet()
+    font_names = {font.index: font.name for font in fonts}
     character_btes = _read_bte_plc(
         table_stream,
         offset=fc_plcf_bte_chpx,
@@ -191,53 +195,12 @@ def read_formatting(
     paragraph_spans: list[ParagraphFormatSpan] = []
     unsupported_character_sprms: set[int] = set()
     unsupported_paragraph_sprms: set[int] = set()
-    style_ids: set[int] = set()
     style_relative_toggles = 0
     character_run_count = 0
     paragraph_run_count = 0
 
-    for bte_fc_start, bte_fc_end, page_number in character_btes:
-        page = _read_fkp_page(word_document, page_number, label="ChpxFkp")
-        run_count = page[-1]
-        if run_count > 0x65:
-            raise InvalidWordDocument(f"ChpxFkp has invalid crun {run_count}")
-        header_end = 4 * (run_count + 1) + run_count
-        if header_end > FKP_SIZE - 1:
-            raise InvalidWordDocument("ChpxFkp header exceeds its 512-byte page")
-        fcs = _run_boundaries(page, run_count, label="ChpxFkp")
-        rgb_offset = 4 * (run_count + 1)
-        for index in range(run_count):
-            run_fc_start = max(fcs[index], bte_fc_start)
-            run_fc_end = min(fcs[index + 1], bte_fc_end)
-            if run_fc_start >= run_fc_end:
-                continue
-            character_run_count += 1
-            chpx_offset = page[rgb_offset + index] * 2
-            properties = CharacterProperties()
-            if chpx_offset:
-                if chpx_offset >= FKP_SIZE - 1:
-                    raise InvalidWordDocument("Chpx offset points outside ChpxFkp")
-                byte_count = page[chpx_offset]
-                grpprl_end = chpx_offset + 1 + byte_count
-                if grpprl_end > FKP_SIZE - 1:
-                    raise InvalidWordDocument("Chpx grpprl exceeds ChpxFkp")
-                modifiers = parse_grpprl(
-                    page[chpx_offset + 1 : grpprl_end],
-                    label="Chpx.grpprl",
-                )
-                properties, unsupported, relative_count = apply_character_modifiers(
-                    modifiers
-                )
-                unsupported_character_sprms.update(unsupported)
-                style_relative_toggles += relative_count
-            for cp_start, cp_end in piece_table.fc_range_to_cp_ranges(
-                run_fc_start,
-                run_fc_end,
-            ):
-                character_spans.append(
-                    CharacterFormatSpan(cp_start, cp_end, properties)
-                )
-
+    # PAPX is parsed first because style-relative CHPX toggles depend on the
+    # paragraph style active at each CP.
     for bte_fc_start, bte_fc_end, page_number in paragraph_btes:
         page = _read_fkp_page(word_document, page_number, label="PapxFkp")
         run_count = page[-1]
@@ -280,8 +243,6 @@ def read_formatting(
                     style_id=style_id,
                 )
                 unsupported_paragraph_sprms.update(unsupported)
-                if properties.style_id not in (None, 0):
-                    style_ids.add(properties.style_id)
             for cp_start, cp_end in piece_table.fc_range_to_cp_ranges(
                 run_fc_start,
                 run_fc_end,
@@ -290,34 +251,217 @@ def read_formatting(
                     ParagraphFormatSpan(cp_start, cp_end, properties)
                 )
 
+    def paragraph_at(cp: int) -> ParagraphProperties:
+        for span in paragraph_spans:
+            if span.cp_start <= cp < span.cp_end:
+                return span.properties
+        return ParagraphProperties()
+
+    # Piece Prm paragraph modifiers are applied after the PAPX grpprl.
+    paragraph_boundaries = {
+        boundary
+        for piece in piece_table.pieces
+        for boundary in (piece.cp_start, piece.cp_end)
+    }
+    paragraph_boundaries.update(
+        boundary
+        for span in paragraph_spans
+        for boundary in (span.cp_start, span.cp_end)
+    )
+    composed_paragraph_spans: list[ParagraphFormatSpan] = []
+    sorted_paragraph_boundaries = sorted(paragraph_boundaries)
+    for cp_start, cp_end in zip(
+        sorted_paragraph_boundaries,
+        sorted_paragraph_boundaries[1:],
+    ):
+        if cp_start >= cp_end:
+            continue
+        properties = paragraph_at(cp_start)
+        piece = next(
+            (
+                value
+                for value in piece_table.pieces
+                if value.cp_start <= cp_start < value.cp_end
+            ),
+            None,
+        )
+        if piece is not None:
+            modifiers = piece_table.modifiers_for_piece(piece, property_group=1)
+            if modifiers:
+                properties, unsupported = apply_paragraph_modifiers(
+                    modifiers,
+                    style_id=properties.style_id,
+                    initial_properties=properties,
+                )
+                unsupported_paragraph_sprms.update(unsupported)
+        composed_paragraph_spans.append(
+            ParagraphFormatSpan(cp_start, cp_end, properties)
+        )
+    paragraph_spans = list(_merge_paragraph_spans(composed_paragraph_spans))
+
+    def paragraph_at(cp: int) -> ParagraphProperties:
+        for span in paragraph_spans:
+            if span.cp_start <= cp < span.cp_end:
+                return span.properties
+        return ParagraphProperties()
+
+    def paragraph_style_character_at(cp: int) -> CharacterProperties:
+        return style_sheet.effective_character_at(paragraph_at(cp).style_id)
+
+    paragraph_style_boundaries = {
+        boundary
+        for span in paragraph_spans
+        for boundary in (span.cp_start, span.cp_end)
+    }
+
+    for bte_fc_start, bte_fc_end, page_number in character_btes:
+        page = _read_fkp_page(word_document, page_number, label="ChpxFkp")
+        run_count = page[-1]
+        if run_count > 0x65:
+            raise InvalidWordDocument(f"ChpxFkp has invalid crun {run_count}")
+        header_end = 4 * (run_count + 1) + run_count
+        if header_end > FKP_SIZE - 1:
+            raise InvalidWordDocument("ChpxFkp header exceeds its 512-byte page")
+        fcs = _run_boundaries(page, run_count, label="ChpxFkp")
+        rgb_offset = 4 * (run_count + 1)
+        for index in range(run_count):
+            run_fc_start = max(fcs[index], bte_fc_start)
+            run_fc_end = min(fcs[index + 1], bte_fc_end)
+            if run_fc_start >= run_fc_end:
+                continue
+            character_run_count += 1
+            chpx_offset = page[rgb_offset + index] * 2
+            modifiers = ()
+            if chpx_offset:
+                if chpx_offset >= FKP_SIZE - 1:
+                    raise InvalidWordDocument("Chpx offset points outside ChpxFkp")
+                byte_count = page[chpx_offset]
+                grpprl_end = chpx_offset + 1 + byte_count
+                if grpprl_end > FKP_SIZE - 1:
+                    raise InvalidWordDocument("Chpx grpprl exceeds ChpxFkp")
+                modifiers = parse_grpprl(
+                    page[chpx_offset + 1 : grpprl_end],
+                    label="Chpx.grpprl",
+                )
+            for cp_start, cp_end in piece_table.fc_range_to_cp_ranges(
+                run_fc_start,
+                run_fc_end,
+            ):
+                boundaries = [cp_start]
+                boundaries.extend(
+                    boundary
+                    for boundary in paragraph_style_boundaries
+                    if cp_start < boundary < cp_end
+                )
+                boundaries.append(cp_end)
+                for span_start, span_end in zip(boundaries, boundaries[1:]):
+                    properties, unsupported, relative_count = (
+                        apply_character_modifiers(
+                            modifiers,
+                            base_properties=paragraph_style_character_at(span_start),
+                            font_names=font_names,
+                            style_properties_at=style_sheet.effective_character_at,
+                        )
+                    )
+                    unsupported_character_sprms.update(unsupported)
+                    style_relative_toggles += relative_count
+                    character_spans.append(
+                        CharacterFormatSpan(span_start, span_end, properties)
+                    )
+
+    def character_at(cp: int) -> CharacterProperties:
+        for span in character_spans:
+            if span.cp_start <= cp < span.cp_end:
+                return span.properties
+        return CharacterProperties()
+
+    # Piece Prm character modifiers are applied after the CHPX grpprl.
+    character_boundaries = {
+        boundary
+        for piece in piece_table.pieces
+        for boundary in (piece.cp_start, piece.cp_end)
+    }
+    character_boundaries.update(
+        boundary
+        for span in character_spans
+        for boundary in (span.cp_start, span.cp_end)
+    )
+    character_boundaries.update(paragraph_style_boundaries)
+    composed_character_spans: list[CharacterFormatSpan] = []
+    sorted_character_boundaries = sorted(character_boundaries)
+    for cp_start, cp_end in zip(
+        sorted_character_boundaries,
+        sorted_character_boundaries[1:],
+    ):
+        if cp_start >= cp_end:
+            continue
+        properties = character_at(cp_start)
+        piece = next(
+            (
+                value
+                for value in piece_table.pieces
+                if value.cp_start <= cp_start < value.cp_end
+            ),
+            None,
+        )
+        if piece is not None:
+            modifiers = piece_table.modifiers_for_piece(piece, property_group=2)
+            if modifiers:
+                properties, unsupported, relative_count = apply_character_modifiers(
+                    modifiers,
+                    initial_properties=properties,
+                    base_properties=paragraph_style_character_at(cp_start),
+                    font_names=font_names,
+                    style_properties_at=style_sheet.effective_character_at,
+                )
+                unsupported_character_sprms.update(unsupported)
+                style_relative_toggles += relative_count
+        composed_character_spans.append(
+            CharacterFormatSpan(cp_start, cp_end, properties)
+        )
+    character_spans = list(_merge_character_spans(composed_character_spans))
+
     if unsupported_character_sprms:
         report.warning(
             "UNSUPPORTED_CHARACTER_SPRMS",
-            "some direct character properties are deferred beyond M3a",
+            "some direct character properties are deferred beyond M3b",
             opcodes=[f"0x{value:04X}" for value in sorted(unsupported_character_sprms)],
         )
     if unsupported_paragraph_sprms:
         report.warning(
             "UNSUPPORTED_PARAGRAPH_SPRMS",
-            "some direct paragraph properties are deferred beyond M3a",
+            "some direct paragraph properties are deferred beyond M3b",
             opcodes=[f"0x{value:04X}" for value in sorted(unsupported_paragraph_sprms)],
         )
-    if style_relative_toggles:
-        report.warning(
-            "STYLE_RELATIVE_TOGGLES_DEFERRED",
-            "style-relative character toggles require style inheritance and were ignored",
-            count=style_relative_toggles,
+    referenced_style_ids = {
+        properties.style_id
+        for properties in (
+            [span.properties for span in paragraph_spans]
+            + [span.properties for span in character_spans]
         )
-    if style_ids:
+        if properties.style_id is not None
+    }
+    missing_style_ids = sorted(
+        style_id
+        for style_id in referenced_style_ids
+        if style_id != 0 and style_sheet.style_at(style_id) is None
+    )
+    if missing_style_ids:
         report.warning(
-            "STYLE_INHERITANCE_DEFERRED",
-            "paragraph style inheritance is deferred beyond M3a; direct properties were kept",
-            style_ids=sorted(style_ids),
+            "MISSING_REFERENCED_STYLES",
+            "some formatting runs reference absent or unsupported styles",
+            style_ids=missing_style_ids,
+        )
+    if style_relative_toggles:
+        report.info(
+            "STYLE_RELATIVE_TOGGLES_RESOLVED",
+            "style-relative character toggles were resolved through STSH inheritance",
+            count=style_relative_toggles,
         )
 
     return FormattingMap(
-        _merge_character_spans(character_spans),
-        _merge_paragraph_spans(paragraph_spans),
+        tuple(character_spans),
+        tuple(paragraph_spans),
         character_run_count,
         paragraph_run_count,
     )
