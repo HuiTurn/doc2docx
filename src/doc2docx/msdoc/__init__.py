@@ -25,6 +25,7 @@ from .officeart import (
     OfficeArtShapeCollection,
     read_officeart_shapes,
 )
+from .numbering import read_numbering
 from .pieces import Piece, PieceTable, read_piece_table
 from .pictures import (
     InlinePictureCollection,
@@ -65,6 +66,7 @@ __all__ = [
     "read_main_textboxes",
     "read_shape_anchors",
     "read_officeart_shapes",
+    "read_numbering",
     "read_piece_table",
     "parse_inline_picture",
     "read_inline_pictures",

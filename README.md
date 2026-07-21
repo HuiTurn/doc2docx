@@ -14,7 +14,8 @@ faithful conversion.
 
 - Reads CFB/OLE Word documents with deterministic, bounded parsers.
 - Preserves text, common character and paragraph formatting, fonts, styles,
-  tables, page layout, sections, headers, and footers.
+  native numbered and bulleted lists, tables, page layout, sections, headers,
+  and footers.
 - Converts footnotes, endnotes, comments, page-number fields, and positioned
   textboxes to native WordprocessingML structures where possible.
 - Restores inline and floating PNG, JPEG, BMP/DIB, TIFF, EMF, and WMF pictures
@@ -68,10 +69,11 @@ will not overwrite the input file.
 ## Current limitations
 
 Password-protected documents are rejected. Embedded OLE objects, Macintosh
-PICT images, advanced drawing effects, non-rectangular wrap polygons, complex
-numbering and conditional table styles, uncommon secondary stories, and many
-specialized fields remain incomplete. Some legacy layout behavior can only be
-approximated in WordprocessingML and is called out in the conversion report.
+PICT images, advanced drawing effects, non-rectangular wrap polygons, rare list
+continuation cases, conditional table styles, uncommon secondary stories, and
+many specialized fields remain incomplete. Some legacy layout behavior can
+only be approximated in WordprocessingML and is called out in the conversion
+report.
 
 See [CHANGELOG.md](CHANGELOG.md) for milestone and release details.
 

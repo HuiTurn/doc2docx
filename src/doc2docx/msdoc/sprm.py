@@ -1045,7 +1045,35 @@ def apply_paragraph_modifiers(
                 unsupported.add(opcode)
             else:
                 properties = replace(properties, outline_level=operand[0])
-        elif opcode == 0xC60D:
+        elif opcode == 0x260A:  # sprmPIlvl
+            level = operand[0]
+            if 0 <= level <= 8:
+                properties = replace(
+                    properties,
+                    numbering_level=level,
+                    numbering_skipped=False,
+                )
+            elif level == 0x0C:
+                properties = replace(properties, numbering_skipped=True)
+            else:
+                unsupported.add(opcode)
+        elif opcode == 0x460B:  # sprmPIlfo
+            list_index = struct.unpack("<h", operand)[0]
+            if list_index in (0, -2047):
+                properties = replace(
+                    properties,
+                    numbering_id=None,
+                    numbering_suppressed=True,
+                )
+            elif 1 <= abs(list_index) <= 0x07FE:
+                properties = replace(
+                    properties,
+                    numbering_id=abs(list_index),
+                    numbering_suppressed=False,
+                )
+            else:
+                unsupported.add(opcode)
+        elif opcode in (0xC60D, 0xC615):
             properties = replace(
                 properties,
                 tab_stops=(

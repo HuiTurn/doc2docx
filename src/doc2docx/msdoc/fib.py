@@ -37,6 +37,8 @@ FCLCB97_PLCF_TXBX_TXT_INDEX = 56
 FCLCB97_PLCF_FLD_TXBX_INDEX = 57
 FCLCB97_PLCF_HDR_TXBX_TXT_INDEX = 58
 FCLCB97_PLCF_FLD_HDR_TXBX_INDEX = 59
+FCLCB97_PLF_LST_INDEX = 73
+FCLCB97_PLF_LFO_INDEX = 74
 FCLCB97_PLCF_TXBX_BKD_INDEX = 75
 FCLCB97_PLCF_TXBX_HDR_BKD_INDEX = 76
 
@@ -319,6 +321,18 @@ class FileInformationBlock:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_FLD_HDR_TXBX_INDEX:
             return FcLcb(0, 0)
         return self.fib_rg_fc_lcb[FCLCB97_PLCF_FLD_HDR_TXBX_INDEX]
+
+    @property
+    def plf_lst(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLF_LST_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLF_LST_INDEX]
+
+    @property
+    def plf_lfo(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLF_LFO_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLF_LFO_INDEX]
 
     @property
     def plcf_txbx_hdr_bkd(self) -> FcLcb:

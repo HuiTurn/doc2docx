@@ -32,6 +32,7 @@ from .msdoc import (
     read_header_textboxes,
     read_main_floating_pictures,
     read_main_textboxes,
+    read_numbering,
     read_officeart_shapes,
     read_inline_pictures,
     read_piece_table,
@@ -130,6 +131,18 @@ def convert(
         table_stream,
         offset=style_table.fc,
         size=style_table.lcb,
+        fonts=fonts,
+        report=report,
+    )
+    list_table = fib.plf_lst
+    list_override_table = fib.plf_lfo
+    numbering = read_numbering(
+        table_stream,
+        list_offset=list_table.fc,
+        list_size=list_table.lcb,
+        lfo_offset=list_override_table.fc,
+        lfo_size=list_override_table.lcb,
+        ccp_text=fib.ccp_text,
         fonts=fonts,
         report=report,
     )
@@ -402,6 +415,7 @@ def convert(
         footnotes=footnotes.footnotes,
         endnotes=endnotes.endnotes,
         comments=comments.comments,
+        numbering=numbering,
         pictures=(
             inline_pictures.pictures
             + floating_pictures.pictures
@@ -430,6 +444,17 @@ def convert(
             "font_count": len(fonts),
             "style_count": sum(
                 1 for style in style_sheet.styles if style is not None
+            ),
+            "abstract_numbering_count": len(numbering.abstracts),
+            "numbering_instance_count": len(numbering.instances),
+            "numbering_level_count": sum(
+                len(abstract.levels) for abstract in numbering.abstracts
+            ),
+            "numbered_paragraph_count": sum(
+                paragraph.properties.numbering_id is not None
+                and paragraph.properties.numbering_suppressed is not True
+                and paragraph.properties.numbering_skipped is not True
+                for paragraph in document.paragraphs
             ),
             "table_style_count": sum(
                 1
@@ -590,7 +615,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M8e conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M9a conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -693,6 +718,10 @@ def inspect_doc(
             "lcbDop": fib.dop.lcb,
             "fcSttbfFfn": fib.sttbf_ffn.fc,
             "lcbSttbfFfn": fib.sttbf_ffn.lcb,
+            "fcPlfLst": fib.plf_lst.fc,
+            "lcbPlfLst": fib.plf_lst.lcb,
+            "fcPlfLfo": fib.plf_lfo.fc,
+            "lcbPlfLfo": fib.plf_lfo.lcb,
         },
         "entries": sorted(entries, key=lambda item: item["path"]),
     }

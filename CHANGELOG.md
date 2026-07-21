@@ -8,6 +8,19 @@ current capabilities without release-by-release notes.
 - Continue expanding MS-DOC compatibility with specification-backed parsers,
   focused tests, and real Word 97 sample rendering.
 
+## 0.22.0 - 2026-07-22 (M9a)
+
+- Parse native `PlfLst`/`LSTF`/`LVL` list definitions and
+  `PlfLfo`/`LFOData`/`LFOLVL` instances, including start-at and complete level
+  overrides with bounded variable-length records.
+- Preserve paragraph and style `iLfo`/`iLvl` bindings, skipped list paragraphs,
+  negative iLfo variants, multilevel label text, list indents, label fonts,
+  suffixes, justification, legal numbering, and restart behavior.
+- Emit native `word/numbering.xml`, package relationships, content types, and
+  `w:numPr` bindings using the MS-OSHARED numbering-format mapping.
+- Validate numbered, bulleted, and true multilevel lists with real Word 97 DOC
+  rendering, plus constructed override and malformed-boundary tests.
+
 ## 0.21.0 - 2026-07-22 (M8e)
 
 - Decode TIFF, EMF, and WMF OfficeArt BLIPs in inline and floating picture

@@ -189,6 +189,10 @@ class ParagraphProperties:
     space_after_lines: int | None = None
     line_spacing_twips: int | None = None
     line_rule: str | None = None
+    numbering_id: int | None = None
+    numbering_level: int | None = None
+    numbering_suppressed: bool | None = None
+    numbering_skipped: bool | None = None
     in_table: bool | None = None
     table_depth: int | None = None
     table_terminating: bool | None = None
@@ -201,6 +205,63 @@ class ParagraphProperties:
         if self.table_depth is not None:
             return max(self.table_depth, 0)
         return 1 if self.in_table else 0
+
+
+@dataclass(slots=True, frozen=True)
+class NumberingLevel:
+    """One MS-DOC LVL normalized for WordprocessingML numbering."""
+
+    level: int
+    start: int
+    number_format: str
+    text: str
+    justification: str = "left"
+    suffix: str = "tab"
+    paragraph_properties: ParagraphProperties = field(
+        default_factory=ParagraphProperties
+    )
+    character_properties: CharacterProperties = field(
+        default_factory=CharacterProperties
+    )
+    linked_style_id: int | None = None
+    legal: bool = False
+    restart_after_level: int | None = None
+    tentative: bool = False
+
+
+@dataclass(slots=True, frozen=True)
+class AbstractNumbering:
+    """One list definition from PlfLst."""
+
+    abstract_id: int
+    source_list_id: int
+    kind: str
+    levels: tuple[NumberingLevel, ...]
+
+
+@dataclass(slots=True, frozen=True)
+class NumberingLevelOverride:
+    """One LFOLVL override attached to a concrete list instance."""
+
+    level: int
+    start: int | None = None
+    replacement: NumberingLevel | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class NumberingInstance:
+    """One 1-based iLfo target from PlfLfo."""
+
+    numbering_id: int
+    abstract_id: int
+    first_paragraph_cp: int | None = None
+    overrides: tuple[NumberingLevelOverride, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class NumberingDefinitions:
+    abstracts: tuple[AbstractNumbering, ...] = ()
+    instances: tuple[NumberingInstance, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -582,6 +643,7 @@ class Document:
     footnotes: tuple[Footnote, ...] = ()
     endnotes: tuple[Endnote, ...] = ()
     comments: tuple[Comment, ...] = ()
+    numbering: NumberingDefinitions = field(default_factory=NumberingDefinitions)
     pictures: tuple[InlinePicture | FloatingPicture, ...] = ()
     even_and_odd_headers: bool = False
     adjust_line_height_in_table: bool | None = None

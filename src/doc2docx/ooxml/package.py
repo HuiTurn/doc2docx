@@ -27,6 +27,8 @@ from ..model import (
     FontDefinition,
     HeaderFooterStory,
     InlinePicture,
+    NumberingDefinitions,
+    NumberingLevel,
     Paragraph,
     ParagraphProperties,
     SectionProperties,
@@ -76,6 +78,9 @@ ENDNOTES_CONTENT_TYPE = (
 COMMENTS_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"
 )
+NUMBERING_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"
+)
 STYLES_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
 )
@@ -99,6 +104,9 @@ ENDNOTES_REL = (
 )
 COMMENTS_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
+)
+NUMBERING_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering"
 )
 IMAGE_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
@@ -176,6 +184,7 @@ def _content_types_xml(
     has_footnotes: bool,
     has_endnotes: bool,
     has_comments: bool,
+    has_numbering: bool,
     pictures: tuple[InlinePicture | FloatingPicture, ...],
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
@@ -259,6 +268,13 @@ def _content_types_xml(
             PartName="/word/comments.xml",
             ContentType=COMMENTS_CONTENT_TYPE,
         )
+    if has_numbering:
+        ET.SubElement(
+            root,
+            "Override",
+            PartName="/word/numbering.xml",
+            ContentType=NUMBERING_CONTENT_TYPE,
+        )
     for part in header_footer_parts:
         ET.SubElement(
             root,
@@ -291,6 +307,7 @@ def _document_relationships_xml(
     has_footnotes: bool,
     has_endnotes: bool,
     has_comments: bool,
+    has_numbering: bool,
     pictures: tuple[InlinePicture | FloatingPicture, ...],
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
@@ -349,6 +366,16 @@ def _document_relationships_xml(
             Type=COMMENTS_REL,
             Target="comments.xml",
         )
+        relationship_id += 1
+    if has_numbering:
+        ET.SubElement(
+            root,
+            "Relationship",
+            Id=f"rId{relationship_id}",
+            Type=NUMBERING_REL,
+            Target="numbering.xml",
+        )
+        relationship_id += 1
     for picture in pictures:
         ET.SubElement(
             root,
@@ -392,6 +419,7 @@ def _build_header_footer_parts(
     has_footnotes: bool,
     has_endnotes: bool,
     has_comments: bool,
+    has_numbering: bool,
 ) -> tuple[_HeaderFooterPart, ...]:
     relationship_number = 1 + sum(
         (
@@ -401,6 +429,7 @@ def _build_header_footer_parts(
             has_footnotes,
             has_endnotes,
             has_comments,
+            has_numbering,
         )
     )
     header_number = 0
@@ -620,6 +649,10 @@ def _append_paragraph_properties(
         or properties.space_before_lines is not None
         or properties.space_after_lines is not None
         or properties.line_spacing_twips is not None
+        or properties.numbering_id is not None
+        or properties.numbering_level is not None
+        or properties.numbering_suppressed is True
+        or properties.numbering_skipped is True
         or _has_character_properties(mark_properties)
     )
     if not serializable:
@@ -634,6 +667,43 @@ def _append_paragraph_properties(
             _qn(W_NS, "pStyle"),
             {_qn(W_NS, "val"): f"DocStyle{properties.style_id}"},
         )
+    if (
+        properties.numbering_id is not None
+        or properties.numbering_level is not None
+        or properties.numbering_suppressed is True
+        or properties.numbering_skipped is True
+    ):
+        numbering_properties = ET.SubElement(
+            paragraph_properties,
+            _qn(W_NS, "numPr"),
+        )
+        numbering_disabled = (
+            properties.numbering_suppressed is True
+            or properties.numbering_skipped is True
+        )
+        if not numbering_disabled:
+            if properties.numbering_level is not None:
+                level = properties.numbering_level
+            elif properties.numbering_id is not None:
+                level = 0
+            else:
+                level = None
+            if level is not None:
+                ET.SubElement(
+                    numbering_properties,
+                    _qn(W_NS, "ilvl"),
+                    {_qn(W_NS, "val"): str(level)},
+                )
+        if numbering_disabled:
+            numbering_id = 0
+        else:
+            numbering_id = properties.numbering_id
+        if numbering_id is not None:
+            ET.SubElement(
+                numbering_properties,
+                _qn(W_NS, "numId"),
+                {_qn(W_NS, "val"): str(numbering_id)},
+            )
     _append_boolean_property(
         paragraph_properties,
         "keepNext",
@@ -2158,6 +2228,167 @@ def _styles_xml(style_sheet: StyleSheet) -> bytes:
     return _xml_bytes(root)
 
 
+def _append_numbering_level(
+    parent: ET.Element,
+    level: NumberingLevel,
+    *,
+    valid_paragraph_style_ids: set[int],
+) -> None:
+    if not 0 <= level.level <= 8:
+        raise PackageWriteError(f"numbering level {level.level} is outside 0..8")
+    attributes = {_qn(W_NS, "ilvl"): str(level.level)}
+    if level.tentative:
+        attributes[_qn(W_NS, "tentative")] = "1"
+    element = ET.SubElement(parent, _qn(W_NS, "lvl"), attributes)
+    ET.SubElement(
+        element,
+        _qn(W_NS, "start"),
+        {_qn(W_NS, "val"): str(level.start)},
+    )
+    ET.SubElement(
+        element,
+        _qn(W_NS, "numFmt"),
+        {_qn(W_NS, "val"): level.number_format},
+    )
+    if level.restart_after_level is not None:
+        ET.SubElement(
+            element,
+            _qn(W_NS, "lvlRestart"),
+            {_qn(W_NS, "val"): str(level.restart_after_level)},
+        )
+    if (
+        level.linked_style_id is not None
+        and level.linked_style_id in valid_paragraph_style_ids
+    ):
+        ET.SubElement(
+            element,
+            _qn(W_NS, "pStyle"),
+            {_qn(W_NS, "val"): f"DocStyle{level.linked_style_id}"},
+        )
+    if level.legal:
+        ET.SubElement(element, _qn(W_NS, "isLgl"))
+    ET.SubElement(
+        element,
+        _qn(W_NS, "suff"),
+        {_qn(W_NS, "val"): level.suffix},
+    )
+    ET.SubElement(
+        element,
+        _qn(W_NS, "lvlText"),
+        {_qn(W_NS, "val"): level.text},
+    )
+    ET.SubElement(
+        element,
+        _qn(W_NS, "lvlJc"),
+        {_qn(W_NS, "val"): level.justification},
+    )
+    paragraph_holder = ET.Element("holder")
+    _append_paragraph_properties(
+        paragraph_holder,
+        level.paragraph_properties,
+        valid_style_ids=valid_paragraph_style_ids,
+    )
+    paragraph_properties = paragraph_holder.find(_qn(W_NS, "pPr"))
+    if paragraph_properties is not None:
+        element.append(paragraph_properties)
+    if _has_character_properties(level.character_properties):
+        character_properties = ET.SubElement(element, _qn(W_NS, "rPr"))
+        _append_character_property_elements(
+            character_properties,
+            level.character_properties,
+        )
+
+
+def _numbering_xml(
+    numbering: NumberingDefinitions,
+    style_sheet: StyleSheet,
+) -> bytes:
+    root = ET.Element(_qn(W_NS, "numbering"))
+    abstract_ids = [value.abstract_id for value in numbering.abstracts]
+    if any(value < 0 for value in abstract_ids) or len(set(abstract_ids)) != len(
+        abstract_ids
+    ):
+        raise PackageWriteError(
+            "abstract numbering identifiers must be unique and nonnegative"
+        )
+    instance_ids = [value.numbering_id for value in numbering.instances]
+    if any(value <= 0 for value in instance_ids) or len(set(instance_ids)) != len(
+        instance_ids
+    ):
+        raise PackageWriteError(
+            "numbering instance identifiers must be unique and positive"
+        )
+    valid_paragraph_style_ids = {
+        style.index
+        for style in style_sheet.styles
+        if style is not None and style.kind == "paragraph"
+    }
+    valid_abstract_ids = set(abstract_ids)
+    for abstract in numbering.abstracts:
+        levels = [value.level for value in abstract.levels]
+        if not levels or len(set(levels)) != len(levels):
+            raise PackageWriteError(
+                f"abstract numbering {abstract.abstract_id} has invalid levels"
+            )
+        element = ET.SubElement(
+            root,
+            _qn(W_NS, "abstractNum"),
+            {_qn(W_NS, "abstractNumId"): str(abstract.abstract_id)},
+        )
+        ET.SubElement(
+            element,
+            _qn(W_NS, "multiLevelType"),
+            {_qn(W_NS, "val"): abstract.kind},
+        )
+        for level in abstract.levels:
+            _append_numbering_level(
+                element,
+                level,
+                valid_paragraph_style_ids=valid_paragraph_style_ids,
+            )
+    for instance in numbering.instances:
+        if instance.abstract_id not in valid_abstract_ids:
+            raise PackageWriteError(
+                f"numbering instance {instance.numbering_id} references an absent "
+                f"abstract numbering definition {instance.abstract_id}"
+            )
+        element = ET.SubElement(
+            root,
+            _qn(W_NS, "num"),
+            {_qn(W_NS, "numId"): str(instance.numbering_id)},
+        )
+        ET.SubElement(
+            element,
+            _qn(W_NS, "abstractNumId"),
+            {_qn(W_NS, "val"): str(instance.abstract_id)},
+        )
+        override_levels: set[int] = set()
+        for override in instance.overrides:
+            if not 0 <= override.level <= 8 or override.level in override_levels:
+                raise PackageWriteError(
+                    f"numbering instance {instance.numbering_id} has invalid overrides"
+                )
+            override_levels.add(override.level)
+            override_element = ET.SubElement(
+                element,
+                _qn(W_NS, "lvlOverride"),
+                {_qn(W_NS, "ilvl"): str(override.level)},
+            )
+            if override.start is not None:
+                ET.SubElement(
+                    override_element,
+                    _qn(W_NS, "startOverride"),
+                    {_qn(W_NS, "val"): str(override.start)},
+                )
+            if override.replacement is not None:
+                _append_numbering_level(
+                    override_element,
+                    override.replacement,
+                    valid_paragraph_style_ids=valid_paragraph_style_ids,
+                )
+    return _xml_bytes(root)
+
+
 def _write_part(package: zipfile.ZipFile, name: str, data: bytes) -> None:
     info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
     info.compress_type = zipfile.ZIP_DEFLATED
@@ -2179,6 +2410,9 @@ def write_docx(document: Document, destination: str | Path) -> None:
     has_footnotes = bool(document.footnotes)
     has_endnotes = bool(document.endnotes)
     has_comments = bool(document.comments)
+    has_numbering = bool(
+        document.numbering.abstracts or document.numbering.instances
+    )
     picture_ids = [picture.picture_id for picture in document.pictures]
     if any(picture_id <= 0 for picture_id in picture_ids) or len(
         set(picture_ids)
@@ -2192,6 +2426,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
         has_footnotes=has_footnotes,
         has_endnotes=has_endnotes,
         has_comments=has_comments,
+        has_numbering=has_numbering,
     )
     main_pictures = _pictures_in_blocks(document.body_blocks)
     try:
@@ -2206,6 +2441,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     has_footnotes=has_footnotes,
                     has_endnotes=has_endnotes,
                     has_comments=has_comments,
+                    has_numbering=has_numbering,
                     pictures=document.pictures,
                     header_footer_parts=header_footer_parts,
                 ),
@@ -2223,6 +2459,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                 or has_footnotes
                 or has_endnotes
                 or has_comments
+                or has_numbering
                 or main_pictures
                 or header_footer_parts
             ):
@@ -2236,6 +2473,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                         has_footnotes=has_footnotes,
                         has_endnotes=has_endnotes,
                         has_comments=has_comments,
+                        has_numbering=has_numbering,
                         pictures=main_pictures,
                         header_footer_parts=header_footer_parts,
                     ),
@@ -2276,6 +2514,12 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     package,
                     "word/comments.xml",
                     _comments_xml(document),
+                )
+            if has_numbering:
+                _write_part(
+                    package,
+                    "word/numbering.xml",
+                    _numbering_xml(document.numbering, document.styles),
                 )
             for picture in document.pictures:
                 _write_part(
