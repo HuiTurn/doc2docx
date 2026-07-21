@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
@@ -56,6 +56,33 @@ _EXTERNAL_OR_ACTIVE_FIELD_TYPES = frozenset(
         "PRINT",
     }
 )
+_BOOKMARK_LIVE_FIELD_TYPES = frozenset({"PAGEREF", "REF"})
+
+
+def _bookmark_field_target(instruction: str) -> str | None:
+    """Return the first field argument without interpreting field switches."""
+
+    tokens = instruction.lstrip().split(maxsplit=1)
+    if len(tokens) != 2:
+        return None
+    remainder = tokens[1].lstrip()
+    if not remainder or remainder.startswith("\\"):
+        return None
+    if remainder.startswith('"'):
+        characters: list[str] = []
+        escaped = False
+        for character in remainder[1:]:
+            if escaped:
+                characters.append(character)
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                return "".join(characters) or None
+            else:
+                characters.append(character)
+        return None
+    return remainder.split(maxsplit=1)[0]
 
 
 class BreakType(StrEnum):
@@ -432,6 +459,23 @@ class FieldEndProperties:
 
 
 @dataclass(slots=True, frozen=True)
+class BookmarkStart:
+    """The start of one named Word bookmark range."""
+
+    bookmark_id: int
+    name: str
+    column_first: int | None = None
+    column_last: int | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class BookmarkEnd:
+    """The end of one named Word bookmark range."""
+
+    bookmark_id: int
+
+
+@dataclass(slots=True, frozen=True)
 class FootnoteReference:
     """A main-story reference to one footnote body."""
 
@@ -557,6 +601,8 @@ Inline = (
     | Tab
     | Break
     | Field
+    | BookmarkStart
+    | BookmarkEnd
     | FootnoteReference
     | EndnoteReference
     | CommentRangeStart
@@ -1022,6 +1068,10 @@ def parse_main_story(
     field_end_properties_at: (
         Callable[[int], FieldEndProperties | None] | None
     ) = None,
+    bookmark_boundaries_at: (
+        Callable[[int], Sequence[BookmarkStart | BookmarkEnd]] | None
+    ) = None,
+    bookmark_names: Collection[str] | None = None,
     footnote_reference_at: Callable[[int], FootnoteReference | None] | None = None,
     endnote_reference_at: Callable[[int], EndnoteReference | None] | None = None,
     comment_reference_at: Callable[[int], CommentReference | None] | None = None,
@@ -1038,6 +1088,8 @@ def parse_main_story(
         )
     else:
         characters = tuple(text)
+    final_cp = characters[-1].cp_end if characters else 0
+    final_boundaries_emitted = False
 
     default_character_properties = CharacterProperties()
     default_paragraph_properties = ParagraphProperties()
@@ -1053,6 +1105,8 @@ def parse_main_story(
     flattened_field_types: dict[str, int] = {}
     active_field_types: set[str] = set()
     undeclared_field_types: set[str] = set()
+    broken_bookmark_targets: set[str] = set()
+    field_instruction_controls: dict[int, int] = {}
     field_stack: list[_FieldContext] = []
     last_was_terminator = False
     section_values = tuple(sections)
@@ -1060,6 +1114,9 @@ def parse_main_story(
         section.cp_end: section for section in section_values[:-1]
     }
     matched_section_ends: set[int] = set()
+    available_bookmark_names = {
+        name.casefold() for name in (bookmark_names or ())
+    }
 
     def visible() -> bool:
         return all(context.has_separator for context in field_stack)
@@ -1110,6 +1167,73 @@ def parse_main_story(
         text_properties = properties
         text_buffer.append(character)
 
+    def append_bookmark_boundaries(
+        cp: int,
+        *,
+        outside_current_field: bool = False,
+    ) -> None:
+        if bookmark_boundaries_at is None:
+            return
+        boundaries = bookmark_boundaries_at(cp)
+        if not boundaries:
+            return
+        if visible() and not (outside_current_field and field_stack):
+            flush_text()
+            current_inlines().extend(boundaries)
+        else:
+            # Field instructions are not represented as normal output inlines,
+            # and private field results can be intentionally suppressed. Move a
+            # boundary at a field control/instruction CP immediately outside the
+            # innermost hidden field so its matching marker remains emit-able.
+            target = inlines
+            contexts = (
+                field_stack[:-1]
+                if outside_current_field and field_stack
+                else field_stack
+            )
+            for context in contexts:
+                if not context.has_separator:
+                    break
+                target = context.result
+            target.extend(boundaries)
+            deferred_markers["BOOKMARK_BOUNDARY_APPROXIMATED"] = (
+                deferred_markers.get("BOOKMARK_BOUNDARY_APPROXIMATED", 0)
+                + len(boundaries)
+            )
+
+    def contained_bookmark_boundaries(
+        values: Sequence[Inline],
+    ) -> list[BookmarkStart | BookmarkEnd]:
+        boundaries: list[BookmarkStart | BookmarkEnd] = []
+        for value in values:
+            if isinstance(value, (BookmarkStart, BookmarkEnd)):
+                boundaries.append(value)
+            elif isinstance(value, Field):
+                boundaries.extend(contained_bookmark_boundaries(value.result))
+        return boundaries
+
+    def append_approximated_boundaries(
+        boundaries: Sequence[BookmarkStart | BookmarkEnd],
+    ) -> None:
+        if not boundaries:
+            return
+        target = inlines
+        for context in field_stack:
+            if not context.has_separator:
+                break
+            target = context.result
+        target.extend(boundaries)
+        deferred_markers["BOOKMARK_BOUNDARY_APPROXIMATED"] = (
+            deferred_markers.get("BOOKMARK_BOUNDARY_APPROXIMATED", 0)
+            + len(boundaries)
+        )
+
+    def append_final_bookmark_boundaries(cp: int) -> None:
+        nonlocal final_boundaries_emitted
+        if cp == final_cp:
+            append_bookmark_boundaries(cp)
+            final_boundaries_emitted = True
+
     def finish_paragraph(
         properties: ParagraphProperties,
         section_end: SectionProperties | None = None,
@@ -1134,6 +1258,11 @@ def parse_main_story(
             character_properties_at(cp_offset)
             if character_properties_at is not None
             else default_character_properties
+        )
+
+        append_bookmark_boundaries(
+            cp_offset,
+            outside_current_field=value in (0x14, 0x15),
         )
 
         if visible() and comment_boundaries_at is not None:
@@ -1171,7 +1300,26 @@ def parse_main_story(
                 field_end_properties_at is None
                 or field_end_properties is not None
             )
-            if field_type in _SAFE_LIVE_FIELD_TYPES and declared_field:
+            bookmark_target = (
+                _bookmark_field_target(instruction)
+                if field_type in _BOOKMARK_LIVE_FIELD_TYPES
+                else None
+            )
+            bookmark_field_is_valid = (
+                bookmark_target is not None
+                and bookmark_target.casefold() in available_bookmark_names
+            )
+            safe_live_field = field_type in _SAFE_LIVE_FIELD_TYPES or (
+                field_type in _BOOKMARK_LIVE_FIELD_TYPES
+                and bookmark_field_is_valid
+            )
+            private_bookmark_boundaries = (
+                contained_bookmark_boundaries(context.result)
+                if field_end_properties is not None
+                and field_end_properties.private_result
+                else []
+            )
+            if safe_live_field and declared_field:
                 if parent_is_visible:
                     current_inlines().append(
                         Field(
@@ -1197,6 +1345,7 @@ def parse_main_story(
                             ),
                         )
                     )
+                    append_approximated_boundaries(private_bookmark_boundaries)
             else:
                 if (
                     parent_is_visible
@@ -1206,6 +1355,8 @@ def parse_main_story(
                     )
                 ):
                     extend_visible_inlines(context.result)
+                elif parent_is_visible:
+                    append_approximated_boundaries(private_bookmark_boundaries)
                 flattened_fields += 1
                 normalized_type = field_type or "UNKNOWN"
                 flattened_field_types[normalized_type] = (
@@ -1213,13 +1364,24 @@ def parse_main_story(
                 )
                 if field_type in _EXTERNAL_OR_ACTIVE_FIELD_TYPES:
                     active_field_types.add(field_type)
-                if field_type in _SAFE_LIVE_FIELD_TYPES and not declared_field:
+                if safe_live_field and not declared_field:
                     undeclared_field_types.add(field_type)
+                if (
+                    field_type in _BOOKMARK_LIVE_FIELD_TYPES
+                    and declared_field
+                    and not bookmark_field_is_valid
+                ):
+                    broken_bookmark_targets.add(bookmark_target or "UNKNOWN")
             continue
         if not visible():
             for context in reversed(field_stack):
                 if not context.has_separator:
-                    context.instruction.append(character)
+                    if _is_xml_character(character):
+                        context.instruction.append(character)
+                    else:
+                        field_instruction_controls[value] = (
+                            field_instruction_controls.get(value, 0) + 1
+                        )
                     break
             continue
 
@@ -1273,6 +1435,7 @@ def parse_main_story(
             continue
 
         if character == "\r":
+            append_final_bookmark_boundaries(unit.cp_end)
             paragraph_properties = (
                 paragraph_properties_at(cp_offset)
                 if paragraph_properties_at is not None
@@ -1308,6 +1471,7 @@ def parse_main_story(
         elif character == "\f":
             section = internal_sections_by_end.get(unit.cp_end)
             if section is not None:
+                append_final_bookmark_boundaries(unit.cp_end)
                 paragraph_properties = (
                     paragraph_properties_at(cp_offset)
                     if paragraph_properties_at is not None
@@ -1335,6 +1499,7 @@ def parse_main_story(
                 else default_paragraph_properties
             )
             if paragraph_properties.effective_table_depth:
+                append_final_bookmark_boundaries(unit.cp_end)
                 if paragraph_properties.table_terminating:
                     if text_buffer or inlines:
                         finish_paragraph(
@@ -1399,6 +1564,9 @@ def parse_main_story(
             append_text(character, character_properties)
             last_was_terminator = False
 
+    if not final_boundaries_emitted:
+        append_bookmark_boundaries(final_cp)
+
     if (
         text_buffer
         or inlines
@@ -1453,6 +1621,24 @@ def parse_main_story(
             location=SourceLocation(story=story_name),
             field_types=sorted(undeclared_field_types),
         )
+    if broken_bookmark_targets:
+        report.warning(
+            "BROKEN_BOOKMARK_FIELDS_FLATTENED",
+            "REF or PAGEREF fields without an emitted bookmark were kept as cached text",
+            location=SourceLocation(story=story_name),
+            bookmark_names=sorted(broken_bookmark_targets),
+        )
+    if field_instruction_controls:
+        report.warning(
+            "FIELD_INSTRUCTION_CONTROLS_REMOVED",
+            "non-XML control characters were removed from field instructions",
+            location=SourceLocation(story=story_name),
+            codepoints=[
+                f"U+{codepoint:04X}"
+                for codepoint in sorted(field_instruction_controls)
+            ],
+            character_count=sum(field_instruction_controls.values()),
+        )
     unmatched_section_ends = sorted(
         set(internal_sections_by_end) - matched_section_ends
     )
@@ -1471,6 +1657,9 @@ def parse_main_story(
             count=count,
         )
     deferred_messages = {
+        "BOOKMARK_BOUNDARY_APPROXIMATED": (
+            "a bookmark boundary on a field control or hidden instruction was moved outside the field"
+        ),
         "BREAK_KIND_APPROXIMATED": (
             "an ambiguous page/section marker was emitted as a page break because "
             "no matching section table entry was available"

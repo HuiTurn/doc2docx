@@ -13,6 +13,7 @@ from doc2docx.errors import (
 )
 
 from .fixtures import (
+    build_bookmark_word_cfb,
     build_comment_word_cfb,
     build_endnote_word_cfb,
     build_formatted_word_cfb,
@@ -34,6 +35,41 @@ V = "{urn:schemas-microsoft-com:vml}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_standard_bookmark_and_ref_field_are_packaged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "bookmark.doc"
+            destination = temporary / "bookmark.docx"
+            source.write_bytes(build_bookmark_word_cfb())
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.statistics["bookmark_count"], 1)
+            self.assertEqual(
+                result.report.statistics["preserved_bookmark_count"],
+                1,
+            )
+            self.assertEqual(result.report.statistics["declared_field_count"], 1)
+            self.assertEqual(
+                [warning.code for warning in result.report.warnings],
+                ["FIELD_CHARACTER_SPECIAL_MISSING"],
+            )
+            inspected = inspect_doc(source)
+            self.assertGreater(inspected["fib"]["lcbSttbfBkmk"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcfBkf"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcfBkl"], 0)
+
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+            start = root.find(f".//{W}bookmarkStart")
+            end = root.find(f".//{W}bookmarkEnd")
+            field = root.find(f".//{W}instrText")
+            assert start is not None and end is not None and field is not None
+            self.assertEqual(start.get(f"{W}name"), "Target")
+            self.assertEqual(start.get(f"{W}id"), end.get(f"{W}id"))
+            self.assertEqual(field.text, " REF Target \\h ")
+
     def test_main_story_textbox_is_positioned_and_packaged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)

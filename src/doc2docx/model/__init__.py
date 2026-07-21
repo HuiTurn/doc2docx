@@ -1,4 +1,6 @@
 from .document import (
+    BookmarkEnd,
+    BookmarkStart,
     BorderProperties,
     Break,
     BreakType,
@@ -51,6 +53,8 @@ from .document import (
 )
 
 __all__ = [
+    "BookmarkEnd",
+    "BookmarkStart",
     "BorderProperties",
     "Break",
     "BreakType",

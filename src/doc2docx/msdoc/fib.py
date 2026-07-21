@@ -25,6 +25,9 @@ FCLCB97_PLCF_FLD_MOM_INDEX = 16
 FCLCB97_PLCF_FLD_HDR_INDEX = 17
 FCLCB97_PLCF_FLD_FTN_INDEX = 18
 FCLCB97_PLCF_FLD_ATN_INDEX = 19
+FCLCB97_STTBF_BKMK_INDEX = 21
+FCLCB97_PLCF_BKF_INDEX = 22
+FCLCB97_PLCF_BKL_INDEX = 23
 FCLCB97_DOP_INDEX = 31
 FCLCB97_CLX_INDEX = 33
 FCLCB97_GRP_XST_ATN_OWNERS_INDEX = 36
@@ -127,6 +130,10 @@ class FileInformationBlock:
     @property
     def ccp_comments(self) -> int:
         return self.fib_rg_lw[7] if len(self.fib_rg_lw) > 7 else 0
+
+    @property
+    def total_story_cp_count(self) -> int:
+        return sum(self.fib_rg_lw[3:11])
 
     @property
     def comment_story_cp_start(self) -> int:
@@ -283,6 +290,24 @@ class FileInformationBlock:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_FLD_ATN_INDEX:
             return FcLcb(0, 0)
         return self.fib_rg_fc_lcb[FCLCB97_PLCF_FLD_ATN_INDEX]
+
+    @property
+    def sttbf_bkmk(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_STTBF_BKMK_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_STTBF_BKMK_INDEX]
+
+    @property
+    def plcf_bkf(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_BKF_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_BKF_INDEX]
+
+    @property
+    def plcf_bkl(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_BKL_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_BKL_INDEX]
 
     @property
     def dop(self) -> FcLcb:

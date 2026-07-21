@@ -29,6 +29,7 @@ from .model import (
 from .oleps import read_summary_information
 from .msdoc import (
     FileInformationBlock,
+    read_bookmarks,
     read_comments,
     read_document_settings,
     read_endnotes,
@@ -182,6 +183,11 @@ def convert(
             f"FIB main-story length {fib.ccp_text} exceeds Piece Table range "
             f"{piece_table.cp_end}"
         )
+    if fib.total_story_cp_count > piece_table.cp_end:
+        raise InvalidWordDocument(
+            f"FIB document-story length {fib.total_story_cp_count} exceeds "
+            f"Piece Table range {piece_table.cp_end}"
+        )
     chpx = fib.plcf_bte_chpx
     papx = fib.plcf_bte_papx
     formatting = read_formatting(
@@ -195,6 +201,21 @@ def convert(
         report=report,
         fonts=fonts,
         style_sheet=style_sheet,
+    )
+    bookmark_names = fib.sttbf_bkmk
+    bookmark_starts = fib.plcf_bkf
+    bookmark_ends = fib.plcf_bkl
+    bookmarks = read_bookmarks(
+        table_stream,
+        names_offset=bookmark_names.fc,
+        names_size=bookmark_names.lcb,
+        starts_offset=bookmark_starts.fc,
+        starts_size=bookmark_starts.lcb,
+        ends_offset=bookmark_ends.fc,
+        ends_size=bookmark_ends.lcb,
+        main_story_length=fib.ccp_text,
+        total_story_length=fib.total_story_cp_count,
+        report=report,
     )
     main_field_table = fib.plcf_fld_mom
     main_fields = read_field_table(
@@ -497,6 +518,8 @@ def convert(
         comment_reference_at=comments.reference_at,
         comment_boundaries_at=comments.boundaries_at,
         field_end_properties_at=main_fields.end_properties_at,
+        bookmark_boundaries_at=bookmarks.boundaries_at,
+        bookmark_names=bookmarks.names,
         sections=sections,
     )
     document = Document(
@@ -564,6 +587,9 @@ def convert(
             )
             + main_textboxes.field_character_count
             + header_textboxes.field_character_count,
+            "bookmark_count": bookmarks.bookmark_count,
+            "preserved_bookmark_count": bookmarks.preserved_count,
+            "column_bookmark_count": bookmarks.column_bookmark_count,
             "abstract_numbering_count": len(numbering.abstracts),
             "numbering_instance_count": len(numbering.instances),
             "numbering_level_count": sum(
@@ -734,7 +760,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M10b conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M11a conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -847,6 +873,12 @@ def inspect_doc(
             "lcbPlcfFldAtn": fib.plcf_fld_atn.lcb,
             "fcPlcfFldEdn": fib.plcf_fld_edn.fc,
             "lcbPlcfFldEdn": fib.plcf_fld_edn.lcb,
+            "fcSttbfBkmk": fib.sttbf_bkmk.fc,
+            "lcbSttbfBkmk": fib.sttbf_bkmk.lcb,
+            "fcPlcfBkf": fib.plcf_bkf.fc,
+            "lcbPlcfBkf": fib.plcf_bkf.lcb,
+            "fcPlcfBkl": fib.plcf_bkl.fc,
+            "lcbPlcfBkl": fib.plcf_bkl.lcb,
             "fcPlfLst": fib.plf_lst.fc,
             "lcbPlfLst": fib.plf_lst.lcb,
             "fcPlfLfo": fib.plf_lfo.fc,

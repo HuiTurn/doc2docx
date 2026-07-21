@@ -10,6 +10,8 @@ from xml.etree import ElementTree as ET
 
 from ..errors import PackageWriteError
 from ..model import (
+    BookmarkEnd,
+    BookmarkStart,
     BorderProperties,
     Break,
     BreakType,
@@ -1289,6 +1291,8 @@ def _append_inline(
         | Tab
         | Break
         | Field
+        | BookmarkStart
+        | BookmarkEnd
         | FootnoteReference
         | EndnoteReference
         | CommentRangeStart
@@ -1354,6 +1358,21 @@ def _append_inline(
             inline,
             valid_paragraph_style_ids=valid_paragraph_style_ids,
             valid_character_style_ids=valid_character_style_ids,
+        )
+    elif isinstance(inline, (BookmarkStart, BookmarkEnd)):
+        attributes = {_qn(W_NS, "id"): str(inline.bookmark_id)}
+        if isinstance(inline, BookmarkStart):
+            attributes[_qn(W_NS, "name")] = inline.name
+            if inline.column_first is not None and inline.column_last is not None:
+                attributes[_qn(W_NS, "colFirst")] = str(inline.column_first)
+                attributes[_qn(W_NS, "colLast")] = str(inline.column_last)
+        ET.SubElement(
+            paragraph_element,
+            _qn(
+                W_NS,
+                "bookmarkStart" if isinstance(inline, BookmarkStart) else "bookmarkEnd",
+            ),
+            attributes,
         )
     elif isinstance(inline, (FootnoteReference, EndnoteReference)):
         run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))

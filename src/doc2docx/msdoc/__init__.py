@@ -1,3 +1,4 @@
+from .bookmarks import BookmarkCollection, read_bookmarks
 from .comments import CommentCollection, read_comments
 from .document_properties import WordDocumentSettings, read_document_settings
 from .endnotes import EndnoteCollection, read_endnotes
@@ -37,6 +38,7 @@ from .sections import read_sections
 from .styles import read_style_sheet
 
 __all__ = [
+    "BookmarkCollection",
     "CommentCollection",
     "FileInformationBlock",
     "FieldTable",
@@ -57,6 +59,7 @@ __all__ = [
     "WordDocumentSettings",
     "read_document_settings",
     "read_comments",
+    "read_bookmarks",
     "read_endnotes",
     "read_font_table",
     "read_field_table",

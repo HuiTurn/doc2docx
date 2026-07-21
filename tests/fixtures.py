@@ -83,6 +83,10 @@ def _build_fib(
     comment_bookmark_tags: tuple[int, int] = (0, 0),
     comment_bookmark_starts: tuple[int, int] = (0, 0),
     comment_bookmark_ends: tuple[int, int] = (0, 0),
+    standard_bookmark_names: tuple[int, int] = (0, 0),
+    standard_bookmark_starts: tuple[int, int] = (0, 0),
+    standard_bookmark_ends: tuple[int, int] = (0, 0),
+    main_field_plc: tuple[int, int] = (0, 0),
     endnote_ref_plc: tuple[int, int] = (0, 0),
     endnote_text_plc: tuple[int, int] = (0, 0),
     header_plc: tuple[int, int] = (0, 0),
@@ -141,6 +145,10 @@ def _build_fib(
     pairs[11] = header_plc
     pairs[12] = chpx_plc
     pairs[13] = papx_plc
+    pairs[16] = main_field_plc
+    pairs[21] = standard_bookmark_names
+    pairs[22] = standard_bookmark_starts
+    pairs[23] = standard_bookmark_ends
     pairs[31] = dop
     pairs[33] = (0, clx_size)
     pairs[36] = comment_owners
@@ -790,6 +798,58 @@ def build_word_cfb(
     struct.pack_into("<128I", sectors[17], 0, *fat)
 
     return _header(fat_sector=17, directory_sector=16) + b"".join(sectors)
+
+
+def build_bookmark_word_cfb() -> bytes:
+    """A main-story bookmark referenced by one declared REF field."""
+
+    text = b"Target text\rSee: \x13 REF Target \\h \x14Target text\x15\r"
+    text_fc = 1024
+    compressed_fc = (text_fc * 2) | 0x40000000
+    plc_pcd = struct.pack("<2I", 0, len(text))
+    plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
+    clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
+
+    encoded_name = "Target".encode("utf-16le")
+    names = struct.pack("<HHHH", 0xFFFF, 1, 0, 6) + encoded_name
+    terminal_cp = len(text) + 1
+    starts = struct.pack("<2IHH", 0, terminal_cp, 0, 0)
+    ends = struct.pack("<2I", len(b"Target text"), terminal_cp)
+
+    field_begin = text.index(b"\x13")
+    field_separator = text.index(b"\x14")
+    field_end = text.index(b"\x15")
+    fields = struct.pack(
+        "<4I",
+        field_begin,
+        field_separator,
+        field_end,
+        len(text),
+    ) + bytes((0x13, 0x03, 0x14, 0, 0x15, 0x80))
+
+    names_offset = 128
+    starts_offset = 160
+    ends_offset = 192
+    fields_offset = 224
+    word_document = bytearray(4096)
+    word_document[:1024] = _build_fib(
+        ccp_text=len(text),
+        clx_size=len(clx),
+        standard_bookmark_names=(names_offset, len(names)),
+        standard_bookmark_starts=(starts_offset, len(starts)),
+        standard_bookmark_ends=(ends_offset, len(ends)),
+        main_field_plc=(fields_offset, len(fields)),
+        cb_mac=text_fc + len(text),
+    )
+    word_document[text_fc : text_fc + len(text)] = text
+
+    table_stream = bytearray(4096)
+    table_stream[: len(clx)] = clx
+    table_stream[names_offset : names_offset + len(names)] = names
+    table_stream[starts_offset : starts_offset + len(starts)] = starts
+    table_stream[ends_offset : ends_offset + len(ends)] = ends
+    table_stream[fields_offset : fields_offset + len(fields)] = fields
+    return _wrap_regular_word_streams(word_document, table_stream)
 
 
 def build_formatted_word_cfb() -> bytes:

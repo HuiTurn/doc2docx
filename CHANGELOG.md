@@ -8,6 +8,23 @@ current capabilities without release-by-release notes.
 - Continue expanding MS-DOC compatibility with specification-backed parsers,
   focused tests, and real Word 97 sample rendering.
 
+## 0.25.0 - 2026-07-22 (M11a)
+
+- Parse standard bookmark names and ranges from `SttbfBkmk`, `Plcfbkf`, and
+  `Plcfbkl`, including overlapping, zero-length, and table-column bookmarks.
+- Emit paired WordprocessingML bookmark markers in the main story and preserve
+  declared `REF` and `PAGEREF` fields as live fields only when their target
+  bookmark is present; broken references remain cached display text.
+- Validate string-table bounds, parallel entry counts, bookmark CPs, FBKF end
+  indexes, BKC flags, table-column ranges, and both specification and common
+  document-end terminal-CP variants.
+- Move field-instruction/private-result bookmark boundaries to a safe field
+  edge when necessary, and remove non-XML controls from field instructions so
+  output packages remain valid while reporting the approximation.
+- Validate with malformed, overlapping, point, column, private-field, and
+  end-to-end CFB fixtures plus a real Word 97 DOC containing a bookmark and
+  live REF field, followed by rendered visual verification.
+
 ## 0.24.0 - 2026-07-22 (M10b)
 
 - Validate the MS-DOC `Plcfld`/`Fld` structures for the main, header/footer,
