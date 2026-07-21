@@ -261,6 +261,13 @@ class SectionProperties:
     header_distance_twips: int = 720
     footer_distance_twips: int = 720
     gutter_twips: int = 0
+    title_page: bool = False
+    even_header: HeaderFooterStory | None = None
+    default_header: HeaderFooterStory | None = None
+    even_footer: HeaderFooterStory | None = None
+    default_footer: HeaderFooterStory | None = None
+    first_header: HeaderFooterStory | None = None
+    first_footer: HeaderFooterStory | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -304,12 +311,27 @@ Block = Paragraph | Table
 
 
 @dataclass(slots=True, frozen=True)
+class HeaderFooterStory:
+    """One non-empty header/footer story after removing its guard paragraph."""
+
+    cp_start: int
+    cp_end: int
+    paragraphs: tuple[Paragraph, ...]
+    blocks: tuple[Block, ...] = ()
+
+    @property
+    def body_blocks(self) -> tuple[Block, ...]:
+        return self.blocks or self.paragraphs
+
+
+@dataclass(slots=True, frozen=True)
 class Document:
     paragraphs: tuple[Paragraph, ...]
     fonts: tuple[FontDefinition, ...] = ()
     styles: StyleSheet = field(default_factory=StyleSheet)
     blocks: tuple[Block, ...] = ()
     sections: tuple[SectionProperties, ...] = ()
+    even_and_odd_headers: bool = False
 
     @property
     def body_blocks(self) -> tuple[Block, ...]:
@@ -532,6 +554,7 @@ def parse_main_story(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     sections: Sequence[SectionProperties] = (),
+    story_name: str = "main",
 ) -> Document:
     if isinstance(text, str):
         characters = tuple(
@@ -687,10 +710,11 @@ def parse_main_story(
                 )
                 append_text("\uFFFC", character_properties)
                 last_was_terminator = False
-        elif value in (0x01, 0x02):
+        elif value in (0x01, 0x02, 0x08):
             marker_code = {
                 0x01: "OBJECT_ANCHOR_DEFERRED",
                 0x02: "NOTE_REFERENCE_DEFERRED",
+                0x08: "OBJECT_ANCHOR_DEFERRED",
             }[value]
             deferred_markers[marker_code] = deferred_markers.get(marker_code, 0) + 1
             append_text("\uFFFC", character_properties)
@@ -720,9 +744,9 @@ def parse_main_story(
     if field_stack:
         report.warning(
             "UNTERMINATED_FIELD",
-            "main story contains an unterminated field; its instruction was hidden",
+            f"{story_name} story contains an unterminated field; its instruction was hidden",
             location=SourceLocation(
-                story="main",
+                story=story_name,
                 cp_start=characters[0].cp_start if characters else 0,
                 cp_end=characters[-1].cp_end if characters else 0,
             ),
@@ -731,7 +755,8 @@ def parse_main_story(
     if flattened_fields:
         report.warning(
             "FIELDS_FLATTENED",
-            "field structures were flattened to their displayed result in M2",
+            "field structures were flattened to their displayed result",
+            location=SourceLocation(story=story_name),
             field_count=flattened_fields,
         )
     unmatched_section_ends = sorted(
@@ -741,20 +766,20 @@ def parse_main_story(
         report.warning(
             "SECTION_BOUNDARY_NOT_FOUND",
             "some PlcfSed section boundaries did not end at a section-mark character",
-            location=SourceLocation(story="main"),
+            location=SourceLocation(story=story_name),
             cp_ends=unmatched_section_ends,
         )
     for codepoint, count in sorted(unsupported_controls.items()):
         report.warning(
             "UNSUPPORTED_CONTROL_CHARACTER",
             f"unsupported control character U+{codepoint:04X} was replaced",
-            location=SourceLocation(story="main"),
+            location=SourceLocation(story=story_name),
             count=count,
         )
     deferred_messages = {
         "BREAK_KIND_APPROXIMATED": (
-            "page/section break was emitted as a page break because section parsing "
-            "is deferred beyond M2"
+            "an ambiguous page/section marker was emitted as a page break because "
+            "no matching section table entry was available"
         ),
         "OBJECT_ANCHOR_DEFERRED": (
             "picture or object anchor was emitted as an object replacement character"
@@ -770,7 +795,7 @@ def parse_main_story(
         report.warning(
             code,
             deferred_messages[code],
-            location=SourceLocation(story="main"),
+            location=SourceLocation(story=story_name),
             count=count,
         )
 

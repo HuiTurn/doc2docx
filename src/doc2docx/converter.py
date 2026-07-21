@@ -20,8 +20,10 @@ from .errors import (
 from .model import Document, Paragraph, Table, parse_main_story
 from .msdoc import (
     FileInformationBlock,
+    read_document_settings,
     read_font_table,
     read_formatting,
+    read_header_footer_stories,
     read_piece_table,
     read_sections,
     read_style_sheet,
@@ -99,6 +101,12 @@ def convert(
         document_lid=fib.base.lid,
         report=report,
     )
+    dop = fib.dop
+    document_settings = read_document_settings(
+        table_stream,
+        offset=dop.fc,
+        size=dop.lcb,
+    )
     font_table = fib.sttbf_ffn
     fonts = read_font_table(
         table_stream,
@@ -140,6 +148,20 @@ def convert(
         fonts=fonts,
         style_sheet=style_sheet,
     )
+    header_table = fib.plcf_hdd
+    header_footers = read_header_footer_stories(
+        table_stream,
+        piece_table,
+        sections,
+        offset=header_table.fc,
+        size=header_table.lcb,
+        ccp_headers=fib.ccp_headers,
+        header_story_cp_start=fib.header_story_cp_start,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+        paragraph_properties_at=formatting.paragraph_properties_at,
+    )
+    sections = header_footers.sections
     main_characters = piece_table.extract_characters(
         0,
         fib.ccp_text,
@@ -159,6 +181,7 @@ def convert(
         styles=style_sheet,
         blocks=parsed_document.blocks,
         sections=sections,
+        even_and_odd_headers=document_settings.even_and_odd_headers,
     )
     tables = tuple(_iter_tables(document.body_blocks))
 
@@ -188,18 +211,21 @@ def convert(
                 len(row.cells) for table in tables for row in table.rows
             ),
             "section_count": len(sections),
+            "header_footer_story_count": header_footers.story_count,
+            "header_footer_paragraph_count": header_footers.paragraph_count,
         }
     )
     if fib.base.has_pictures:
         report.warning(
             "PICTURES_DEFERRED",
-            "the FIB reports pictures; picture conversion is deferred beyond M2",
+            "the FIB reports pictures; picture conversion is not yet supported",
         )
     secondary_stories = fib.secondary_story_character_counts
+    secondary_stories.pop("headers", None)
     if secondary_stories:
         report.warning(
             "SECONDARY_STORIES_DEFERRED",
-            "secondary document stories are present but deferred beyond M2",
+            "some secondary document stories remain unsupported after M5b",
             stories=secondary_stories,
         )
 
@@ -230,7 +256,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M5a conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M5b conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -273,6 +299,7 @@ def inspect_doc(
             "obfuscated": fib.base.is_obfuscated,
             "table_stream": fib.base.table_stream_name,
             "ccpText": fib.ccp_text,
+            "ccpHdd": fib.ccp_headers,
             "fcClx": fib.clx.fc,
             "lcbClx": fib.clx.lcb,
             "fcPlcfBteChpx": fib.plcf_bte_chpx.fc,
@@ -283,6 +310,10 @@ def inspect_doc(
             "lcbStshf": fib.stshf.lcb,
             "fcPlcfSed": fib.plcf_sed.fc,
             "lcbPlcfSed": fib.plcf_sed.lcb,
+            "fcPlcfHdd": fib.plcf_hdd.fc,
+            "lcbPlcfHdd": fib.plcf_hdd.lcb,
+            "fcDop": fib.dop.fc,
+            "lcbDop": fib.dop.lcb,
             "fcSttbfFfn": fib.sttbf_ffn.fc,
             "lcbSttbfFfn": fib.sttbf_ffn.lcb,
         },

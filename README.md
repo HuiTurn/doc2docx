@@ -4,7 +4,7 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M5a implementation supports unencrypted CFB/OLE Word documents,
+The current M0–M5b implementation supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
 UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
 preserves a useful first set of direct character and paragraph properties. It
@@ -18,6 +18,10 @@ margins. It also follows main-story `PlcfSed` records through `Sed.fcSepx` to
 each `Sepx.grpprl`, reconstructing single or multiple sections. Section-break
 types, paper size, portrait/landscape orientation, page margins, header/footer
 distance, and gutter width are emitted as WordprocessingML section properties.
+It parses `PlcfHdd`, removes each story's guard paragraph, preserves the six
+default/even/first header and footer positions per section, and retains empty-story
+inheritance. Header/footer parts, relationships, first-page rules, and the DOP
+facing-pages setting are written as native DOCX package parts.
 
 ## Usage
 
@@ -37,14 +41,15 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-M5a currently preserves bold, italic, strike, double strike, capitalization,
+M5b currently preserves bold, italic, strike, double strike, capitalization,
 hidden text, underline, text color, highlight, font size, vertical alignment,
 paragraph justification, indents, spacing, line spacing, and keep/page-break
-flags, font names, paragraph/character style references, style inheritance, and
-basic section/page layout.
+flags, font names, paragraph/character style references, style inheritance,
+basic section/page layout, and ordinary paragraph/table content in headers and
+footers.
 Conditional table styles, newer color-based table shading, cell spacing,
-numbering styles, multi-column layout, title-page rules, page-number settings,
-header/footer content, other secondary stories, images, live fields, embedded
+numbering styles, multi-column layout, page-number settings, header/footer
+textboxes and shapes, other secondary stories, images, live fields, embedded
 objects, and encrypted documents are intentionally deferred to later iterations.
 Unsupported or lossy content is reported rather than silently treated as fully
 converted.
@@ -61,5 +66,6 @@ It includes constructed CFB version 3/version 4 files, regular and mini streams,
 both Table stream variants, mixed compressed/UTF-16 text pieces, UTF-16 surrogate
 pair coordinates, CHPX/PAPX and piece-level PRM formatting, font/style table
 parsing, nested table reconstruction, grids, cell margins and shading, PlcfSed and
-Sepx page-layout parsing, multi-section break placement, malformed input checks,
-CLI coverage, and end-to-end DOCX package validation.
+Sepx page-layout parsing, multi-section break placement, PlcfHdd guard and story
+mapping, header/footer OPC relationships, malformed input checks, CLI coverage,
+and end-to-end DOCX package validation.

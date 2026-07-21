@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import struct
 import zipfile
@@ -15,6 +16,7 @@ from ..model import (
     CharacterProperties,
     Document,
     FontDefinition,
+    HeaderFooterStory,
     Paragraph,
     ParagraphProperties,
     SectionProperties,
@@ -30,6 +32,7 @@ from ..model import (
 
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 OFFICE_DOCUMENT_REL = (
@@ -44,15 +47,44 @@ STYLES_CONTENT_TYPE = (
 FONT_TABLE_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"
 )
+HEADER_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
+)
+FOOTER_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"
+)
+SETTINGS_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"
+)
 STYLES_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
 )
 FONT_TABLE_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable"
 )
+HEADER_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
+)
+FOOTER_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
+)
+SETTINGS_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings"
+)
 XML_NS = "http://www.w3.org/XML/1998/namespace"
 
 ET.register_namespace("w", W_NS)
+ET.register_namespace("r", R_NS)
+
+
+@dataclass(slots=True, frozen=True)
+class _HeaderFooterPart:
+    section_key: tuple[int, int]
+    kind: str
+    reference_type: str
+    part_name: str
+    relationship_id: str
+    story: HeaderFooterStory
 
 
 def _qn(namespace: str, local_name: str) -> str:
@@ -63,7 +95,13 @@ def _xml_bytes(root: ET.Element) -> bytes:
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def _content_types_xml(*, has_styles: bool, has_fonts: bool) -> bytes:
+def _content_types_xml(
+    *,
+    has_styles: bool,
+    has_fonts: bool,
+    has_settings: bool,
+    header_footer_parts: tuple[_HeaderFooterPart, ...],
+) -> bytes:
     # OPC consumers in the wild are more interoperable with the conventional
     # default namespace form than with an equivalent generated prefix.
     root = ET.Element("Types", xmlns=CONTENT_TYPES_NS)
@@ -99,6 +137,22 @@ def _content_types_xml(*, has_styles: bool, has_fonts: bool) -> bytes:
             PartName="/word/fontTable.xml",
             ContentType=FONT_TABLE_CONTENT_TYPE,
         )
+    if has_settings:
+        ET.SubElement(
+            root,
+            "Override",
+            PartName="/word/settings.xml",
+            ContentType=SETTINGS_CONTENT_TYPE,
+        )
+    for part in header_footer_parts:
+        ET.SubElement(
+            root,
+            "Override",
+            PartName=f"/word/{part.part_name}",
+            ContentType=(
+                HEADER_CONTENT_TYPE if part.kind == "header" else FOOTER_CONTENT_TYPE
+            ),
+        )
     return _xml_bytes(root)
 
 
@@ -114,7 +168,13 @@ def _root_relationships_xml() -> bytes:
     return _xml_bytes(root)
 
 
-def _document_relationships_xml(*, has_styles: bool, has_fonts: bool) -> bytes:
+def _document_relationships_xml(
+    *,
+    has_styles: bool,
+    has_fonts: bool,
+    has_settings: bool,
+    header_footer_parts: tuple[_HeaderFooterPart, ...],
+) -> bytes:
     root = ET.Element("Relationships", xmlns=REL_NS)
     relationship_id = 1
     if has_styles:
@@ -134,7 +194,68 @@ def _document_relationships_xml(*, has_styles: bool, has_fonts: bool) -> bytes:
             Type=FONT_TABLE_REL,
             Target="fontTable.xml",
         )
+        relationship_id += 1
+    if has_settings:
+        ET.SubElement(
+            root,
+            "Relationship",
+            Id=f"rId{relationship_id}",
+            Type=SETTINGS_REL,
+            Target="settings.xml",
+        )
+    for part in header_footer_parts:
+        ET.SubElement(
+            root,
+            "Relationship",
+            Id=part.relationship_id,
+            Type=HEADER_REL if part.kind == "header" else FOOTER_REL,
+            Target=part.part_name,
+        )
     return _xml_bytes(root)
+
+
+def _build_header_footer_parts(
+    document: Document,
+    *,
+    has_styles: bool,
+    has_fonts: bool,
+    has_settings: bool,
+) -> tuple[_HeaderFooterPart, ...]:
+    relationship_number = 1 + sum((has_styles, has_fonts, has_settings))
+    header_number = 0
+    footer_number = 0
+    parts: list[_HeaderFooterPart] = []
+    slots = (
+        ("default_header", "header", "default"),
+        ("even_header", "header", "even"),
+        ("first_header", "header", "first"),
+        ("default_footer", "footer", "default"),
+        ("even_footer", "footer", "even"),
+        ("first_footer", "footer", "first"),
+    )
+    for section in document.sections:
+        for field_name, kind, reference_type in slots:
+            story = getattr(section, field_name)
+            if story is None:
+                continue
+            if kind == "header":
+                header_number += 1
+                part_name = f"header{header_number}.xml"
+            else:
+                footer_number += 1
+                part_name = f"footer{footer_number}.xml"
+            parts.append(
+                _HeaderFooterPart(
+                    section_key=(section.cp_start, section.cp_end),
+                    kind=kind,
+                    reference_type=reference_type,
+                    part_name=part_name,
+                    relationship_id=f"rId{relationship_number}",
+                    story=story,
+                )
+            )
+            relationship_number += 1
+    return tuple(parts)
 
 
 def _append_boolean_property(
@@ -342,8 +463,18 @@ def _append_section_properties(
     section: SectionProperties,
     *,
     include_break_type: bool,
+    header_footer_parts: tuple[_HeaderFooterPart, ...] = (),
 ) -> None:
     section_properties = ET.SubElement(parent, _qn(W_NS, "sectPr"))
+    for part in header_footer_parts:
+        ET.SubElement(
+            section_properties,
+            _qn(W_NS, f"{part.kind}Reference"),
+            {
+                _qn(W_NS, "type"): part.reference_type,
+                _qn(R_NS, "id"): part.relationship_id,
+            },
+        )
     if include_break_type:
         ET.SubElement(
             section_properties,
@@ -372,6 +503,8 @@ def _append_section_properties(
             _qn(W_NS, "gutter"): str(section.gutter_twips),
         },
     )
+    if section.title_page:
+        ET.SubElement(section_properties, _qn(W_NS, "titlePg"))
 
 
 def _append_paragraph(
@@ -380,6 +513,9 @@ def _append_paragraph(
     *,
     valid_paragraph_style_ids: set[int],
     valid_character_style_ids: set[int],
+    section_references: dict[
+        tuple[int, int], tuple[_HeaderFooterPart, ...]
+    ] | None = None,
 ) -> None:
     paragraph_element = ET.SubElement(parent, _qn(W_NS, "p"))
     _append_paragraph_properties(
@@ -396,6 +532,13 @@ def _append_paragraph(
             paragraph_properties,
             paragraph.section_end,
             include_break_type=True,
+            header_footer_parts=(section_references or {}).get(
+                (
+                    paragraph.section_end.cp_start,
+                    paragraph.section_end.cp_end,
+                ),
+                (),
+            ),
         )
     for inline in paragraph.inlines:
         if isinstance(inline, TextRun):
@@ -686,7 +829,10 @@ def _append_table(
             )
 
 
-def _document_xml(document: Document) -> bytes:
+def _document_xml(
+    document: Document,
+    header_footer_parts: tuple[_HeaderFooterPart, ...],
+) -> bytes:
     valid_paragraph_style_ids = {
         style.index
         for style in document.styles.styles
@@ -699,6 +845,14 @@ def _document_xml(document: Document) -> bytes:
     }
     root = ET.Element(_qn(W_NS, "document"))
     body = ET.SubElement(root, _qn(W_NS, "body"))
+    section_references: dict[
+        tuple[int, int], tuple[_HeaderFooterPart, ...]
+    ] = {}
+    for section in document.sections:
+        section_key = (section.cp_start, section.cp_end)
+        section_references[section_key] = tuple(
+            part for part in header_footer_parts if part.section_key == section_key
+        )
     for block in document.body_blocks:
         if isinstance(block, Paragraph):
             _append_paragraph(
@@ -706,6 +860,7 @@ def _document_xml(document: Document) -> bytes:
                 block,
                 valid_paragraph_style_ids=valid_paragraph_style_ids,
                 valid_character_style_ids=valid_character_style_ids,
+                section_references=section_references,
             )
         elif isinstance(block, Table):
             _append_table(
@@ -719,7 +874,57 @@ def _document_xml(document: Document) -> bytes:
             body,
             document.sections[-1],
             include_break_type=False,
+            header_footer_parts=section_references.get(
+                (
+                    document.sections[-1].cp_start,
+                    document.sections[-1].cp_end,
+                ),
+                (),
+            ),
         )
+    return _xml_bytes(root)
+
+
+def _header_footer_xml(
+    part: _HeaderFooterPart,
+    document: Document,
+) -> bytes:
+    valid_paragraph_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "paragraph"
+    }
+    valid_character_style_ids = {
+        style.index
+        for style in document.styles.styles
+        if style is not None and style.kind == "character"
+    }
+    root = ET.Element(_qn(W_NS, "hdr" if part.kind == "header" else "ftr"))
+    blocks = part.story.body_blocks
+    for block in blocks:
+        if isinstance(block, Paragraph):
+            _append_paragraph(
+                root,
+                block,
+                valid_paragraph_style_ids=valid_paragraph_style_ids,
+                valid_character_style_ids=valid_character_style_ids,
+            )
+        elif isinstance(block, Table):
+            _append_table(
+                root,
+                block,
+                valid_paragraph_style_ids=valid_paragraph_style_ids,
+                valid_character_style_ids=valid_character_style_ids,
+            )
+    if not blocks:
+        ET.SubElement(root, _qn(W_NS, "p"))
+    return _xml_bytes(root)
+
+
+def _settings_xml(*, even_and_odd_headers: bool) -> bytes:
+    root = ET.Element(_qn(W_NS, "settings"))
+    if even_and_odd_headers:
+        ET.SubElement(root, _qn(W_NS, "evenAndOddHeaders"))
     return _xml_bytes(root)
 
 
@@ -870,22 +1075,40 @@ def write_docx(document: Document, destination: str | Path) -> None:
         for style in document.styles.styles
     )
     has_fonts = bool(document.fonts)
+    has_settings = document.even_and_odd_headers
+    header_footer_parts = _build_header_footer_parts(
+        document,
+        has_styles=has_styles,
+        has_fonts=has_fonts,
+        has_settings=has_settings,
+    )
     try:
         with zipfile.ZipFile(output, mode="w") as package:
             _write_part(
                 package,
                 "[Content_Types].xml",
-                _content_types_xml(has_styles=has_styles, has_fonts=has_fonts),
+                _content_types_xml(
+                    has_styles=has_styles,
+                    has_fonts=has_fonts,
+                    has_settings=has_settings,
+                    header_footer_parts=header_footer_parts,
+                ),
             )
             _write_part(package, "_rels/.rels", _root_relationships_xml())
-            _write_part(package, "word/document.xml", _document_xml(document))
-            if has_styles or has_fonts:
+            _write_part(
+                package,
+                "word/document.xml",
+                _document_xml(document, header_footer_parts),
+            )
+            if has_styles or has_fonts or has_settings or header_footer_parts:
                 _write_part(
                     package,
                     "word/_rels/document.xml.rels",
                     _document_relationships_xml(
                         has_styles=has_styles,
                         has_fonts=has_fonts,
+                        has_settings=has_settings,
+                        header_footer_parts=header_footer_parts,
                     ),
                 )
             if has_styles:
@@ -895,6 +1118,18 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     package,
                     "word/fontTable.xml",
                     _font_table_xml(document.fonts),
+                )
+            if has_settings:
+                _write_part(
+                    package,
+                    "word/settings.xml",
+                    _settings_xml(even_and_odd_headers=True),
+                )
+            for part in header_footer_parts:
+                _write_part(
+                    package,
+                    f"word/{part.part_name}",
+                    _header_footer_xml(part, document),
                 )
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         raise PackageWriteError(f"could not write DOCX package: {exc}") from exc

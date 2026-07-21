@@ -6,10 +6,15 @@ import zipfile
 from xml.etree import ElementTree as ET
 
 from doc2docx import convert, inspect_doc
-from doc2docx.errors import EncryptedDocumentError, UnsafeOutputPathError
+from doc2docx.errors import (
+    EncryptedDocumentError,
+    InvalidWordDocument,
+    UnsafeOutputPathError,
+)
 
 from .fixtures import (
     build_formatted_word_cfb,
+    build_header_footer_word_cfb,
     build_nested_table_word_cfb,
     build_sectioned_word_cfb,
     build_table_word_cfb,
@@ -18,9 +23,81 @@ from .fixtures import (
 
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_header_footer_story_without_guard_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "bad-header.doc"
+            source.write_bytes(build_header_footer_word_cfb(malformed_guard=True))
+            with self.assertRaises(InvalidWordDocument):
+                convert(source)
+
+    def test_header_footer_stories_are_packaged_and_referenced(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "headers.doc"
+            destination = temporary / "headers.docx"
+            source.write_bytes(build_header_footer_word_cfb())
+
+            result = convert(source, destination)
+
+            self.assertFalse(result.report.warnings)
+            self.assertEqual(result.report.statistics["section_count"], 1)
+            self.assertEqual(result.report.statistics["header_footer_story_count"], 6)
+            self.assertEqual(result.report.statistics["header_footer_paragraph_count"], 6)
+            self.assertTrue(result.document.even_and_odd_headers)
+            self.assertTrue(result.document.sections[0].title_page)
+            with zipfile.ZipFile(destination) as package:
+                names = set(package.namelist())
+                self.assertTrue(
+                    {
+                        "word/header1.xml",
+                        "word/header2.xml",
+                        "word/header3.xml",
+                        "word/footer1.xml",
+                        "word/footer2.xml",
+                        "word/footer3.xml",
+                        "word/settings.xml",
+                        "word/_rels/document.xml.rels",
+                    }.issubset(names)
+                )
+                document_root = ET.fromstring(package.read("word/document.xml"))
+                relationships_root = ET.fromstring(
+                    package.read("word/_rels/document.xml.rels")
+                )
+                settings_root = ET.fromstring(package.read("word/settings.xml"))
+                relationship_targets = {
+                    item.get("Id"): item.get("Target")
+                    for item in relationships_root.findall(f"{REL}Relationship")
+                }
+                section = document_root.find(f"./{W}body/{W}sectPr")
+                assert section is not None
+                self.assertIsNotNone(section.find(f"{W}titlePg"))
+                self.assertIsNotNone(settings_root.find(f"{W}evenAndOddHeaders"))
+
+                expected = {
+                    (f"{W}headerReference", "default"): "Default H",
+                    (f"{W}headerReference", "even"): "Even H",
+                    (f"{W}headerReference", "first"): "First H",
+                    (f"{W}footerReference", "default"): "Default F",
+                    (f"{W}footerReference", "even"): "Even F",
+                    (f"{W}footerReference", "first"): "First F",
+                }
+                actual: dict[tuple[str, str], str] = {}
+                for reference in section.findall(f"{W}headerReference") + section.findall(
+                    f"{W}footerReference"
+                ):
+                    relationship_id = reference.get(f"{R}id")
+                    target = relationship_targets[relationship_id]
+                    story_root = ET.fromstring(package.read(f"word/{target}"))
+                    actual[(reference.tag, reference.get(f"{W}type"))] = "".join(
+                        story_root.itertext()
+                    )
+                self.assertEqual(actual, expected)
+
     def test_section_layout_and_break_types_are_emitted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
@@ -232,9 +309,11 @@ class ConversionTests(unittest.TestCase):
             info = inspect_doc(source)
             self.assertEqual(info["fib"]["table_stream"], "1Table")
             self.assertEqual(info["fib"]["ccpText"], 9)
+            self.assertEqual(info["fib"]["ccpHdd"], 0)
             self.assertEqual(info["fib"]["lcbPlcfBteChpx"], 0)
             self.assertEqual(info["fib"]["lcbPlcfBtePapx"], 0)
             self.assertEqual(info["fib"]["lcbPlcfSed"], 0)
+            self.assertEqual(info["fib"]["lcbPlcfHdd"], 0)
             self.assertEqual(
                 {item["path"] for item in info["entries"]},
                 {"WordDocument", "1Table"},

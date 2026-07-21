@@ -68,9 +68,13 @@ def _build_fib(
     *,
     ccp_text: int,
     clx_size: int,
+    ccp_footnotes: int = 0,
+    ccp_headers: int = 0,
     section_plc: tuple[int, int] = (0, 0),
+    header_plc: tuple[int, int] = (0, 0),
     chpx_plc: tuple[int, int] = (0, 0),
     papx_plc: tuple[int, int] = (0, 0),
+    dop: tuple[int, int] = (0, 0),
     cb_mac: int = 1110,
     encrypted: bool = False,
     uses_1table: bool = True,
@@ -95,14 +99,18 @@ def _build_fib(
     fib_rg_lw = [0] * 22
     fib_rg_lw[0] = cb_mac
     fib_rg_lw[3] = ccp_text
+    fib_rg_lw[4] = ccp_footnotes
+    fib_rg_lw[5] = ccp_headers
     struct.pack_into("<22I", fib, position, *fib_rg_lw)
     position += 22 * 4
     struct.pack_into("<H", fib, position, 93)
     position += 2
     pairs = [(0, 0)] * 93
     pairs[6] = section_plc
+    pairs[11] = header_plc
     pairs[12] = chpx_plc
     pairs[13] = papx_plc
+    pairs[31] = dop
     pairs[33] = (0, clx_size)
     for fc, lcb in pairs:
         struct.pack_into("<II", fib, position, fc, lcb)
@@ -240,6 +248,91 @@ def build_sectioned_word_cfb() -> bytes:
     table_stream[
         plcf_sed_offset : plcf_sed_offset + len(plcf_sed)
     ] = plcf_sed
+    return _wrap_regular_word_streams(word_document, table_stream)
+
+
+def build_header_footer_word_cfb(*, malformed_guard: bool = False) -> bytes:
+    """A one-section DOC containing all six header/footer story types."""
+
+    main_text = b"Body\r"
+    header_stories = (
+        b"",
+        b"",
+        b"",
+        b"",
+        b"",
+        b"",
+        b"Even H\rX" if malformed_guard else b"Even H\r\r",
+        b"Default H\r\r",
+        b"Even F\r\r",
+        b"Default F\r\r",
+        b"First H\r\r",
+        b"First F\r\r",
+    )
+    header_payload = bytearray()
+    header_cps = [0]
+    for story in header_stories:
+        header_payload.extend(story)
+        header_cps.append(len(header_payload))
+    header_document = bytes(header_payload) + b"\r"
+    all_text = main_text + header_document
+
+    text_fc = 1024
+    compressed_fc = (text_fc * 2) | 0x40000000
+    plc_pcd = struct.pack("<2I", 0, len(all_text))
+    plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
+    clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
+
+    sepx_fc = 1400
+    section_grpprl = b"".join(
+        (
+            struct.pack("<HB", 0x300A, 1),
+            struct.pack("<HH", 0xB01F, 12240),
+            struct.pack("<HH", 0xB020, 15840),
+            struct.pack("<HH", 0xB021, 1440),
+            struct.pack("<HH", 0xB022, 1440),
+            struct.pack("<Hh", 0x9023, 1440),
+            struct.pack("<Hh", 0x9024, 1440),
+            struct.pack("<HH", 0xB017, 720),
+            struct.pack("<HH", 0xB018, 720),
+        )
+    )
+    plcf_sed = struct.pack("<2I", 0, len(main_text))
+    plcf_sed += struct.pack("<HiHI", 0, sepx_fc, 0, 0)
+    plcf_sed_offset = 128
+
+    # PlcfHdd has one boundary per story plus an ending CP and one final,
+    # undefined CP. The header document's last character is outside all stories.
+    plcf_hdd = struct.pack(f"<{len(header_cps) + 1}I", *header_cps, 0)
+    plcf_hdd_offset = 200
+    dop_offset = 300
+    dop_size = 84
+
+    word_document = bytearray(4096)
+    word_document[:1024] = _build_fib(
+        ccp_text=len(main_text),
+        ccp_headers=len(header_document),
+        clx_size=len(clx),
+        section_plc=(plcf_sed_offset, len(plcf_sed)),
+        header_plc=(plcf_hdd_offset, len(plcf_hdd)),
+        dop=(dop_offset, dop_size),
+        cb_mac=1500,
+    )
+    word_document[text_fc : text_fc + len(all_text)] = all_text
+    struct.pack_into("<h", word_document, sepx_fc, len(section_grpprl))
+    word_document[
+        sepx_fc + 2 : sepx_fc + 2 + len(section_grpprl)
+    ] = section_grpprl
+
+    table_stream = bytearray(4096)
+    table_stream[: len(clx)] = clx
+    table_stream[
+        plcf_sed_offset : plcf_sed_offset + len(plcf_sed)
+    ] = plcf_sed
+    table_stream[
+        plcf_hdd_offset : plcf_hdd_offset + len(plcf_hdd)
+    ] = plcf_hdd
+    table_stream[dop_offset] = 0x01  # DopBase.fFacingPages
     return _wrap_regular_word_streams(word_document, table_stream)
 
 

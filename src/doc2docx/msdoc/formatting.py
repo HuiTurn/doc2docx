@@ -424,13 +424,13 @@ def read_formatting(
     if unsupported_character_sprms:
         report.warning(
             "UNSUPPORTED_CHARACTER_SPRMS",
-            "some direct character properties are deferred beyond M3b",
+            "some direct character properties are not yet supported",
             opcodes=[f"0x{value:04X}" for value in sorted(unsupported_character_sprms)],
         )
     if unsupported_paragraph_sprms:
         report.warning(
             "UNSUPPORTED_PARAGRAPH_SPRMS",
-            "some direct paragraph properties are deferred beyond M3b",
+            "some direct paragraph properties are not yet supported",
             opcodes=[f"0x{value:04X}" for value in sorted(unsupported_paragraph_sprms)],
         )
     referenced_style_ids = {

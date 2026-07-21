@@ -13,9 +13,11 @@ FIB_IDENT = 0xA5EC
 # fcPlcfSed/lcbPlcfSed. Therefore fcClx/lcbClx is pair 33 (zero-based).
 FCLCB97_STSHF_INDEX = 1
 FCLCB97_PLCF_SED_INDEX = 6
+FCLCB97_PLCF_HDD_INDEX = 11
 FCLCB97_PLCF_BTE_CHPX_INDEX = 12
 FCLCB97_PLCF_BTE_PAPX_INDEX = 13
 FCLCB97_STTBF_FFN_INDEX = 15
+FCLCB97_DOP_INDEX = 31
 FCLCB97_CLX_INDEX = 33
 
 
@@ -89,6 +91,18 @@ class FileInformationBlock:
         return self.fib_rg_lw[3]
 
     @property
+    def ccp_footnotes(self) -> int:
+        return self.fib_rg_lw[4] if len(self.fib_rg_lw) > 4 else 0
+
+    @property
+    def ccp_headers(self) -> int:
+        return self.fib_rg_lw[5] if len(self.fib_rg_lw) > 5 else 0
+
+    @property
+    def header_story_cp_start(self) -> int:
+        return self.ccp_text + self.ccp_footnotes
+
+    @property
     def cb_mac(self) -> int:
         if not self.fib_rg_lw:
             raise InvalidWordDocument("FIB does not contain FibRgLw97.cbMac")
@@ -127,6 +141,18 @@ class FileInformationBlock:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_SED_INDEX:
             return FcLcb(0, 0)
         return self.fib_rg_fc_lcb[FCLCB97_PLCF_SED_INDEX]
+
+    @property
+    def plcf_hdd(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_HDD_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_HDD_INDEX]
+
+    @property
+    def dop(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_DOP_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_DOP_INDEX]
 
     @property
     def sttbf_ffn(self) -> FcLcb:

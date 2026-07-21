@@ -89,6 +89,11 @@ def _apply_section_modifiers(
                 unsupported.add(opcode)
             else:
                 section = replace(section, break_type=break_type)
+        elif opcode == 0x300A:  # sprmSFTitlePage
+            if operand[0] not in (0x00, 0x01):
+                unsupported.add(opcode)
+            else:
+                section = replace(section, title_page=bool(operand[0]))
         elif opcode == 0xB017:  # sprmSDyaHdrTop
             section = replace(section, header_distance_twips=_u16(operand))
         elif opcode == 0xB018:  # sprmSDyaHdrBottom
@@ -248,7 +253,7 @@ def read_sections(
     if unsupported:
         report.warning(
             "UNSUPPORTED_SECTION_SPRMS",
-            "some DOC section properties are not yet supported in M5a",
+            "some DOC section properties are not yet supported",
             opcodes=[f"0x{value:04X}" for value in sorted(unsupported)],
         )
     return tuple(sections)
