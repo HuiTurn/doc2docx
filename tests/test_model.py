@@ -12,7 +12,9 @@ from doc2docx.model import (
     Document,
     Field,
     Paragraph,
+    ParagraphFrameProperties,
     ParagraphProperties,
+    ShadingProperties,
     Symbol,
     Tab,
     TextRun,
@@ -25,6 +27,44 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class DocumentModelTests(unittest.TestCase):
+    def test_paragraph_frame_and_shading_are_written_in_schema_order(self) -> None:
+        properties = ParagraphProperties(
+            keep_lines=True,
+            widow_control=True,
+            frame=ParagraphFrameProperties(
+                horizontal_anchor="page",
+                vertical_anchor="text",
+                wrap="around",
+                drop_cap="margin",
+                drop_cap_lines=3,
+            ),
+            shading=ShadingProperties("clear", "000000", "FFFFFF"),
+        )
+        document = Document((Paragraph((TextRun("Frame"),), properties),))
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "paragraph-frame.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        paragraph_properties = root.find(f"./{W}body/{W}p/{W}pPr")
+        assert paragraph_properties is not None
+        names = [child.tag.removeprefix(W) for child in paragraph_properties]
+        self.assertEqual(names[:4], ["keepLines", "framePr", "widowControl", "shd"])
+        frame = paragraph_properties.find(f"{W}framePr")
+        assert frame is not None
+        self.assertEqual(frame.get(f"{W}dropCap"), "margin")
+        self.assertEqual(frame.get(f"{W}lines"), "3")
+        self.assertEqual(frame.get(f"{W}hAnchor"), "page")
+        self.assertEqual(frame.get(f"{W}vAnchor"), "text")
+        self.assertEqual(frame.get(f"{W}wrap"), "around")
+        shading = paragraph_properties.find(f"{W}shd")
+        assert shading is not None
+        self.assertEqual(shading.get(f"{W}val"), "clear")
+        self.assertEqual(shading.get(f"{W}color"), "000000")
+        self.assertEqual(shading.get(f"{W}fill"), "FFFFFF")
+
     def test_character_effects_scale_and_emphasis_are_written(self) -> None:
         character = CharacterProperties(
             outline=True,

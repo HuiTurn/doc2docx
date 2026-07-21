@@ -202,6 +202,17 @@ class TabStop:
 
 
 @dataclass(slots=True, frozen=True)
+class ParagraphFrameProperties:
+    """Text-frame and drop-cap properties shared by a paragraph group."""
+
+    horizontal_anchor: str | None = None
+    vertical_anchor: str | None = None
+    wrap: str | None = None
+    drop_cap: str | None = None
+    drop_cap_lines: int | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class TableCellMarginOverride:
     first_cell: int
     limit_cell: int
@@ -288,7 +299,9 @@ class ParagraphProperties:
     auto_space_east_asian_numbers: bool | None = None
     snap_to_grid: bool | None = None
     adjust_right_indent: bool | None = None
+    frame: ParagraphFrameProperties | None = None
     borders: TableBorders | None = None
+    shading: ShadingProperties | None = None
     tab_stops: tuple[TabStop, ...] | None = None
     left_indent_twips: int | None = None
     right_indent_twips: int | None = None

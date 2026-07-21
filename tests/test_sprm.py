@@ -2,7 +2,7 @@ import struct
 import unittest
 
 from doc2docx.errors import InvalidWordDocument
-from doc2docx.model import ShadingProperties
+from doc2docx.model import ParagraphFrameProperties, ShadingProperties
 from doc2docx.msdoc.sprm import (
     apply_character_modifiers,
     apply_paragraph_modifiers,
@@ -11,6 +11,34 @@ from doc2docx.msdoc.sprm import (
 
 
 class SprmTests(unittest.TestCase):
+    def test_paragraph_frame_drop_cap_and_shading_are_parsed(self) -> None:
+        properties, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(
+                struct.pack("<HB", 0x261B, 0xA0)
+                + struct.pack("<HB", 0x2423, 0x02)
+                + struct.pack("<HH", 0x442C, 0x001A)
+                + struct.pack("<HH", 0x442D, 0x0101),
+                label="paragraph-frame.grpprl",
+            ),
+            style_id=0,
+        )
+
+        self.assertFalse(unsupported)
+        self.assertEqual(
+            properties.frame,
+            ParagraphFrameProperties(
+                horizontal_anchor="page",
+                vertical_anchor="text",
+                wrap="around",
+                drop_cap="margin",
+                drop_cap_lines=3,
+            ),
+        )
+        self.assertEqual(
+            properties.shading,
+            ShadingProperties("clear", "000000", "FFFFFF"),
+        )
+
     def test_picture_location_and_binary_flag_survive_style_resets(self) -> None:
         properties, unsupported, _ = apply_character_modifiers(
             parse_grpprl(

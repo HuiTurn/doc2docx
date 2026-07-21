@@ -5,6 +5,16 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+### M15b
+
+- Preserve MS-DOC paragraph-frame anchors and wrapping, regular and margin
+  drop caps with their line count, and legacy paragraph shading as native
+  `w:framePr` and `w:shd` properties in schema order.
+- Validate with 158 focused tests and the 42-file regression batch. The two
+  frame-heavy Word 97 samples no longer emit unsupported paragraph-property
+  warnings, and rendered output now places the three-line margin drop cap next
+  to its wrapped paragraph instead of leaving an oversized centered letter.
+
 ### M15a
 
 - Follow `sprmPTableProps` and `sprmPHugePapx` references into bounded

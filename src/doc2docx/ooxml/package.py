@@ -709,7 +709,9 @@ def _append_paragraph_properties(
         or properties.auto_space_east_asian_numbers is not None
         or properties.snap_to_grid is not None
         or properties.adjust_right_indent is not None
+        or properties.frame is not None
         or properties.borders is not None
+        or properties.shading is not None
         or properties.tab_stops is not None
         or properties.left_indent_twips is not None
         or properties.right_indent_twips is not None
@@ -752,6 +754,29 @@ def _append_paragraph_properties(
         "pageBreakBefore",
         properties.page_break_before,
     )
+    if properties.frame is not None:
+        frame_attributes: dict[str, str] = {}
+        if properties.frame.drop_cap is not None:
+            frame_attributes[_qn(W_NS, "dropCap")] = properties.frame.drop_cap
+        if properties.frame.drop_cap_lines is not None:
+            frame_attributes[_qn(W_NS, "lines")] = str(
+                properties.frame.drop_cap_lines
+            )
+        if properties.frame.horizontal_anchor is not None:
+            frame_attributes[_qn(W_NS, "hAnchor")] = (
+                properties.frame.horizontal_anchor
+            )
+        if properties.frame.vertical_anchor is not None:
+            frame_attributes[_qn(W_NS, "vAnchor")] = (
+                properties.frame.vertical_anchor
+            )
+        if properties.frame.wrap is not None:
+            frame_attributes[_qn(W_NS, "wrap")] = properties.frame.wrap
+        ET.SubElement(
+            paragraph_properties,
+            _qn(W_NS, "framePr"),
+            frame_attributes,
+        )
     _append_boolean_property(
         paragraph_properties,
         "widowControl",
@@ -806,6 +831,7 @@ def _append_paragraph_properties(
             properties.borders,
             include_inside=False,
         )
+    _append_shading(paragraph_properties, properties.shading)
     if properties.tab_stops:
         tabs = ET.SubElement(paragraph_properties, _qn(W_NS, "tabs"))
         for tab_stop in properties.tab_stops:

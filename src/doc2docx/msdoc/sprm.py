@@ -11,6 +11,7 @@ from ..errors import InvalidWordDocument
 from ..model import (
     BorderProperties,
     CharacterProperties,
+    ParagraphFrameProperties,
     ParagraphProperties,
     ShadingProperties,
     TabStop,
@@ -126,6 +127,29 @@ _PARAGRAPH_TOGGLES = {
     0x245B: "auto_spacing_before",
     0x245C: "auto_spacing_after",
     0x246D: "contextual_spacing",
+}
+
+_FRAME_HORIZONTAL_ANCHORS = {
+    0x00: "text",
+    0x01: "margin",
+    0x02: "page",
+    0x03: None,
+}
+
+_FRAME_VERTICAL_ANCHORS = {
+    0x00: "margin",
+    0x01: "page",
+    0x02: "text",
+    0x03: None,
+}
+
+_FRAME_WRAPS = {
+    0x00: "auto",
+    0x01: "notBeside",
+    0x02: "around",
+    0x03: "none",
+    0x04: "tight",
+    0x05: "through",
 }
 
 _FONT_HINTS = {
@@ -1342,6 +1366,58 @@ def apply_paragraph_modifiers(
             properties = replace(properties, keep_next=bool(operand[0]))
         elif opcode == 0x2407:
             properties = replace(properties, page_break_before=bool(operand[0]))
+        elif opcode == 0x261B:  # sprmPPc
+            value = operand[0]
+            frame = properties.frame or ParagraphFrameProperties()
+            properties = replace(
+                properties,
+                frame=replace(
+                    frame,
+                    vertical_anchor=_FRAME_VERTICAL_ANCHORS[(value >> 4) & 0x03],
+                    horizontal_anchor=_FRAME_HORIZONTAL_ANCHORS[
+                        (value >> 6) & 0x03
+                    ],
+                ),
+            )
+        elif opcode == 0x2423:  # sprmPWr
+            wrap = _FRAME_WRAPS.get(operand[0])
+            if wrap is None:
+                unsupported.add(opcode)
+            else:
+                frame = properties.frame or ParagraphFrameProperties()
+                properties = replace(properties, frame=replace(frame, wrap=wrap))
+        elif opcode == 0x442C:  # sprmPDcs
+            value = struct.unpack("<H", operand)[0]
+            drop_cap_type = value & 0x07
+            lines = (value >> 3) & 0x1F
+            if drop_cap_type == 0 and lines == 0:
+                drop_cap = "none"
+                lines_value = None
+            elif drop_cap_type in (1, 2) and 1 <= lines <= 10:
+                drop_cap = "drop" if drop_cap_type == 1 else "margin"
+                lines_value = lines
+            else:
+                unsupported.add(opcode)
+                continue
+            frame = properties.frame or ParagraphFrameProperties()
+            properties = replace(
+                properties,
+                frame=replace(
+                    frame,
+                    drop_cap=drop_cap,
+                    drop_cap_lines=lines_value,
+                ),
+            )
+        elif opcode == 0x442D:  # sprmPShd80
+            value = struct.unpack("<H", operand)[0]
+            shading, approximated = _parse_shd80(operand)
+            if shading is None:
+                shading = ShadingProperties(
+                    "nil" if value == 0xFFFF else "clear"
+                )
+            properties = replace(properties, shading=shading)
+            if approximated:
+                unsupported.add(opcode)
         elif opcode == 0x2640:
             if operand[0] > 9:
                 unsupported.add(opcode)
