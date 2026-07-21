@@ -72,6 +72,7 @@ def _build_fib(
     ccp_comments: int = 0,
     ccp_endnotes: int = 0,
     ccp_headers: int = 0,
+    ccp_textboxes: int = 0,
     ccp_header_textboxes: int = 0,
     section_plc: tuple[int, int] = (0, 0),
     footnote_ref_plc: tuple[int, int] = (0, 0),
@@ -85,8 +86,12 @@ def _build_fib(
     endnote_ref_plc: tuple[int, int] = (0, 0),
     endnote_text_plc: tuple[int, int] = (0, 0),
     header_plc: tuple[int, int] = (0, 0),
+    main_shape_plc: tuple[int, int] = (0, 0),
     header_shape_plc: tuple[int, int] = (0, 0),
     dgg_info: tuple[int, int] = (0, 0),
+    main_textbox_plc: tuple[int, int] = (0, 0),
+    main_textbox_field_plc: tuple[int, int] = (0, 0),
+    main_textbox_break_plc: tuple[int, int] = (0, 0),
     header_textbox_plc: tuple[int, int] = (0, 0),
     header_textbox_field_plc: tuple[int, int] = (0, 0),
     header_textbox_break_plc: tuple[int, int] = (0, 0),
@@ -121,6 +126,7 @@ def _build_fib(
     fib_rg_lw[5] = ccp_headers
     fib_rg_lw[7] = ccp_comments
     fib_rg_lw[8] = ccp_endnotes
+    fib_rg_lw[9] = ccp_textboxes
     fib_rg_lw[10] = ccp_header_textboxes
     struct.pack_into("<22I", fib, position, *fib_rg_lw)
     position += 22 * 4
@@ -139,14 +145,18 @@ def _build_fib(
     pairs[33] = (0, clx_size)
     pairs[36] = comment_owners
     pairs[37] = comment_bookmark_tags
+    pairs[40] = main_shape_plc
     pairs[41] = header_shape_plc
     pairs[42] = comment_bookmark_starts
     pairs[43] = comment_bookmark_ends
     pairs[46] = endnote_ref_plc
     pairs[47] = endnote_text_plc
     pairs[50] = dgg_info
+    pairs[56] = main_textbox_plc
+    pairs[57] = main_textbox_field_plc
     pairs[58] = header_textbox_plc
     pairs[59] = header_textbox_field_plc
+    pairs[75] = main_textbox_break_plc
     pairs[76] = header_textbox_break_plc
     for fc, lcb in pairs:
         struct.pack_into("<II", fib, position, fc, lcb)
@@ -398,7 +408,7 @@ def _officeart_record(
     ) + payload
 
 
-def _header_textbox_officeart(shape_id: int) -> bytes:
+def _header_textbox_officeart(shape_id: int, *, main_shape: bool = False) -> bytes:
     drawing_group_data = _officeart_record(
         0,
         0,
@@ -442,6 +452,8 @@ def _header_textbox_officeart(shape_id: int) -> bytes:
         _officeart_record(0, 2, 0xF008, struct.pack("<2I", 1, shape_id))
         + shape,
     )
+    if main_shape:
+        return drawing_group + b"\x01" + main_drawing + b"\x00" + header_drawing
     return drawing_group + b"\x00" + main_drawing + b"\x01" + header_drawing
 
 
@@ -601,6 +613,129 @@ def build_header_textbox_word_cfb(
     table_stream[
         plcf_fields_offset : plcf_fields_offset + len(plcf_fields)
     ] = plcf_fields
+    if dgg_info:
+        table_stream[dgg_info_offset : dgg_info_offset + len(dgg_info)] = dgg_info
+    return _wrap_regular_word_streams(word_document, table_stream)
+
+
+def build_main_textbox_word_cfb(
+    *,
+    malformed_anchor: bool = False,
+    missing_break_table: bool = False,
+    officeart_style: bool = False,
+    page_field: bool = False,
+) -> bytes:
+    """A DOC whose main story contains one floating text box."""
+
+    anchor = b"!" if malformed_anchor else b"\x08"
+    main_text = b"Before" + anchor + b"After\r"
+    anchor_cp = 6
+    field_text = b"\x13 PAGE \\* MERGEFORMAT \x141\x15"
+    textbox_content = field_text if page_field else b"Inside textbox"
+    textbox_range = textbox_content + b"\r\r"
+    textbox_document = textbox_range + b"\r"
+    all_text = main_text + textbox_document
+
+    text_fc = 1024
+    compressed_fc = (text_fc * 2) | 0x40000000
+    plc_pcd = struct.pack("<2I", 0, len(all_text))
+    plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
+    clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
+
+    shape_id = 1025
+    plcf_spa = struct.pack("<2I", anchor_cp, len(main_text))
+    plcf_spa += struct.pack(
+        "<I4iHI",
+        shape_id,
+        720,
+        360,
+        3600,
+        1440,
+        0x0070,
+        0,
+    )
+    plcf_spa_offset = 128
+
+    textbox_cps = (0, len(textbox_range), len(textbox_document))
+    plcf_textboxes = struct.pack("<3I", *textbox_cps)
+    plcf_textboxes += struct.pack(
+        "<iiHiII",
+        1,
+        0,
+        0,
+        -1,
+        shape_id,
+        0,
+    )
+    plcf_textboxes += struct.pack(
+        "<iiHiII",
+        -1,
+        0,
+        1,
+        0,
+        0,
+        0,
+    )
+    plcf_textboxes_offset = 200
+
+    plcf_breaks = struct.pack("<3I", *textbox_cps)
+    plcf_breaks += struct.pack("<hHH", 0, 0, 0)
+    plcf_breaks += struct.pack("<hHH", -1, 0, 0)
+    plcf_breaks_offset = 280
+    plcf_fields = b""
+    plcf_fields_offset = 320
+    if page_field:
+        separator_cp = field_text.index(b"\x14")
+        end_cp = field_text.index(b"\x15")
+        plcf_fields = struct.pack(
+            "<4I",
+            0,
+            separator_cp,
+            end_cp,
+            len(textbox_document),
+        )
+        plcf_fields += bytes((0x13, 0x21, 0x14, 0x00, 0x15, 0x00))
+    dgg_info = (
+        _header_textbox_officeart(shape_id, main_shape=True)
+        if officeart_style
+        else b""
+    )
+    dgg_info_offset = 380
+
+    word_document = bytearray(4096)
+    word_document[:1024] = _build_fib(
+        ccp_text=len(main_text),
+        ccp_textboxes=len(textbox_document),
+        clx_size=len(clx),
+        main_shape_plc=(plcf_spa_offset, len(plcf_spa)),
+        main_textbox_plc=(plcf_textboxes_offset, len(plcf_textboxes)),
+        main_textbox_field_plc=(
+            (plcf_fields_offset, len(plcf_fields)) if plcf_fields else (0, 0)
+        ),
+        main_textbox_break_plc=(
+            (0, 0)
+            if missing_break_table
+            else (plcf_breaks_offset, len(plcf_breaks))
+        ),
+        dgg_info=(dgg_info_offset, len(dgg_info)) if dgg_info else (0, 0),
+        cb_mac=2048,
+    )
+    word_document[text_fc : text_fc + len(all_text)] = all_text
+
+    table_stream = bytearray(4096)
+    table_stream[: len(clx)] = clx
+    table_stream[plcf_spa_offset : plcf_spa_offset + len(plcf_spa)] = plcf_spa
+    table_stream[
+        plcf_textboxes_offset : plcf_textboxes_offset + len(plcf_textboxes)
+    ] = plcf_textboxes
+    if not missing_break_table:
+        table_stream[
+            plcf_breaks_offset : plcf_breaks_offset + len(plcf_breaks)
+        ] = plcf_breaks
+    if plcf_fields:
+        table_stream[
+            plcf_fields_offset : plcf_fields_offset + len(plcf_fields)
+        ] = plcf_fields
     if dgg_info:
         table_stream[dgg_info_offset : dgg_info_offset + len(dgg_info)] = dgg_info
     return _wrap_regular_word_streams(word_document, table_stream)

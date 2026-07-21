@@ -4,7 +4,7 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M7c implementation supports unencrypted CFB/OLE Word documents,
+The current M0–M7d implementation supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
 UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
 preserves a useful first set of direct character and paragraph properties. It
@@ -47,6 +47,10 @@ Legacy comments are resolved through `PlcfandRef`/`PlcfandTxt`, author XSTs,
 and annotation bookmark tables. Ordinary range and insertion-point comments are
 emitted as native main-story anchors plus `comments.xml`, preserving author
 names and initials.
+Main-story textboxes are likewise resolved through `PlcSpaMom`,
+`PlcftxbxTxt`, and `PlcfTxbxBkd`; their text, basic fields, position, wrapping,
+anchor flags, and OfficeArt appearance use the same validated floating-shape
+pipeline as header/footer textboxes.
 
 ## Usage
 
@@ -68,13 +72,13 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-M7c currently preserves bold, italic, strike, double strike, capitalization,
+M7d currently preserves bold, italic, strike, double strike, capitalization,
 hidden text, underline, text color, highlight, font size, vertical alignment,
 paragraph justification, indents, spacing, line spacing, and keep/page-break
 flags, font names, paragraph/character style references, style inheritance,
 basic section/page layout, ordinary paragraph/table content in headers and
-footers, positioned header/footer textboxes, and basic dynamic page-number
-fields. It additionally distinguishes Latin/East Asian/complex-script run
+footers, positioned header/footer and main-story textboxes, and basic dynamic
+page-number fields. It additionally distinguishes Latin/East Asian/complex-script run
 properties and preserves East Asian document-grid pagination controls. Paragraph
 borders, outline levels, and custom tab stops are preserved. Basic unconditional
 table styles are emitted as `w:style` definitions and selected by `w:tblStyle`;
@@ -83,7 +87,7 @@ Custom footnote and endnote symbols currently fall back to automatic numbering
 with an explicit diagnostic. Conditional table styles, newer color-based table
 shading, cell spacing,
 numbering styles, multi-column layout, page-number settings, header/footer
-non-textbox shapes and advanced OfficeArt effects, main-story textboxes, other
+non-textbox shapes and advanced OfficeArt effects, other
 secondary stories, images, fields beyond the supported page-number family,
 embedded objects, exact Word 97–2003 table-row pagination in every legacy
 compatibility case, and encrypted documents are intentionally deferred to later iterations.
@@ -103,7 +107,7 @@ both Table stream variants, mixed compressed/UTF-16 text pieces, UTF-16 surrogat
 pair coordinates, CHPX/PAPX and piece-level PRM formatting, font/style table
 parsing, nested table reconstruction, grids, cell margins and shading, PlcfSed and
 Sepx page-layout parsing, multi-section break placement, PlcfHdd guard and story
-mapping, header textbox/shape/field PLC validation, live PAGE-field output,
+mapping, header and main-story textbox/shape/field PLC validation, live PAGE-field output,
 basic OfficeArt record/property validation and VML shape styling, header/footer
 OPC relationships, automatic footnote/endnote PLC validation and package
 output, legacy comment author/range PLC validation and package output, East

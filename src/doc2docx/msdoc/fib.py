@@ -26,14 +26,18 @@ FCLCB97_DOP_INDEX = 31
 FCLCB97_CLX_INDEX = 33
 FCLCB97_GRP_XST_ATN_OWNERS_INDEX = 36
 FCLCB97_STTBF_ATN_BKMK_INDEX = 37
+FCLCB97_PLC_SPA_MOM_INDEX = 40
 FCLCB97_PLC_SPA_HDR_INDEX = 41
 FCLCB97_PLCF_ATN_BKF_INDEX = 42
 FCLCB97_PLCF_ATN_BKL_INDEX = 43
 FCLCB97_PLCF_END_REF_INDEX = 46
 FCLCB97_PLCF_END_TXT_INDEX = 47
 FCLCB97_DGG_INFO_INDEX = 50
+FCLCB97_PLCF_TXBX_TXT_INDEX = 56
+FCLCB97_PLCF_FLD_TXBX_INDEX = 57
 FCLCB97_PLCF_HDR_TXBX_TXT_INDEX = 58
 FCLCB97_PLCF_FLD_HDR_TXBX_INDEX = 59
+FCLCB97_PLCF_TXBX_BKD_INDEX = 75
 FCLCB97_PLCF_TXBX_HDR_BKD_INDEX = 76
 
 
@@ -139,6 +143,16 @@ class FileInformationBlock:
     @property
     def ccp_header_textboxes(self) -> int:
         return self.fib_rg_lw[10] if len(self.fib_rg_lw) > 10 else 0
+
+    @property
+    def ccp_textboxes(self) -> int:
+        return self.fib_rg_lw[9] if len(self.fib_rg_lw) > 9 else 0
+
+    @property
+    def textbox_story_cp_start(self) -> int:
+        # Main, footnote, header, macro, comment and endnote documents precede
+        # the main-textbox document in the global CP space.
+        return sum(self.fib_rg_lw[3:9])
 
     @property
     def header_textbox_story_cp_start(self) -> int:
@@ -259,6 +273,12 @@ class FileInformationBlock:
         return self.fib_rg_fc_lcb[FCLCB97_PLC_SPA_HDR_INDEX]
 
     @property
+    def plc_spa_mom(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLC_SPA_MOM_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLC_SPA_MOM_INDEX]
+
+    @property
     def dgg_info(self) -> FcLcb:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_DGG_INFO_INDEX:
             return FcLcb(0, 0)
@@ -283,6 +303,18 @@ class FileInformationBlock:
         return self.fib_rg_fc_lcb[FCLCB97_PLCF_HDR_TXBX_TXT_INDEX]
 
     @property
+    def plcf_txbx_txt(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_TXBX_TXT_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_TXBX_TXT_INDEX]
+
+    @property
+    def plcf_fld_txbx(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_FLD_TXBX_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_FLD_TXBX_INDEX]
+
+    @property
     def plcf_fld_hdr_txbx(self) -> FcLcb:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_FLD_HDR_TXBX_INDEX:
             return FcLcb(0, 0)
@@ -293,6 +325,12 @@ class FileInformationBlock:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_TXBX_HDR_BKD_INDEX:
             return FcLcb(0, 0)
         return self.fib_rg_fc_lcb[FCLCB97_PLCF_TXBX_HDR_BKD_INDEX]
+
+    @property
+    def plcf_txbx_bkd(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_TXBX_BKD_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_TXBX_BKD_INDEX]
 
     @property
     def sttbf_ffn(self) -> FcLcb:

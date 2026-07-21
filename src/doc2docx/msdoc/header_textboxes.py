@@ -1,4 +1,4 @@
-"""Header-textbox, shape-anchor, and field extraction for Word 97-2003."""
+"""Main/header textbox, shape-anchor, and field extraction for Word 97-2003."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ _WRAP_SIDE = {0: "both", 1: "left", 2: "right", 3: "largest"}
 
 
 @dataclass(slots=True, frozen=True)
-class HeaderTextBoxCollection:
+class TextBoxCollection:
     by_anchor_cp: Mapping[int, FloatingTextBox]
     textbox_count: int = 0
     field_count: int = 0
@@ -42,6 +42,10 @@ class HeaderTextBoxCollection:
 
     def textbox_at(self, cp: int) -> FloatingTextBox | None:
         return self.by_anchor_cp.get(cp)
+
+
+# Preserve the public M5c name while exposing the shared collection to M7d.
+HeaderTextBoxCollection = TextBoxCollection
 
 
 @dataclass(slots=True, frozen=True)
@@ -93,14 +97,16 @@ def _plc_count(size: int, data_size: int, structure: str) -> int:
     return (size - 4) // (4 + data_size)
 
 
-def _read_header_textbox_fields(
+def _read_textbox_fields(
     table_stream: bytes,
     piece_table: PieceTable,
     *,
     offset: int,
     size: int,
-    ccp_header_textboxes: int,
-    header_textbox_cp_start: int,
+    ccp_textboxes: int,
+    textbox_cp_start: int,
+    field_structure: str,
+    textbox_story_name: str,
     report: ConversionReport,
 ) -> int:
     if size == 0:
@@ -109,16 +115,18 @@ def _read_header_textbox_fields(
         table_stream,
         offset=offset,
         size=size,
-        structure="PlcffldHdrTxbx",
+        structure=field_structure,
     )
-    count = _plc_count(size, 2, "PlcffldHdrTxbx")
+    count = _plc_count(size, 2, field_structure)
     cps = struct.unpack_from(f"<{count + 1}I", raw, 0)
     field_cps = cps[:-1]
     if any(current <= previous for previous, current in zip(field_cps, field_cps[1:])):
-        raise InvalidWordDocument("PlcffldHdrTxbx field CP values are not increasing")
-    if any(cp >= ccp_header_textboxes for cp in field_cps):
         raise InvalidWordDocument(
-            "PlcffldHdrTxbx field CP points beyond the header textbox document"
+            f"{field_structure} field CP values are not increasing"
+        )
+    if any(cp >= ccp_textboxes for cp in field_cps):
+        raise InvalidWordDocument(
+            f"{field_structure} field CP points beyond the textbox document"
         )
     data_offset = 4 * (count + 1)
     stack: list[bool] = []
@@ -127,17 +135,17 @@ def _read_header_textbox_fields(
         fldch = raw[data_offset + index * 2] & 0x1F
         if fldch not in (0x13, 0x14, 0x15):
             raise InvalidWordDocument(
-                f"PlcffldHdrTxbx entry {index} has invalid field character 0x{fldch:02X}"
+                f"{field_structure} entry {index} has invalid field character 0x{fldch:02X}"
             )
         units = piece_table.extract_characters(
-            header_textbox_cp_start + cp,
-            header_textbox_cp_start + cp + 1,
+            textbox_cp_start + cp,
+            textbox_cp_start + cp + 1,
             report,
-            story="header-textboxes",
+            story=textbox_story_name,
         )
         if len(units) != 1 or ord(units[0].text) != fldch:
             raise InvalidWordDocument(
-                f"PlcffldHdrTxbx entry {index} does not match its story character"
+                f"{field_structure} entry {index} does not match its story character"
             )
         if fldch == 0x13:
             stack.append(False)
@@ -145,17 +153,17 @@ def _read_header_textbox_fields(
         elif fldch == 0x14:
             if not stack or stack[-1]:
                 raise InvalidWordDocument(
-                    "PlcffldHdrTxbx contains an invalid field-separator sequence"
+                    f"{field_structure} contains an invalid field-separator sequence"
                 )
             stack[-1] = True
         else:
             if not stack:
                 raise InvalidWordDocument(
-                    "PlcffldHdrTxbx contains an unmatched field-end character"
+                    f"{field_structure} contains an unmatched field-end character"
                 )
             stack.pop()
     if stack:
-        raise InvalidWordDocument("PlcffldHdrTxbx contains an unterminated field")
+        raise InvalidWordDocument(f"{field_structure} contains an unterminated field")
     return begin_count
 
 
@@ -165,8 +173,10 @@ def _read_spas(
     *,
     offset: int,
     size: int,
-    ccp_headers: int,
-    header_story_cp_start: int,
+    ccp_anchor_story: int,
+    anchor_story_cp_start: int,
+    spa_structure: str,
+    anchor_story_name: str,
     report: ConversionReport,
 ) -> dict[int, _Spa]:
     if size == 0:
@@ -175,15 +185,19 @@ def _read_spas(
         table_stream,
         offset=offset,
         size=size,
-        structure="PlcSpaHdr",
+        structure=spa_structure,
     )
-    count = _plc_count(size, 26, "PlcSpaHdr")
+    count = _plc_count(size, 26, spa_structure)
     cps = struct.unpack_from(f"<{count + 1}I", raw, 0)
     anchor_cps = cps[:-1]
     if any(current <= previous for previous, current in zip(anchor_cps, anchor_cps[1:])):
-        raise InvalidWordDocument("PlcSpaHdr anchor CP values are not increasing")
-    if any(cp >= ccp_headers for cp in anchor_cps):
-        raise InvalidWordDocument("PlcSpaHdr anchor CP points beyond the header document")
+        raise InvalidWordDocument(
+            f"{spa_structure} anchor CP values are not increasing"
+        )
+    if any(cp >= ccp_anchor_story for cp in anchor_cps):
+        raise InvalidWordDocument(
+            f"{spa_structure} anchor CP points beyond its document story"
+        )
     data_offset = 4 * (count + 1)
     spas: dict[int, _Spa] = {}
     for index, anchor_cp in enumerate(anchor_cps):
@@ -191,10 +205,10 @@ def _read_spas(
             "<I4iHI", raw, data_offset + index * 26
         )
         if shape_id in spas:
-            raise InvalidWordDocument(f"PlcSpaHdr repeats shape id {shape_id}")
+            raise InvalidWordDocument(f"{spa_structure} repeats shape id {shape_id}")
         if right < left or bottom < top:
             raise InvalidWordDocument(
-                f"PlcSpaHdr shape {shape_id} has an inverted rectangle"
+                f"{spa_structure} shape {shape_id} has an inverted rectangle"
             )
         horizontal_code = (flags >> 1) & 0x03
         vertical_code = (flags >> 3) & 0x03
@@ -202,29 +216,29 @@ def _read_spas(
         wrap_side_code = (flags >> 9) & 0x0F
         if horizontal_code not in _HORIZONTAL_RELATIVE:
             raise InvalidWordDocument(
-                f"PlcSpaHdr shape {shape_id} has invalid bx {horizontal_code}"
+                f"{spa_structure} shape {shape_id} has invalid bx {horizontal_code}"
             )
         if vertical_code not in _VERTICAL_RELATIVE:
             raise InvalidWordDocument(
-                f"PlcSpaHdr shape {shape_id} has invalid by {vertical_code}"
+                f"{spa_structure} shape {shape_id} has invalid by {vertical_code}"
             )
         if wrap_code not in _WRAP_TYPE:
             raise InvalidWordDocument(
-                f"PlcSpaHdr shape {shape_id} has invalid wr {wrap_code}"
+                f"{spa_structure} shape {shape_id} has invalid wr {wrap_code}"
             )
         if wrap_side_code not in _WRAP_SIDE:
             raise InvalidWordDocument(
-                f"PlcSpaHdr shape {shape_id} has invalid wrk {wrap_side_code}"
+                f"{spa_structure} shape {shape_id} has invalid wrk {wrap_side_code}"
             )
         units = piece_table.extract_characters(
-            header_story_cp_start + anchor_cp,
-            header_story_cp_start + anchor_cp + 1,
+            anchor_story_cp_start + anchor_cp,
+            anchor_story_cp_start + anchor_cp + 1,
             report,
-            story="headers",
+            story=anchor_story_name,
         )
         if len(units) != 1 or units[0].text != "\x08":
             raise InvalidWordDocument(
-                f"PlcSpaHdr anchor at CP {anchor_cp} is not a shape character"
+                f"{spa_structure} anchor at CP {anchor_cp} is not a shape character"
             )
         spas[shape_id] = _Spa(
             anchor_cp=anchor_cp,
@@ -249,8 +263,10 @@ def _read_textbox_entries(
     *,
     offset: int,
     size: int,
-    ccp_header_textboxes: int,
-    header_textbox_cp_start: int,
+    ccp_textboxes: int,
+    textbox_cp_start: int,
+    text_structure: str,
+    textbox_story_name: str,
     report: ConversionReport,
     character_properties_at: Callable[[int], CharacterProperties] | None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None,
@@ -259,19 +275,19 @@ def _read_textbox_entries(
         table_stream,
         offset=offset,
         size=size,
-        structure="PlcfHdrtxbxTxt",
+        structure=text_structure,
     )
-    count = _plc_count(size, 22, "PlcfHdrtxbxTxt")
+    count = _plc_count(size, 22, text_structure)
     if count < 1:
-        raise InvalidWordDocument("PlcfHdrtxbxTxt has no reusable final entry")
+        raise InvalidWordDocument(f"{text_structure} has no reusable final entry")
     cps = struct.unpack_from(f"<{count + 1}I", raw, 0)
     if cps[0] != 0:
-        raise InvalidWordDocument("PlcfHdrtxbxTxt does not begin at CP 0")
+        raise InvalidWordDocument(f"{text_structure} does not begin at CP 0")
     if any(current <= previous for previous, current in zip(cps, cps[1:])):
-        raise InvalidWordDocument("PlcfHdrtxbxTxt CP values are not increasing")
-    if any(cp > ccp_header_textboxes for cp in cps[:-1]):
+        raise InvalidWordDocument(f"{text_structure} CP values are not increasing")
+    if any(cp > ccp_textboxes for cp in cps[:-1]):
         raise InvalidWordDocument(
-            "PlcfHdrtxbxTxt textbox CP points beyond the header textbox document"
+            f"{text_structure} textbox CP points beyond the textbox document"
         )
     data_offset = 4 * (count + 1)
     entries: list[_TextBoxEntry] = []
@@ -284,38 +300,38 @@ def _read_textbox_entries(
         is_final = index == count - 1
         if reusable and not reusable & 0x0001:
             raise InvalidWordDocument(
-                f"PlcfHdrtxbxTxt entry {index} has invalid fReusable 0x{reusable:04X}"
+                f"{text_structure} entry {index} has invalid fReusable 0x{reusable:04X}"
             )
         if is_final or reusable:
             if not is_final and (
                 cps[index + 1] - cps[index] != 1 or shape_id != 0
             ):
                 raise InvalidWordDocument(
-                    f"PlcfHdrtxbxTxt reusable entry {index} has invalid bounds or lid"
+                    f"{text_structure} reusable entry {index} has invalid bounds or lid"
                 )
             continue
         cp_start, cp_end = cps[index], cps[index + 1]
         if cp_end - cp_start <= 1:
             raise InvalidWordDocument(
-                f"PlcfHdrtxbxTxt textbox {index} does not contain text and a separator"
+                f"{text_structure} textbox {index} does not contain text and a separator"
             )
         if first_union <= 0 or second_union != 0:
             raise InvalidWordDocument(
-                f"PlcfHdrtxbxTxt textbox {index} has invalid chain metadata"
+                f"{text_structure} textbox {index} has invalid chain metadata"
             )
         if shape_id == 0 or txid_undo != 0:
             raise InvalidWordDocument(
-                f"PlcfHdrtxbxTxt textbox {index} has invalid shape metadata"
+                f"{text_structure} textbox {index} has invalid shape metadata"
             )
         units = piece_table.extract_characters(
-            header_textbox_cp_start + cp_start,
-            header_textbox_cp_start + cp_end,
+            textbox_cp_start + cp_start,
+            textbox_cp_start + cp_end,
             report,
-            story=f"header-textbox-{index}",
+            story=f"{textbox_story_name}-{index}",
         )
         if not units or units[-1].text != "\r":
             raise InvalidWordDocument(
-                f"PlcfHdrtxbxTxt textbox {index} has no trailing separator"
+                f"{text_structure} textbox {index} has no trailing separator"
             )
         content = units[:-1]
         parsed = parse_main_story(
@@ -323,7 +339,7 @@ def _read_textbox_entries(
             report,
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
-            story_name=f"header-textbox-{index}",
+            story_name=f"{textbox_story_name}-{index}",
         )
         entries.append(
             _TextBoxEntry(
@@ -345,23 +361,24 @@ def _validate_break_descriptors(
     *,
     offset: int,
     size: int,
-    ccp_header_textboxes: int,
+    ccp_textboxes: int,
+    break_structure: str,
 ) -> None:
     raw = _checked_range(
         table_stream,
         offset=offset,
         size=size,
-        structure="PlcfTxbxHdrBkd",
+        structure=break_structure,
     )
-    count = _plc_count(size, 6, "PlcfTxbxHdrBkd")
+    count = _plc_count(size, 6, break_structure)
     if count < 1:
-        raise InvalidWordDocument("PlcfTxbxHdrBkd has no final descriptor")
+        raise InvalidWordDocument(f"{break_structure} has no final descriptor")
     cps = struct.unpack_from(f"<{count + 1}I", raw, 0)
     if any(current <= previous for previous, current in zip(cps, cps[1:])):
-        raise InvalidWordDocument("PlcfTxbxHdrBkd CP values are not increasing")
-    if any(cp > ccp_header_textboxes for cp in cps[:-1]):
+        raise InvalidWordDocument(f"{break_structure} CP values are not increasing")
+    if any(cp > ccp_textboxes for cp in cps[:-1]):
         raise InvalidWordDocument(
-            "PlcfTxbxHdrBkd CP points beyond the header textbox document"
+            f"{break_structure} CP points beyond the textbox document"
         )
     data_offset = 4 * (count + 1)
     by_index = {entry.index: entry for entry in entries}
@@ -371,28 +388,29 @@ def _validate_break_descriptors(
         entry = by_index.get(itxbxs)
         if entry is None:
             raise InvalidWordDocument(
-                f"PlcfTxbxHdrBkd descriptor {index} references textbox {itxbxs}"
+                f"{break_structure} descriptor {index} references textbox {itxbxs}"
             )
         if cps[index] < entry.cp_start or cps[index + 1] > entry.cp_end:
             raise InvalidWordDocument(
-                f"PlcfTxbxHdrBkd descriptor {index} falls outside its textbox range"
+                f"{break_structure} descriptor {index} falls outside its textbox range"
             )
         descriptor_counts[itxbxs] = descriptor_counts.get(itxbxs, 0) + 1
     for entry in entries:
         if descriptor_counts.get(entry.index, 0) != entry.chain_length:
             raise InvalidWordDocument(
-                f"PlcfTxbxHdrBkd textbox {entry.index} chain length does not match its descriptors"
+                f"{break_structure} textbox {entry.index} chain length does not "
+                "match its descriptors"
             )
 
 
-def read_header_textboxes(
+def _read_textboxes(
     table_stream: bytes,
     piece_table: PieceTable,
     *,
-    ccp_headers: int,
-    header_story_cp_start: int,
-    ccp_header_textboxes: int,
-    header_textbox_cp_start: int,
+    ccp_anchor_story: int,
+    anchor_story_cp_start: int,
+    ccp_textboxes: int,
+    textbox_cp_start: int,
     spa_offset: int,
     spa_size: int,
     text_offset: int,
@@ -405,33 +423,47 @@ def read_header_textboxes(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
-) -> HeaderTextBoxCollection:
-    """Read header textbox contents and associate them with header-story anchors."""
+    is_header: bool,
+) -> TextBoxCollection:
+    """Read one textbox story and associate its contents with shape anchors."""
+
+    context_name = "header textbox" if is_header else "main textbox"
+    count_name = "ccpHdrTxbx" if is_header else "ccpTxbx"
+    field_structure = "PlcffldHdrTxbx" if is_header else "PlcfFldTxbx"
+    spa_structure = "PlcSpaHdr" if is_header else "PlcSpaMom"
+    text_structure = "PlcfHdrtxbxTxt" if is_header else "PlcftxbxTxt"
+    break_structure = "PlcfTxbxHdrBkd" if is_header else "PlcfTxbxBkd"
+    anchor_story_name = "headers" if is_header else "main"
+    textbox_story_name = "header-textbox" if is_header else "textbox"
+    textbox_location_story = "header-textboxes" if is_header else "textboxes"
 
     structure_sizes = (spa_size, text_size, field_size, break_size)
-    if ccp_header_textboxes == 0:
+    if ccp_textboxes == 0:
         if any(structure_sizes):
             raise InvalidWordDocument(
-                "header textbox structures exist while ccpHdrTxbx is zero"
+                f"{context_name} structures exist while {count_name} is zero"
             )
-        return HeaderTextBoxCollection({})
+        return TextBoxCollection({})
     if text_size == 0 or spa_size == 0 or break_size == 0:
         raise InvalidWordDocument(
-            "ccpHdrTxbx requires PlcfHdrtxbxTxt, PlcSpaHdr, and PlcfTxbxHdrBkd"
+            f"{count_name} requires {text_structure}, {spa_structure}, "
+            f"and {break_structure}"
         )
-    cp_end = header_textbox_cp_start + ccp_header_textboxes
+    cp_end = textbox_cp_start + ccp_textboxes
     if cp_end > piece_table.cp_end:
         raise InvalidWordDocument(
-            f"header textbox range [{header_textbox_cp_start}, {cp_end}) exceeds "
+            f"{context_name} range [{textbox_cp_start}, {cp_end}) exceeds "
             f"Piece Table CP {piece_table.cp_end}"
         )
-    field_count = _read_header_textbox_fields(
+    field_count = _read_textbox_fields(
         table_stream,
         piece_table,
         offset=field_offset,
         size=field_size,
-        ccp_header_textboxes=ccp_header_textboxes,
-        header_textbox_cp_start=header_textbox_cp_start,
+        ccp_textboxes=ccp_textboxes,
+        textbox_cp_start=textbox_cp_start,
+        field_structure=field_structure,
+        textbox_story_name=textbox_location_story,
         report=report,
     )
     spas = _read_spas(
@@ -439,8 +471,10 @@ def read_header_textboxes(
         piece_table,
         offset=spa_offset,
         size=spa_size,
-        ccp_headers=ccp_headers,
-        header_story_cp_start=header_story_cp_start,
+        ccp_anchor_story=ccp_anchor_story,
+        anchor_story_cp_start=anchor_story_cp_start,
+        spa_structure=spa_structure,
+        anchor_story_name=anchor_story_name,
         report=report,
     )
     entries = _read_textbox_entries(
@@ -448,8 +482,10 @@ def read_header_textboxes(
         piece_table,
         offset=text_offset,
         size=text_size,
-        ccp_header_textboxes=ccp_header_textboxes,
-        header_textbox_cp_start=header_textbox_cp_start,
+        ccp_textboxes=ccp_textboxes,
+        textbox_cp_start=textbox_cp_start,
+        text_structure=text_structure,
+        textbox_story_name=textbox_story_name,
         report=report,
         character_properties_at=character_properties_at,
         paragraph_properties_at=paragraph_properties_at,
@@ -459,7 +495,8 @@ def read_header_textboxes(
         entries,
         offset=break_offset,
         size=break_size,
-        ccp_header_textboxes=ccp_header_textboxes,
+        ccp_textboxes=ccp_textboxes,
+        break_structure=break_structure,
     )
     by_anchor_cp: dict[int, FloatingTextBox] = {}
     linked_count = 0
@@ -468,12 +505,13 @@ def read_header_textboxes(
         spa = spas.get(entry.shape_id)
         if spa is None:
             raise InvalidWordDocument(
-                f"header textbox {entry.index} has no PlcSpaHdr shape {entry.shape_id}"
+                f"{context_name} {entry.index} has no {spa_structure} shape "
+                f"{entry.shape_id}"
             )
-        absolute_anchor_cp = header_story_cp_start + spa.anchor_cp
+        absolute_anchor_cp = anchor_story_cp_start + spa.anchor_cp
         if absolute_anchor_cp in by_anchor_cp:
             raise InvalidWordDocument(
-                f"multiple header textboxes use anchor CP {spa.anchor_cp}"
+                f"multiple {context_name}s use anchor CP {spa.anchor_cp}"
             )
         shape_style = (
             shape_style_at(entry.shape_id) if shape_style_at is not None else None
@@ -501,21 +539,120 @@ def read_header_textboxes(
             linked_count += 1
     if linked_count:
         report.warning(
-            "LINKED_HEADER_TEXTBOXES_FLATTENED",
-            "linked header textbox chains were emitted in their first shape",
-            location=SourceLocation(story="header-textboxes"),
+            (
+                "LINKED_HEADER_TEXTBOXES_FLATTENED"
+                if is_header
+                else "LINKED_MAIN_TEXTBOXES_FLATTENED"
+            ),
+            f"linked {context_name} chains were emitted in their first shape",
+            location=SourceLocation(story=textbox_location_story),
             textbox_count=linked_count,
         )
     if approximated_style_count:
         report.warning(
-            "HEADER_TEXTBOX_STYLE_APPROXIMATED",
-            "some header textbox OfficeArt fill, line, or inset styling was approximated",
-            location=SourceLocation(story="header-textboxes"),
+            (
+                "HEADER_TEXTBOX_STYLE_APPROXIMATED"
+                if is_header
+                else "MAIN_TEXTBOX_STYLE_APPROXIMATED"
+            ),
+            f"some {context_name} OfficeArt fill, line, or inset styling was approximated",
+            location=SourceLocation(story=textbox_location_story),
             textbox_count=approximated_style_count,
         )
-    return HeaderTextBoxCollection(
+    return TextBoxCollection(
         by_anchor_cp=by_anchor_cp,
         textbox_count=len(entries),
         field_count=field_count,
         styled_textbox_count=len(entries) - approximated_style_count,
+    )
+
+
+def read_header_textboxes(
+    table_stream: bytes,
+    piece_table: PieceTable,
+    *,
+    ccp_headers: int,
+    header_story_cp_start: int,
+    ccp_header_textboxes: int,
+    header_textbox_cp_start: int,
+    spa_offset: int,
+    spa_size: int,
+    text_offset: int,
+    text_size: int,
+    field_offset: int,
+    field_size: int,
+    break_offset: int,
+    break_size: int,
+    report: ConversionReport,
+    character_properties_at: Callable[[int], CharacterProperties] | None = None,
+    paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
+    shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
+) -> TextBoxCollection:
+    """Read header textbox contents and associate them with header anchors."""
+
+    return _read_textboxes(
+        table_stream,
+        piece_table,
+        ccp_anchor_story=ccp_headers,
+        anchor_story_cp_start=header_story_cp_start,
+        ccp_textboxes=ccp_header_textboxes,
+        textbox_cp_start=header_textbox_cp_start,
+        spa_offset=spa_offset,
+        spa_size=spa_size,
+        text_offset=text_offset,
+        text_size=text_size,
+        field_offset=field_offset,
+        field_size=field_size,
+        break_offset=break_offset,
+        break_size=break_size,
+        report=report,
+        character_properties_at=character_properties_at,
+        paragraph_properties_at=paragraph_properties_at,
+        shape_style_at=shape_style_at,
+        is_header=True,
+    )
+
+
+def read_main_textboxes(
+    table_stream: bytes,
+    piece_table: PieceTable,
+    *,
+    ccp_text: int,
+    ccp_textboxes: int,
+    textbox_cp_start: int,
+    spa_offset: int,
+    spa_size: int,
+    text_offset: int,
+    text_size: int,
+    field_offset: int,
+    field_size: int,
+    break_offset: int,
+    break_size: int,
+    report: ConversionReport,
+    character_properties_at: Callable[[int], CharacterProperties] | None = None,
+    paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
+    shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
+) -> TextBoxCollection:
+    """Read main-story textbox contents and associate them with main anchors."""
+
+    return _read_textboxes(
+        table_stream,
+        piece_table,
+        ccp_anchor_story=ccp_text,
+        anchor_story_cp_start=0,
+        ccp_textboxes=ccp_textboxes,
+        textbox_cp_start=textbox_cp_start,
+        spa_offset=spa_offset,
+        spa_size=spa_size,
+        text_offset=text_offset,
+        text_size=text_size,
+        field_offset=field_offset,
+        field_size=field_size,
+        break_offset=break_offset,
+        break_size=break_size,
+        report=report,
+        character_properties_at=character_properties_at,
+        paragraph_properties_at=paragraph_properties_at,
+        shape_style_at=shape_style_at,
+        is_header=False,
     )

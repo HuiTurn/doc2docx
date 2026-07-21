@@ -28,6 +28,7 @@ from .msdoc import (
     read_footnotes,
     read_header_footer_stories,
     read_header_textboxes,
+    read_main_textboxes,
     read_officeart_shapes,
     read_piece_table,
     read_sections,
@@ -219,6 +220,29 @@ def convert(
         offset=dgg_info.fc,
         size=dgg_info.lcb,
     )
+    main_shape_table = fib.plc_spa_mom
+    main_textbox_table = fib.plcf_txbx_txt
+    main_textbox_fields = fib.plcf_fld_txbx
+    main_textbox_breaks = fib.plcf_txbx_bkd
+    main_textboxes = read_main_textboxes(
+        table_stream,
+        piece_table,
+        ccp_text=fib.ccp_text,
+        ccp_textboxes=fib.ccp_textboxes,
+        textbox_cp_start=fib.textbox_story_cp_start,
+        spa_offset=main_shape_table.fc,
+        spa_size=main_shape_table.lcb,
+        text_offset=main_textbox_table.fc,
+        text_size=main_textbox_table.lcb,
+        field_offset=main_textbox_fields.fc,
+        field_size=main_textbox_fields.lcb,
+        break_offset=main_textbox_breaks.fc,
+        break_size=main_textbox_breaks.lcb,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+        paragraph_properties_at=formatting.paragraph_properties_at,
+        shape_style_at=officeart_shapes.style_at,
+    )
     header_textbox_table = fib.plcf_hdr_txbx_txt
     header_textbox_fields = fib.plcf_fld_hdr_txbx
     header_textbox_breaks = fib.plcf_txbx_hdr_bkd
@@ -268,6 +292,7 @@ def convert(
         report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
+        floating_textbox_at=main_textboxes.textbox_at,
         footnote_reference_at=footnotes.reference_at,
         endnote_reference_at=endnotes.reference_at,
         comment_reference_at=comments.reference_at,
@@ -349,6 +374,9 @@ def convert(
             "styled_header_textbox_count": (
                 header_textboxes.styled_textbox_count
             ),
+            "main_textbox_count": main_textboxes.textbox_count,
+            "main_textbox_field_count": main_textboxes.field_count,
+            "styled_main_textbox_count": main_textboxes.styled_textbox_count,
             "footnote_count": len(footnotes.footnotes),
             "footnote_reference_count": footnotes.reference_count,
             "custom_footnote_mark_count": footnotes.custom_mark_count,
@@ -383,12 +411,13 @@ def convert(
     secondary_stories.pop("footnotes", None)
     secondary_stories.pop("endnotes", None)
     secondary_stories.pop("comments", None)
+    secondary_stories.pop("textboxes", None)
     secondary_stories.pop("headers", None)
     secondary_stories.pop("header_textboxes", None)
     if secondary_stories:
         report.warning(
             "SECONDARY_STORIES_DEFERRED",
-            "some secondary document stories remain unsupported after M7c",
+            "some secondary document stories remain unsupported after M7d",
             stories=secondary_stories,
         )
 
@@ -419,7 +448,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M7c conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M7d conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -467,6 +496,7 @@ def inspect_doc(
             "ccpAtn": fib.ccp_comments,
             "ccpHdd": fib.ccp_headers,
             "ccpHdrTxbx": fib.ccp_header_textboxes,
+            "ccpTxbx": fib.ccp_textboxes,
             "fcClx": fib.clx.fc,
             "lcbClx": fib.clx.lcb,
             "fcPlcffndRef": fib.plcf_fnd_ref.fc,
@@ -501,14 +531,22 @@ def inspect_doc(
             "lcbPlcfHdd": fib.plcf_hdd.lcb,
             "fcPlcSpaHdr": fib.plc_spa_hdr.fc,
             "lcbPlcSpaHdr": fib.plc_spa_hdr.lcb,
+            "fcPlcSpaMom": fib.plc_spa_mom.fc,
+            "lcbPlcSpaMom": fib.plc_spa_mom.lcb,
             "fcDggInfo": fib.dgg_info.fc,
             "lcbDggInfo": fib.dgg_info.lcb,
             "fcPlcfHdrtxbxTxt": fib.plcf_hdr_txbx_txt.fc,
             "lcbPlcfHdrtxbxTxt": fib.plcf_hdr_txbx_txt.lcb,
+            "fcPlcftxbxTxt": fib.plcf_txbx_txt.fc,
+            "lcbPlcftxbxTxt": fib.plcf_txbx_txt.lcb,
+            "fcPlcffldTxbx": fib.plcf_fld_txbx.fc,
+            "lcbPlcffldTxbx": fib.plcf_fld_txbx.lcb,
             "fcPlcffldHdrTxbx": fib.plcf_fld_hdr_txbx.fc,
             "lcbPlcffldHdrTxbx": fib.plcf_fld_hdr_txbx.lcb,
             "fcPlcfTxbxHdrBkd": fib.plcf_txbx_hdr_bkd.fc,
             "lcbPlcfTxbxHdrBkd": fib.plcf_txbx_hdr_bkd.lcb,
+            "fcPlcfTxbxBkd": fib.plcf_txbx_bkd.fc,
+            "lcbPlcfTxbxBkd": fib.plcf_txbx_bkd.lcb,
             "fcDop": fib.dop.fc,
             "lcbDop": fib.dop.lcb,
             "fcSttbfFfn": fib.sttbf_ffn.fc,

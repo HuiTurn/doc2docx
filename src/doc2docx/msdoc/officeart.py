@@ -290,7 +290,7 @@ def read_officeart_shapes(
     offset: int,
     size: int,
 ) -> OfficeArtShapeCollection:
-    """Read basic styles for shapes in the OfficeArt header drawing."""
+    """Read basic styles for shapes in the OfficeArt main/header drawings."""
 
     if size == 0:
         return OfficeArtShapeCollection({})
@@ -305,24 +305,28 @@ def read_officeart_shapes(
             "OfficeArtContent does not begin with OfficeArtDggContainer"
         )
     defaults = _option_properties(data, drawing_group.children)
-    header_drawings: list[_Record] = []
+    drawings: list[tuple[int, _Record]] = []
+    drawing_labels: set[int] = set()
     while position < len(data):
         drawing_label = data[position]
         position += 1
         drawing, position = _read_record(data, position, len(data))
         if drawing.record_type != _DG_CONTAINER or drawing.version != 0xF:
             raise InvalidWordDocument("OfficeArtWordDrawing has no OfficeArtDgContainer")
-        if drawing_label == 1:
-            header_drawings.append(drawing)
-        elif drawing_label != 0:
+        if drawing_label not in (0, 1):
             raise InvalidWordDocument(
                 f"OfficeArtWordDrawing has invalid label {drawing_label}"
             )
-    if len(header_drawings) > 1:
-        raise InvalidWordDocument("OfficeArtContent repeats the header drawing")
+        if drawing_label in drawing_labels:
+            story_name = "header" if drawing_label else "main"
+            raise InvalidWordDocument(
+                f"OfficeArtContent repeats the {story_name} drawing"
+            )
+        drawing_labels.add(drawing_label)
+        drawings.append((drawing_label, drawing))
 
     by_shape_id: dict[int, ShapeStyle] = {}
-    for drawing in header_drawings:
+    for drawing_label, drawing in drawings:
         for container in _shape_containers(drawing):
             shape_records = [
                 child for child in container.children if child.record_type == _FSP
@@ -343,8 +347,9 @@ def read_officeart_shapes(
             if flags & 0x00000008:
                 continue
             if shape_id in by_shape_id:
+                story_name = "header" if drawing_label else "main"
                 raise InvalidWordDocument(
-                    f"OfficeArt header drawing repeats shape id {shape_id}"
+                    f"OfficeArt {story_name} drawing repeats shape id {shape_id}"
                 )
             properties = dict(defaults)
             properties.update(_option_properties(data, container.children))

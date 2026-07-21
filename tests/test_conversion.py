@@ -19,6 +19,7 @@ from .fixtures import (
     build_footnote_word_cfb,
     build_header_footer_word_cfb,
     build_header_textbox_word_cfb,
+    build_main_textbox_word_cfb,
     build_nested_table_word_cfb,
     build_sectioned_word_cfb,
     build_table_word_cfb,
@@ -33,6 +34,83 @@ V = "{urn:schemas-microsoft-com:vml}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_main_story_textbox_is_positioned_and_packaged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "main-textbox.doc"
+            destination = temporary / "main-textbox.docx"
+            source.write_bytes(build_main_textbox_word_cfb(officeart_style=True))
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.warnings, [])
+            self.assertEqual(result.report.statistics["main_textbox_count"], 1)
+            self.assertEqual(result.report.statistics["main_textbox_field_count"], 0)
+            self.assertEqual(result.report.statistics["styled_main_textbox_count"], 1)
+            inspected = inspect_doc(source)
+            self.assertGreater(inspected["fib"]["ccpTxbx"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcSpaMom"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcftxbxTxt"], 0)
+            self.assertGreater(inspected["fib"]["lcbPlcfTxbxBkd"], 0)
+
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+            rectangle = root.find(f".//{V}rect")
+            assert rectangle is not None
+            self.assertEqual("".join(rectangle.itertext()), "Inside textbox")
+            self.assertEqual(rectangle.get("filled"), "f")
+            self.assertEqual(rectangle.get("stroked"), "f")
+            self.assertNotIn("\uFFFC", "".join(root.itertext()))
+            style = rectangle.get("style", "")
+            self.assertIn("margin-left:36pt", style)
+            self.assertIn("width:144pt", style)
+
+    def test_malformed_main_story_textboxes_are_rejected(self) -> None:
+        fixtures = (
+            build_main_textbox_word_cfb(malformed_anchor=True),
+            build_main_textbox_word_cfb(missing_break_table=True),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for index, payload in enumerate(fixtures):
+                with self.subTest(index=index):
+                    source = Path(directory) / f"bad-main-textbox-{index}.doc"
+                    source.write_bytes(payload)
+                    with self.assertRaises(InvalidWordDocument):
+                        convert(source)
+
+    def test_main_story_textbox_page_field_remains_live(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "main-textbox-field.doc"
+            destination = temporary / "main-textbox-field.docx"
+            source.write_bytes(
+                build_main_textbox_word_cfb(
+                    officeart_style=True,
+                    page_field=True,
+                )
+            )
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.statistics["main_textbox_field_count"], 1)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            rectangle = root.find(f".//{W}pict/{V}rect")
+            assert rectangle is not None
+            self.assertEqual(
+                [
+                    element.get(f"{W}fldCharType")
+                    for element in rectangle.findall(f".//{W}fldChar")
+                ],
+                ["begin", "separate", "end"],
+            )
+            self.assertEqual(
+                rectangle.findtext(f".//{W}instrText"),
+                " PAGE \\* MERGEFORMAT ",
+            )
+            self.assertIn("1", "".join(rectangle.itertext()))
+
     def test_ranged_comment_is_anchored_and_packaged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)

@@ -6,7 +6,12 @@ from .fonts import read_font_table
 from .formatting import FormattingMap, read_formatting
 from .footnotes import FootnoteCollection, read_footnotes
 from .headers import HeaderFooterCollection, read_header_footer_stories
-from .header_textboxes import HeaderTextBoxCollection, read_header_textboxes
+from .header_textboxes import (
+    HeaderTextBoxCollection,
+    TextBoxCollection,
+    read_header_textboxes,
+    read_main_textboxes,
+)
 from .officeart import OfficeArtShapeCollection, read_officeart_shapes
 from .pieces import Piece, PieceTable, read_piece_table
 from .sections import read_sections
@@ -20,6 +25,7 @@ __all__ = [
     "FootnoteCollection",
     "HeaderFooterCollection",
     "HeaderTextBoxCollection",
+    "TextBoxCollection",
     "OfficeArtShapeCollection",
     "Piece",
     "PieceTable",
@@ -32,6 +38,7 @@ __all__ = [
     "read_footnotes",
     "read_header_footer_stories",
     "read_header_textboxes",
+    "read_main_textboxes",
     "read_officeart_shapes",
     "read_piece_table",
     "read_sections",
