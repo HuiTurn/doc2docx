@@ -1623,13 +1623,20 @@ def _append_section_properties(
             },
         )
     if (
-        section.footnote_number_format is not None
+        section.footnote_position is not None
+        or section.footnote_number_format is not None
         or section.footnote_number_restart is not None
     ):
         footnote_properties = ET.SubElement(
             section_properties,
             _qn(W_NS, "footnotePr"),
         )
+        if section.footnote_position is not None:
+            ET.SubElement(
+                footnote_properties,
+                _qn(W_NS, "pos"),
+                {_qn(W_NS, "val"): section.footnote_position},
+            )
         if section.footnote_number_format is not None:
             ET.SubElement(
                 footnote_properties,
@@ -1643,13 +1650,20 @@ def _append_section_properties(
                 {_qn(W_NS, "val"): section.footnote_number_restart},
             )
     if (
-        section.endnote_number_format is not None
+        section.endnote_position is not None
+        or section.endnote_number_format is not None
         or section.endnote_number_restart is not None
     ):
         endnote_properties = ET.SubElement(
             section_properties,
             _qn(W_NS, "endnotePr"),
         )
+        if section.endnote_position is not None:
+            ET.SubElement(
+                endnote_properties,
+                _qn(W_NS, "pos"),
+                {_qn(W_NS, "val"): section.endnote_position},
+            )
         if section.endnote_number_format is not None:
             ET.SubElement(
                 endnote_properties,
@@ -1713,6 +1727,8 @@ def _append_section_properties(
             _qn(W_NS, "cols"),
             column_attributes,
         )
+    if section.suppress_endnotes:
+        ET.SubElement(section_properties, _qn(W_NS, "noEndnote"))
     if section.title_page:
         ET.SubElement(section_properties, _qn(W_NS, "titlePg"))
     if section.text_direction is not None:

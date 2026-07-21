@@ -716,10 +716,13 @@ class SectionProperties:
     column_spacing_twips: int | None = None
     columns_evenly_spaced: bool | None = None
     page_number_format: str | None = None
+    footnote_position: str | None = None
     footnote_number_format: str | None = None
     footnote_number_restart: str | None = None
+    endnote_position: str | None = None
     endnote_number_format: str | None = None
     endnote_number_restart: str | None = None
+    suppress_endnotes: bool | None = None
     text_direction: str | None = None
     bidirectional: bool | None = None
     document_grid_type: str | None = None

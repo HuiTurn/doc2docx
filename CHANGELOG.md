@@ -5,6 +5,19 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+### M16b
+
+- Preserve legacy DOP footnote placement for Word 97 documents, section-level
+  `sprmSFpc` placement overrides, and document-wide endnote placement as native
+  `w:footnotePr`/`w:endnotePr` position properties.
+- Preserve `sprmSFEndnote` section suppression as native `w:noEndnote`, and
+  report how many sections carry note-placement behavior.
+- Validate invalid DOP/Sepx enumeration values without guessing, while allowing
+  newer DOC versions to use their section-level footnote defaults.
+- Validate with 164 focused tests and the content-deduplicated 38-file real-DOC
+  batch: all 36 in-scope Word 97–2003 files convert, both note samples reopen
+  and render, and the only two rejected files remain Word 6/95 inputs.
+
 ### M16a
 
 - Preserve all six `PlcfHdd` footnote/endnote separator, continuation

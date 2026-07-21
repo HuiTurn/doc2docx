@@ -61,6 +61,8 @@ class SectionParsingTests(unittest.TestCase):
                 struct.pack("<HB", 0x3005, 1),
                 struct.pack("<HB", 0x303C, 1),
                 struct.pack("<HB", 0x303E, 1),
+                struct.pack("<HB", 0x303B, 2),
+                struct.pack("<HB", 0x3012, 0),
                 struct.pack("<HB", 0x3228, 1),
                 struct.pack("<HH", 0x5033, 1),
                 struct.pack("<HH", 0x500B, 2),
@@ -89,6 +91,8 @@ class SectionParsingTests(unittest.TestCase):
             main_story_cp_count=5,
             document_lid=2052,
             report=report,
+            default_footnote_position="pageBottom",
+            default_endnote_position="docEnd",
         )
 
         section = sections[0]
@@ -99,8 +103,11 @@ class SectionParsingTests(unittest.TestCase):
         self.assertEqual(section.revision_save_id, 0x12345678)
         self.assertEqual(section.footnote_number_format, "lowerLetter")
         self.assertEqual(section.footnote_number_restart, "eachSect")
+        self.assertEqual(section.footnote_position, "beneathText")
         self.assertEqual(section.endnote_number_format, "upperRoman")
         self.assertEqual(section.endnote_number_restart, "eachSect")
+        self.assertEqual(section.endnote_position, "docEnd")
+        self.assertTrue(section.suppress_endnotes)
         self.assertEqual(section.text_direction, "tbRl")
         self.assertTrue(section.bidirectional)
         self.assertFalse(report.warnings)
@@ -126,9 +133,14 @@ class SectionParsingTests(unittest.TestCase):
                 f"{W}pgMar",
                 f"{W}pgNumType",
                 f"{W}cols",
+                f"{W}noEndnote",
                 f"{W}textDirection",
                 f"{W}bidi",
             ],
+        )
+        self.assertEqual(
+            section_element.find(f"{W}footnotePr/{W}pos").get(f"{W}val"),  # type: ignore[union-attr]
+            "beneathText",
         )
         self.assertEqual(
             section_element.find(f"{W}footnotePr/{W}numFmt").get(f"{W}val"),  # type: ignore[union-attr]
@@ -137,6 +149,10 @@ class SectionParsingTests(unittest.TestCase):
         self.assertEqual(
             section_element.find(f"{W}footnotePr/{W}numRestart").get(f"{W}val"),  # type: ignore[union-attr]
             "eachSect",
+        )
+        self.assertEqual(
+            section_element.find(f"{W}endnotePr/{W}pos").get(f"{W}val"),  # type: ignore[union-attr]
+            "docEnd",
         )
         self.assertEqual(
             section_element.find(f"{W}endnotePr/{W}numFmt").get(f"{W}val"),  # type: ignore[union-attr]

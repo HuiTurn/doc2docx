@@ -33,6 +33,11 @@ _NUMBER_RESTARTS = {
     0x02: "eachPage",
 }
 
+_FOOTNOTE_POSITIONS = {
+    0x01: "pageBottom",
+    0x02: "beneathText",
+}
+
 # MSOTXFL values 0, 1, 3, and 5 have direct section-level equivalents.
 # Values 2 and 4 require glyph rotation/flow behavior that w:sectPr cannot
 # preserve faithfully, so they remain diagnosed instead of being mislabeled.
@@ -131,6 +136,14 @@ def _apply_section_modifiers(
                 unsupported.add(opcode)
             else:
                 section = replace(section, title_page=bool(operand[0]))
+        elif opcode == 0x3012:  # sprmSFEndnote
+            if operand[0] not in (0x00, 0x01):
+                unsupported.add(opcode)
+            else:
+                section = replace(
+                    section,
+                    suppress_endnotes=not bool(operand[0]),
+                )
         elif opcode == 0x3005:  # sprmSFEvenlySpaced
             if operand[0] == 0x01:
                 section = replace(section, columns_evenly_spaced=True)
@@ -162,6 +175,12 @@ def _apply_section_modifiers(
                 unsupported.add(opcode)
             else:
                 section = replace(section, footnote_number_restart=restart)
+        elif opcode == 0x303B:  # sprmSFpc
+            position = _FOOTNOTE_POSITIONS.get(operand[0])
+            if position is None:
+                unsupported.add(opcode)
+            else:
+                section = replace(section, footnote_position=position)
         elif opcode == 0x303E:  # sprmSRncEdn
             restart = _NUMBER_RESTARTS.get(operand[0])
             if restart not in ("continuous", "eachSect"):
@@ -314,6 +333,8 @@ def read_sections(
     main_story_cp_count: int,
     document_lid: int,
     report: ConversionReport,
+    default_footnote_position: str | None = None,
+    default_endnote_position: str | None = None,
 ) -> tuple[SectionProperties, ...]:
     """Resolve the main-story section PLC into page-layout properties."""
 
@@ -359,6 +380,8 @@ def read_sections(
             cp_end=min(cps[index + 1], main_story_cp_count),
             header_distance_twips=default_header_distance,
             footer_distance_twips=default_header_distance,
+            footnote_position=default_footnote_position,
+            endnote_position=default_endnote_position,
         )
         section, section_unsupported, seen = _apply_section_modifiers(
             section,

@@ -261,6 +261,49 @@ class HeaderFooterParsingTests(unittest.TestCase):
         self.assertTrue(settings.even_and_odd_headers)
         self.assertIsNone(settings.adjust_line_height_in_table)
 
+    def test_dop_note_positions_are_read(self) -> None:
+        dop = bytearray(84)
+        struct.pack_into("<H", dop, 0, 0x0020)
+        struct.pack_into("<H", dop, 54, 0x0003)
+
+        settings = read_document_settings(
+            dop,
+            offset=0,
+            size=len(dop),
+            n_fib=0x00D9,
+        )
+
+        self.assertEqual(settings.footnote_position, "pageBottom")
+        self.assertEqual(settings.endnote_position, "docEnd")
+
+        newer = read_document_settings(
+            dop,
+            offset=0,
+            size=len(dop),
+            n_fib=0x0101,
+        )
+        self.assertIsNone(newer.footnote_position)
+        self.assertEqual(newer.endnote_position, "docEnd")
+
+    def test_invalid_dop_note_positions_are_rejected(self) -> None:
+        invalid_footnote = bytearray(84)
+        struct.pack_into("<H", invalid_footnote, 0, 0x0060)
+        with self.assertRaises(InvalidWordDocument):
+            read_document_settings(
+                invalid_footnote,
+                offset=0,
+                size=len(invalid_footnote),
+            )
+
+        invalid_endnote = bytearray(84)
+        struct.pack_into("<H", invalid_endnote, 54, 0x0001)
+        with self.assertRaises(InvalidWordDocument):
+            read_document_settings(
+                invalid_endnote,
+                offset=0,
+                size=len(invalid_endnote),
+            )
+
     def test_dop_table_grid_line_height_compatibility_is_read(self) -> None:
         dop = bytearray(88)
         settings = read_document_settings(dop, offset=0, size=len(dop))

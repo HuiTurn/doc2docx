@@ -131,6 +131,13 @@ def convert(
         data_stream = compound.open_stream("Data")
     except StreamNotFound:
         data_stream = None
+    dop = fib.dop
+    document_settings = read_document_settings(
+        table_stream,
+        offset=dop.fc,
+        size=dop.lcb,
+        n_fib=fib.n_fib,
+    )
     section_table = fib.plcf_sed
     sections = read_sections(
         table_stream,
@@ -140,12 +147,8 @@ def convert(
         main_story_cp_count=fib.ccp_text,
         document_lid=fib.base.lid,
         report=report,
-    )
-    dop = fib.dop
-    document_settings = read_document_settings(
-        table_stream,
-        offset=dop.fc,
-        size=dop.lcb,
+        default_footnote_position=document_settings.footnote_position,
+        default_endnote_position=document_settings.endnote_position,
     )
     font_table = fib.sttbf_ffn
     fonts = read_font_table(
@@ -681,6 +684,12 @@ def convert(
                         section.endnote_number_restart,
                     )
                 )
+                for section in sections
+            ),
+            "section_note_placement_count": sum(
+                section.footnote_position is not None
+                or section.endnote_position is not None
+                or section.suppress_endnotes is True
                 for section in sections
             ),
             "bidirectional_section_count": sum(
