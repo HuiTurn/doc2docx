@@ -2396,6 +2396,12 @@ def _numbering_xml(
             _qn(W_NS, "multiLevelType"),
             {_qn(W_NS, "val"): abstract.kind},
         )
+        if abstract.name:
+            ET.SubElement(
+                element,
+                _qn(W_NS, "name"),
+                {_qn(W_NS, "val"): abstract.name},
+            )
         for level in abstract.levels:
             _append_numbering_level(
                 element,

@@ -61,6 +61,7 @@ _BOOKMARK_LIVE_FIELD_TYPES = frozenset(
 )
 _SEQUENCE_LIVE_FIELD_TYPES = frozenset({"SEQ"})
 _STYLE_LIVE_FIELD_TYPES = frozenset({"STYLEREF"})
+_LIST_LIVE_FIELD_TYPES = frozenset({"LISTNUM"})
 
 
 def _field_first_argument(instruction: str) -> str | None:
@@ -322,6 +323,7 @@ class AbstractNumbering:
     source_list_id: int
     kind: str
     levels: tuple[NumberingLevel, ...]
+    name: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -1085,6 +1087,7 @@ def parse_main_story(
     ) = None,
     bookmark_names: Collection[str] | None = None,
     style_names: Collection[str] | None = None,
+    list_names: Collection[str] | None = None,
     footnote_reference_at: Callable[[int], FootnoteReference | None] | None = None,
     endnote_reference_at: Callable[[int], EndnoteReference | None] | None = None,
     comment_reference_at: Callable[[int], CommentReference | None] | None = None,
@@ -1121,6 +1124,7 @@ def parse_main_story(
     broken_bookmark_targets: set[str] = set()
     broken_sequence_targets: set[str] = set()
     broken_style_targets: set[str] = set()
+    broken_list_targets: set[str] = set()
     field_instruction_controls: dict[int, int] = {}
     field_stack: list[_FieldContext] = []
     last_was_terminator = False
@@ -1133,6 +1137,7 @@ def parse_main_story(
         name.casefold() for name in (bookmark_names or ())
     }
     available_style_names = {name.casefold() for name in (style_names or ())}
+    available_list_names = {name.casefold() for name in (list_names or ())}
 
     def visible() -> bool:
         return all(context.has_separator for context in field_stack)
@@ -1340,6 +1345,15 @@ def parse_main_story(
                 style_target is not None
                 and style_target.casefold() in available_style_names
             )
+            list_target = (
+                _field_first_argument(instruction)
+                if field_type in _LIST_LIVE_FIELD_TYPES
+                else None
+            )
+            list_field_is_valid = (
+                list_target is not None
+                and list_target.casefold() in available_list_names
+            )
             safe_live_field = field_type in _SAFE_LIVE_FIELD_TYPES or (
                 field_type in _BOOKMARK_LIVE_FIELD_TYPES
                 and bookmark_field_is_valid
@@ -1349,6 +1363,9 @@ def parse_main_story(
             ) or (
                 field_type in _STYLE_LIVE_FIELD_TYPES
                 and style_field_is_valid
+            ) or (
+                field_type in _LIST_LIVE_FIELD_TYPES
+                and list_field_is_valid
             )
             private_bookmark_boundaries = (
                 contained_bookmark_boundaries(context.result)
@@ -1424,6 +1441,12 @@ def parse_main_story(
                     and not style_field_is_valid
                 ):
                     broken_style_targets.add(style_target or "UNKNOWN")
+                if (
+                    field_type in _LIST_LIVE_FIELD_TYPES
+                    and declared_field
+                    and not list_field_is_valid
+                ):
+                    broken_list_targets.add(list_target or "UNKNOWN")
             continue
         if not visible():
             for context in reversed(field_stack):
@@ -1693,6 +1716,13 @@ def parse_main_story(
             "STYLEREF fields without an emitted style were kept as cached text",
             location=SourceLocation(story=story_name),
             style_names=sorted(broken_style_targets),
+        )
+    if broken_list_targets:
+        report.warning(
+            "BROKEN_LISTNUM_FIELDS_FLATTENED",
+            "LISTNUM fields without an emitted named list were kept as cached text",
+            location=SourceLocation(story=story_name),
+            list_names=sorted(broken_list_targets),
         )
     if field_instruction_controls:
         report.warning(

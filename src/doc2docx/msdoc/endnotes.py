@@ -52,6 +52,7 @@ def read_endnotes(
     ) = None,
     bookmark_names: Collection[str] | None = None,
     style_names: Collection[str] | None = None,
+    list_names: Collection[str] | None = None,
 ) -> EndnoteCollection:
     """Parse endnote bodies and map their main-story reference CPs."""
 
@@ -155,6 +156,7 @@ def read_endnotes(
             field_end_properties_at=field_end_properties_at,
             bookmark_names=bookmark_names,
             style_names=style_names,
+            list_names=list_names,
             story_name=story_name,
         )
         endnotes.append(

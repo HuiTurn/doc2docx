@@ -8,6 +8,22 @@ current capabilities without release-by-release notes.
 - Continue expanding MS-DOC compatibility with specification-backed parsers,
   focused tests, and real Word 97 sample rendering.
 
+## 0.27.0 - 2026-07-22 (M11c)
+
+- Parse the extended UTF-16 `SttbListNames` table parallel to `PlfLst`, with
+  strict bounds, header, length, uniqueness, and trailing-data validation.
+- Attach retained names to their native abstract numbering definitions and
+  emit them as WordprocessingML `w:name` elements.
+- Preserve declared `LISTNUM` fields as live fields only when their
+  case-insensitive name resolves to an emitted list definition; missing,
+  unnamed, or renamed targets remain cached text with a targeted diagnostic.
+- Share named-list context across main, note, comment, header/footer, and
+  textbox stories, and expose the source table and named-list count through
+  inspection and conversion statistics.
+- Validate with 140 focused tests plus matching and renamed real Word 97 DOC
+  cases; the matching case retained both native paragraph numbering and a live
+  inline `LISTNUM` field through rendered visual verification.
+
 ## 0.26.0 - 2026-07-22 (M11b)
 
 - Preserve declared `NOTEREF` fields when their bookmark target exists, and

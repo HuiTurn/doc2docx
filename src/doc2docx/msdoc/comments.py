@@ -338,6 +338,7 @@ def read_comments(
     ) = None,
     bookmark_names: Collection[str] | None = None,
     style_names: Collection[str] | None = None,
+    list_names: Collection[str] | None = None,
 ) -> CommentCollection:
     """Parse comment bodies, authors, references, and optional range anchors."""
 
@@ -476,6 +477,7 @@ def read_comments(
             field_end_properties_at=field_end_properties_at,
             bookmark_names=bookmark_names,
             style_names=style_names,
+            list_names=list_names,
             story_name=story_name,
         )
         comments.append(

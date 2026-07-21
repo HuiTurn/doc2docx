@@ -163,6 +163,7 @@ def convert(
     )
     list_table = fib.plf_lst
     list_override_table = fib.plf_lfo
+    list_name_table = fib.sttb_list_names
     numbering = read_numbering(
         table_stream,
         list_offset=list_table.fc,
@@ -172,6 +173,13 @@ def convert(
         ccp_text=fib.ccp_text,
         fonts=fonts,
         report=report,
+        list_names_offset=list_name_table.fc,
+        list_names_size=list_name_table.lcb,
+    )
+    available_list_names = frozenset(
+        abstract.name
+        for abstract in numbering.abstracts
+        if abstract.name is not None
     )
     clx = fib.clx
     piece_table = read_piece_table(
@@ -302,6 +310,7 @@ def convert(
         field_end_properties_at=footnote_fields.end_properties_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
+        list_names=available_list_names,
     )
     comment_reference_table = fib.plcf_and_ref
     comment_text_table = fib.plcf_and_txt
@@ -333,6 +342,7 @@ def convert(
         field_end_properties_at=comment_fields.end_properties_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
+        list_names=available_list_names,
     )
     endnote_reference_table = fib.plcf_end_ref
     endnote_text_table = fib.plcf_end_txt
@@ -352,6 +362,7 @@ def convert(
         field_end_properties_at=endnote_fields.end_properties_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
+        list_names=available_list_names,
     )
     spa_headers = fib.plc_spa_hdr
     dgg_info = fib.dgg_info
@@ -396,6 +407,7 @@ def convert(
         shape_style_at=officeart_shapes.style_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
+        list_names=available_list_names,
     )
     header_textbox_table = fib.plcf_hdr_txbx_txt
     header_textbox_fields = fib.plcf_fld_hdr_txbx
@@ -421,6 +433,7 @@ def convert(
         shape_style_at=officeart_shapes.style_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
+        list_names=available_list_names,
     )
     main_characters = piece_table.extract_characters(
         0,
@@ -518,6 +531,7 @@ def convert(
         field_end_properties_at=header_fields.end_properties_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
+        list_names=available_list_names,
     )
     sections = header_footers.sections
     parsed_document = parse_main_story(
@@ -536,6 +550,7 @@ def convert(
         bookmark_boundaries_at=bookmarks.boundaries_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
+        list_names=available_list_names,
         sections=sections,
     )
     document = Document(
@@ -607,6 +622,7 @@ def convert(
             "preserved_bookmark_count": bookmarks.preserved_count,
             "column_bookmark_count": bookmarks.column_bookmark_count,
             "abstract_numbering_count": len(numbering.abstracts),
+            "named_list_count": len(available_list_names),
             "numbering_instance_count": len(numbering.instances),
             "numbering_level_count": sum(
                 len(abstract.levels) for abstract in numbering.abstracts
@@ -776,7 +792,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M11b conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M11c conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -899,6 +915,8 @@ def inspect_doc(
             "lcbPlfLst": fib.plf_lst.lcb,
             "fcPlfLfo": fib.plf_lfo.fc,
             "lcbPlfLfo": fib.plf_lfo.lcb,
+            "fcSttbListNames": fib.sttb_list_names.fc,
+            "lcbSttbListNames": fib.sttb_list_names.lcb,
         },
         "entries": sorted(entries, key=lambda item: item["path"]),
     }

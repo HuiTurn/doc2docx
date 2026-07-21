@@ -96,6 +96,7 @@ def read_header_footer_stories(
     ) = None,
     bookmark_names: Collection[str] | None = None,
     style_names: Collection[str] | None = None,
+    list_names: Collection[str] | None = None,
 ) -> HeaderFooterCollection:
     """Read non-empty header/footer stories and attach them to their sections."""
 
@@ -183,6 +184,7 @@ def read_header_footer_stories(
                 field_end_properties_at=field_end_properties_at,
                 bookmark_names=bookmark_names,
                 style_names=style_names,
+                list_names=list_names,
                 story_name=story_name,
             )
             replacements[field_name] = HeaderFooterStory(

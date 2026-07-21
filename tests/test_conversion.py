@@ -761,6 +761,7 @@ class ConversionTests(unittest.TestCase):
             self.assertEqual(info["fib"]["lcbPlcfBtePapx"], 0)
             self.assertEqual(info["fib"]["lcbPlcfSed"], 0)
             self.assertEqual(info["fib"]["lcbPlcfHdd"], 0)
+            self.assertEqual(info["fib"]["lcbSttbListNames"], 0)
             self.assertEqual(
                 {item["path"] for item in info["entries"]},
                 {"WordDocument", "1Table"},

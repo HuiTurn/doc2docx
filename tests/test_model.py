@@ -157,6 +157,7 @@ class DocumentModelTests(unittest.TestCase):
                 "\x13 FTNREF Target \x14note\x15",
                 "\x13 SEQ Figure \\* ARABIC \x141\x15",
                 '\x13 STYLEREF "Heading 1" \x14Chapter\x15',
+                "\x13 LISTNUM CustomOutline \\l 2 \x141.1\x15",
             )
         ) + "\r"
 
@@ -165,6 +166,7 @@ class DocumentModelTests(unittest.TestCase):
             report,
             bookmark_names={"Target"},
             style_names={"Heading 1"},
+            list_names={"CustomOutline"},
         )
 
         fields = [
@@ -172,10 +174,10 @@ class DocumentModelTests(unittest.TestCase):
             for inline in document.paragraphs[0].inlines
             if isinstance(inline, Field)
         ]
-        self.assertEqual(len(fields), 4)
+        self.assertEqual(len(fields), 5)
         self.assertEqual(
             [field.instruction.strip().split()[0] for field in fields],
-            ["NOTEREF", "NOTEREF", "SEQ", "STYLEREF"],
+            ["NOTEREF", "NOTEREF", "SEQ", "STYLEREF", "LISTNUM"],
         )
         self.assertFalse(report.warnings)
 
@@ -208,6 +210,7 @@ class DocumentModelTests(unittest.TestCase):
                 "BROKEN_BOOKMARK_FIELDS_FLATTENED",
                 "BROKEN_SEQUENCE_FIELDS_FLATTENED",
                 "BROKEN_STYLE_FIELDS_FLATTENED",
+                "BROKEN_LISTNUM_FIELDS_FLATTENED",
             ],
         )
 

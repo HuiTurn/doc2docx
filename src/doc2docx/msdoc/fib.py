@@ -48,6 +48,7 @@ FCLCB97_PLF_LST_INDEX = 73
 FCLCB97_PLF_LFO_INDEX = 74
 FCLCB97_PLCF_TXBX_BKD_INDEX = 75
 FCLCB97_PLCF_TXBX_HDR_BKD_INDEX = 76
+FCLCB97_STTB_LIST_NAMES_INDEX = 91
 
 
 @dataclass(slots=True, frozen=True)
@@ -386,6 +387,12 @@ class FileInformationBlock:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_PLF_LFO_INDEX:
             return FcLcb(0, 0)
         return self.fib_rg_fc_lcb[FCLCB97_PLF_LFO_INDEX]
+
+    @property
+    def sttb_list_names(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_STTB_LIST_NAMES_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_STTB_LIST_NAMES_INDEX]
 
     @property
     def plcf_txbx_hdr_bkd(self) -> FcLcb:

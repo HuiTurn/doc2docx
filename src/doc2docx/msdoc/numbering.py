@@ -164,6 +164,80 @@ def _decode_level_text(
     return "".join(pieces)
 
 
+def _parse_list_names(
+    table_stream: bytes,
+    *,
+    offset: int,
+    size: int,
+    list_count: int,
+    report: ConversionReport,
+) -> tuple[str, ...]:
+    """Parse SttbListNames and return names parallel to PlfLst.rgLstf."""
+
+    if size == 0:
+        return ("",) * list_count
+    _check_range(table_stream, offset, size, label="SttbListNames")
+    if size < 6:
+        raise InvalidWordDocument("SttbListNames is truncated")
+    limit = offset + size
+    f_extend, entry_count, extra_size = struct.unpack_from(
+        "<HHH", table_stream, offset
+    )
+    if f_extend != 0xFFFF:
+        raise InvalidWordDocument("SttbListNames is not an extended STTB")
+    if extra_size != 0:
+        raise InvalidWordDocument("SttbListNames has nonzero cbExtra")
+
+    position = offset + 6
+    values: list[str] = []
+    unique_names: set[str] = set()
+    for index in range(entry_count):
+        if position > limit - 2:
+            raise InvalidWordDocument(
+                f"SttbListNames is truncated before string {index}"
+            )
+        character_count = struct.unpack_from("<H", table_stream, position)[0]
+        position += 2
+        if character_count > 0x00FF:
+            raise InvalidWordDocument(
+                f"SttbListNames string {index} exceeds 255 characters"
+            )
+        byte_count = character_count * 2
+        if position > limit - byte_count:
+            raise InvalidWordDocument(
+                f"SttbListNames string {index} exceeds its table bounds"
+            )
+        try:
+            value = table_stream[position : position + byte_count].decode(
+                "utf-16le"
+            )
+        except UnicodeDecodeError as exc:
+            raise InvalidWordDocument(
+                f"SttbListNames string {index} is not valid UTF-16"
+            ) from exc
+        position += byte_count
+        folded = value.casefold()
+        if value and folded in unique_names:
+            raise InvalidWordDocument(
+                f"SttbListNames repeats list name {value!r}"
+            )
+        if value:
+            unique_names.add(folded)
+        values.append(value)
+    if position != limit:
+        raise InvalidWordDocument(
+            f"SttbListNames has {limit - position} unexpected trailing bytes"
+        )
+    if entry_count > list_count:
+        report.warning(
+            "EXTRA_LIST_NAMES_IGNORED",
+            "list names without parallel PlfLst definitions were ignored",
+            list_name_count=entry_count,
+            list_definition_count=list_count,
+        )
+    return tuple((values + [""] * list_count)[:list_count])
+
+
 def _parse_level(
     data: bytes,
     position: int,
@@ -519,13 +593,15 @@ def read_numbering(
     ccp_text: int,
     fonts: tuple[FontDefinition, ...],
     report: ConversionReport,
+    list_names_offset: int = 0,
+    list_names_size: int = 0,
 ) -> NumberingDefinitions:
     """Parse native list definitions and concrete list instances."""
 
-    if list_size == 0 and lfo_size == 0:
+    if list_size == 0 and lfo_size == 0 and list_names_size == 0:
         return NumberingDefinitions()
-    if list_size == 0 and lfo_size:
-        raise InvalidWordDocument("PlfLfo exists without a PlfLst")
+    if list_size == 0 and (lfo_size or list_names_size):
+        raise InvalidWordDocument("PlfLfo or SttbListNames exists without a PlfLst")
     _check_range(table_stream, list_offset, list_size, label="PlfLst")
     if lfo_size:
         _check_range(table_stream, lfo_offset, lfo_size, label="PlfLfo")
@@ -549,6 +625,18 @@ def read_numbering(
         unsupported_character=unsupported_character,
         approximated_formats=approximated_formats,
     )
+    list_names = _parse_list_names(
+        table_stream,
+        offset=list_names_offset,
+        size=list_names_size,
+        list_count=len(abstracts),
+        report=report,
+    )
+    abstracts = tuple(
+        replace(abstract, name=list_names[index] or None)
+        for index, abstract in enumerate(abstracts)
+    )
+    by_list_id = {value.source_list_id: value for value in abstracts}
     instances = _parse_list_instances(
         table_stream,
         offset=lfo_offset,

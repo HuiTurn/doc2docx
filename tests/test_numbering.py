@@ -111,24 +111,39 @@ def _numbering_tables() -> tuple[bytes, int, int]:
     return list_region + plf_lfo, len(plf_lst), len(list_region)
 
 
+def _list_names(*values: str) -> bytes:
+    payload = bytearray(struct.pack("<HHH", 0xFFFF, len(values), 0))
+    for value in values:
+        encoded = value.encode("utf-16le")
+        payload.extend(struct.pack("<H", len(encoded) // 2))
+        payload.extend(encoded)
+    return bytes(payload)
+
+
 class NumberingTests(unittest.TestCase):
     def _read(self):
         table, list_size, lfo_offset = _numbering_tables()
+        names = _list_names("CustomOutline", "")
+        names_offset = len(table)
         return read_numbering(
-            table,
+            table + names,
             list_offset=0,
             list_size=list_size,
             lfo_offset=lfo_offset,
-            lfo_size=len(table) - lfo_offset,
+            lfo_size=names_offset - lfo_offset,
             ccp_text=20,
             fonts=(FontDefinition(0, "Symbol"),),
             report=ConversionReport("lists.doc"),
+            list_names_offset=names_offset,
+            list_names_size=len(names),
         )
 
     def test_reads_list_levels_and_lfo_overrides(self) -> None:
         numbering = self._read()
 
         self.assertEqual(len(numbering.abstracts), 2)
+        self.assertEqual(numbering.abstracts[0].name, "CustomOutline")
+        self.assertIsNone(numbering.abstracts[1].name)
         decimal, bullet = (value.levels[0] for value in numbering.abstracts)
         self.assertEqual((decimal.number_format, decimal.text), ("decimal", "%1."))
         self.assertEqual(decimal.paragraph_properties.left_indent_twips, 720)
@@ -192,6 +207,10 @@ class NumberingTests(unittest.TestCase):
             for value in numbering_root.findall(f".//{W}abstractNum/{W}lvl/{W}lvlText")
         ]
         self.assertEqual(level_texts, ["%1.", "\uf0b7"])
+        self.assertEqual(
+            numbering_root.find(f".//{W}abstractNum/{W}name").get(f"{W}val"),
+            "CustomOutline",
+        )
         self.assertEqual(
             numbering_root.find(f".//{W}startOverride").get(f"{W}val"),
             "3",
@@ -264,6 +283,61 @@ class NumberingTests(unittest.TestCase):
                         ccp_text=20,
                         fonts=(FontDefinition(0, "Symbol"),),
                         report=ConversionReport("bad-lists.doc"),
+                    )
+
+    def test_ignores_extra_list_names_with_a_diagnostic(self) -> None:
+        table, list_size, lfo_offset = _numbering_tables()
+        names = _list_names("First", "Second", "Extra")
+        names_offset = len(table)
+        report = ConversionReport("extra-list-name.doc")
+
+        numbering = read_numbering(
+            table + names,
+            list_offset=0,
+            list_size=list_size,
+            lfo_offset=lfo_offset,
+            lfo_size=names_offset - lfo_offset,
+            ccp_text=20,
+            fonts=(FontDefinition(0, "Symbol"),),
+            report=report,
+            list_names_offset=names_offset,
+            list_names_size=len(names),
+        )
+
+        self.assertEqual(
+            [abstract.name for abstract in numbering.abstracts],
+            ["First", "Second"],
+        )
+        self.assertEqual(
+            [warning.code for warning in report.warnings],
+            ["EXTRA_LIST_NAMES_IGNORED"],
+        )
+
+    def test_rejects_malformed_list_name_tables(self) -> None:
+        table, list_size, lfo_offset = _numbering_tables()
+        malformed_tables = (
+            struct.pack("<HHH", 0, 0, 0),
+            struct.pack("<HHH", 0xFFFF, 0, 1),
+            struct.pack("<HHH", 0xFFFF, 1, 0) + struct.pack("<H", 256),
+            _list_names("Name", "name"),
+            _list_names("Name")[:-1],
+            _list_names("Name") + b"\0",
+        )
+        for names in malformed_tables:
+            with self.subTest(names=names):
+                names_offset = len(table)
+                with self.assertRaises(InvalidWordDocument):
+                    read_numbering(
+                        table + names,
+                        list_offset=0,
+                        list_size=list_size,
+                        lfo_offset=lfo_offset,
+                        lfo_size=names_offset - lfo_offset,
+                        ccp_text=20,
+                        fonts=(FontDefinition(0, "Symbol"),),
+                        report=ConversionReport("bad-list-names.doc"),
+                        list_names_offset=names_offset,
+                        list_names_size=len(names),
                     )
 
 
