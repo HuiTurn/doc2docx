@@ -1107,10 +1107,15 @@ def _append_field(
         field.properties,
         valid_style_ids=valid_character_style_ids,
     )
+    begin_attributes = {_qn(W_NS, "fldCharType"): "begin"}
+    if field.locked:
+        begin_attributes[_qn(W_NS, "fldLock")] = "1"
+    if field.dirty:
+        begin_attributes[_qn(W_NS, "dirty")] = "1"
     ET.SubElement(
         begin_run,
         _qn(W_NS, "fldChar"),
-        {_qn(W_NS, "fldCharType"): "begin"},
+        begin_attributes,
     )
     instruction_run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
     _append_run_properties(

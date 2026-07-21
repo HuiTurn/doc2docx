@@ -414,6 +414,21 @@ class Field:
     result: tuple["Inline", ...] = ()
     properties: CharacterProperties = field(default_factory=CharacterProperties)
     has_separator: bool = True
+    locked: bool = False
+    dirty: bool = False
+
+
+@dataclass(slots=True, frozen=True)
+class FieldEndProperties:
+    """Flags stored on one MS-DOC field-end character."""
+
+    field_type_code: int
+    result_dirty: bool = False
+    result_edited: bool = False
+    locked: bool = False
+    private_result: bool = False
+    nested: bool = False
+    has_separator: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -1004,6 +1019,9 @@ def parse_main_story(
     floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
     inline_picture_at: Callable[[int], InlinePicture | None] | None = None,
     floating_picture_at: Callable[[int], FloatingPicture | None] | None = None,
+    field_end_properties_at: (
+        Callable[[int], FieldEndProperties | None] | None
+    ) = None,
     footnote_reference_at: Callable[[int], FootnoteReference | None] | None = None,
     endnote_reference_at: Callable[[int], EndnoteReference | None] | None = None,
     comment_reference_at: Callable[[int], CommentReference | None] | None = None,
@@ -1034,6 +1052,7 @@ def parse_main_story(
     flattened_fields = 0
     flattened_field_types: dict[str, int] = {}
     active_field_types: set[str] = set()
+    undeclared_field_types: set[str] = set()
     field_stack: list[_FieldContext] = []
     last_was_terminator = False
     section_values = tuple(sections)
@@ -1143,18 +1162,49 @@ def parse_main_story(
             instruction_tokens = instruction.lstrip().split(maxsplit=1)
             field_type = instruction_tokens[0].upper() if instruction_tokens else ""
             parent_is_visible = visible()
-            if field_type in _SAFE_LIVE_FIELD_TYPES:
+            field_end_properties = (
+                field_end_properties_at(cp_offset)
+                if field_end_properties_at is not None
+                else None
+            )
+            declared_field = (
+                field_end_properties_at is None
+                or field_end_properties is not None
+            )
+            if field_type in _SAFE_LIVE_FIELD_TYPES and declared_field:
                 if parent_is_visible:
                     current_inlines().append(
                         Field(
                             instruction=instruction,
-                            result=tuple(context.result),
+                            result=(
+                                ()
+                                if field_end_properties is not None
+                                and field_end_properties.private_result
+                                else tuple(context.result)
+                            ),
                             properties=context.properties,
                             has_separator=context.has_separator,
+                            locked=(
+                                field_end_properties.locked
+                                if field_end_properties is not None
+                                else False
+                            ),
+                            dirty=(
+                                field_end_properties.result_dirty
+                                or field_end_properties.result_edited
+                                if field_end_properties is not None
+                                else False
+                            ),
                         )
                     )
             else:
-                if parent_is_visible:
+                if (
+                    parent_is_visible
+                    and not (
+                        field_end_properties is not None
+                        and field_end_properties.private_result
+                    )
+                ):
                     extend_visible_inlines(context.result)
                 flattened_fields += 1
                 normalized_type = field_type or "UNKNOWN"
@@ -1163,6 +1213,8 @@ def parse_main_story(
                 )
                 if field_type in _EXTERNAL_OR_ACTIVE_FIELD_TYPES:
                     active_field_types.add(field_type)
+                if field_type in _SAFE_LIVE_FIELD_TYPES and not declared_field:
+                    undeclared_field_types.add(field_type)
             continue
         if not visible():
             for context in reversed(field_stack):
@@ -1393,6 +1445,13 @@ def parse_main_story(
             "fields that can execute actions or access external content were kept as cached text",
             location=SourceLocation(story=story_name),
             field_types=sorted(active_field_types),
+        )
+    if undeclared_field_types:
+        report.warning(
+            "UNDECLARED_FIELDS_FLATTENED",
+            "field-like control characters absent from Plcfld were kept as cached text",
+            location=SourceLocation(story=story_name),
+            field_types=sorted(undeclared_field_types),
         )
     unmatched_section_ends = sorted(
         set(internal_sections_by_end) - matched_section_ends

@@ -32,6 +32,7 @@ from .msdoc import (
     read_comments,
     read_document_settings,
     read_endnotes,
+    read_field_table,
     read_font_table,
     read_formatting,
     read_footnotes,
@@ -195,6 +196,71 @@ def convert(
         fonts=fonts,
         style_sheet=style_sheet,
     )
+    main_field_table = fib.plcf_fld_mom
+    main_fields = read_field_table(
+        table_stream,
+        piece_table,
+        offset=main_field_table.fc,
+        size=main_field_table.lcb,
+        story_length=fib.ccp_text,
+        story_cp_start=0,
+        structure="PlcfFldMom",
+        story_name="main",
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
+    footnote_field_table = fib.plcf_fld_ftn
+    footnote_fields = read_field_table(
+        table_stream,
+        piece_table,
+        offset=footnote_field_table.fc,
+        size=footnote_field_table.lcb,
+        story_length=fib.ccp_footnotes,
+        story_cp_start=fib.ccp_text,
+        structure="PlcfFldFtn",
+        story_name="footnotes",
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
+    header_field_table = fib.plcf_fld_hdr
+    header_fields = read_field_table(
+        table_stream,
+        piece_table,
+        offset=header_field_table.fc,
+        size=header_field_table.lcb,
+        story_length=fib.ccp_headers,
+        story_cp_start=fib.header_story_cp_start,
+        structure="PlcfFldHdr",
+        story_name="headers",
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
+    comment_field_table = fib.plcf_fld_atn
+    comment_fields = read_field_table(
+        table_stream,
+        piece_table,
+        offset=comment_field_table.fc,
+        size=comment_field_table.lcb,
+        story_length=fib.ccp_comments,
+        story_cp_start=fib.comment_story_cp_start,
+        structure="PlcfFldAtn",
+        story_name="comments",
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
+    endnote_field_table = fib.plcf_fld_edn
+    endnote_fields = read_field_table(
+        table_stream,
+        piece_table,
+        offset=endnote_field_table.fc,
+        size=endnote_field_table.lcb,
+        story_length=fib.ccp_endnotes,
+        story_cp_start=fib.endnote_story_cp_start,
+        structure="PlcfFldEdn",
+        story_name="endnotes",
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
     footnote_reference_table = fib.plcf_fnd_ref
     footnote_text_table = fib.plcf_fnd_txt
     footnotes = read_footnotes(
@@ -209,6 +275,7 @@ def convert(
         report=report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
+        field_end_properties_at=footnote_fields.end_properties_at,
     )
     comment_reference_table = fib.plcf_and_ref
     comment_text_table = fib.plcf_and_txt
@@ -237,6 +304,7 @@ def convert(
         report=report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
+        field_end_properties_at=comment_fields.end_properties_at,
     )
     endnote_reference_table = fib.plcf_end_ref
     endnote_text_table = fib.plcf_end_txt
@@ -253,6 +321,7 @@ def convert(
         report=report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
+        field_end_properties_at=endnote_fields.end_properties_at,
     )
     spa_headers = fib.plc_spa_hdr
     dgg_info = fib.dgg_info
@@ -412,6 +481,7 @@ def convert(
         floating_textbox_at=header_textboxes.textbox_at,
         inline_picture_at=header_inline_pictures.picture_at,
         floating_picture_at=header_floating_pictures.picture_at,
+        field_end_properties_at=header_fields.end_properties_at,
     )
     sections = header_footers.sections
     parsed_document = parse_main_story(
@@ -426,6 +496,7 @@ def convert(
         endnote_reference_at=endnotes.reference_at,
         comment_reference_at=comments.reference_at,
         comment_boundaries_at=comments.boundaries_at,
+        field_end_properties_at=main_fields.end_properties_at,
         sections=sections,
     )
     document = Document(
@@ -469,6 +540,30 @@ def convert(
                 1 for style in style_sheet.styles if style is not None
             ),
             "core_property_count": summary_information.value_count,
+            "declared_field_count": sum(
+                field_table.field_count
+                for field_table in (
+                    main_fields,
+                    footnote_fields,
+                    header_fields,
+                    comment_fields,
+                    endnote_fields,
+                )
+            )
+            + main_textboxes.field_count
+            + header_textboxes.field_count,
+            "declared_field_character_count": sum(
+                field_table.character_count
+                for field_table in (
+                    main_fields,
+                    footnote_fields,
+                    header_fields,
+                    comment_fields,
+                    endnote_fields,
+                )
+            )
+            + main_textboxes.field_character_count
+            + header_textboxes.field_character_count,
             "abstract_numbering_count": len(numbering.abstracts),
             "numbering_instance_count": len(numbering.instances),
             "numbering_level_count": sum(
@@ -639,7 +734,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M10a conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M10b conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -742,6 +837,16 @@ def inspect_doc(
             "lcbDop": fib.dop.lcb,
             "fcSttbfFfn": fib.sttbf_ffn.fc,
             "lcbSttbfFfn": fib.sttbf_ffn.lcb,
+            "fcPlcfFldMom": fib.plcf_fld_mom.fc,
+            "lcbPlcfFldMom": fib.plcf_fld_mom.lcb,
+            "fcPlcfFldHdr": fib.plcf_fld_hdr.fc,
+            "lcbPlcfFldHdr": fib.plcf_fld_hdr.lcb,
+            "fcPlcfFldFtn": fib.plcf_fld_ftn.fc,
+            "lcbPlcfFldFtn": fib.plcf_fld_ftn.lcb,
+            "fcPlcfFldAtn": fib.plcf_fld_atn.fc,
+            "lcbPlcfFldAtn": fib.plcf_fld_atn.lcb,
+            "fcPlcfFldEdn": fib.plcf_fld_edn.fc,
+            "lcbPlcfFldEdn": fib.plcf_fld_edn.lcb,
             "fcPlfLst": fib.plf_lst.fc,
             "lcbPlfLst": fib.plf_lst.lcb,
             "fcPlfLfo": fib.plf_lfo.fc,

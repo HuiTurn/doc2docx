@@ -8,6 +8,21 @@ current capabilities without release-by-release notes.
 - Continue expanding MS-DOC compatibility with specification-backed parsers,
   focused tests, and real Word 97 sample rendering.
 
+## 0.24.0 - 2026-07-22 (M10b)
+
+- Validate the MS-DOC `Plcfld`/`Fld` structures for the main, header/footer,
+  footnote, endnote, comment, and textbox stories, including bounded CP ranges,
+  field-character matching, nesting, separators, field types, and end flags.
+- Preserve locked and dirty/edited field states in WordprocessingML while
+  preventing field-like control characters absent from `Plcfld` from becoming
+  live output fields.
+- Suppress private field results, retain cached text for unsupported or active
+  fields, and report missing `sprmCFSpec`, unknown field types, omitted nested
+  fields, and legacy display flags that cannot be represented directly.
+- Validate with malformed and nested constructed cases plus a real Word 97 DOC
+  containing six declared fields and eighteen field characters, with a clean
+  conversion report and rendered output.
+
 ## 0.23.0 - 2026-07-22 (M10a)
 
 - Preserve common date/time, document metadata, pagination, section, filename,

@@ -11,6 +11,7 @@ from ..model import (
     CharacterProperties,
     Endnote,
     EndnoteReference,
+    FieldEndProperties,
     ParagraphProperties,
     parse_main_story,
 )
@@ -46,6 +47,9 @@ def read_endnotes(
     report: ConversionReport,
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
+    field_end_properties_at: (
+        Callable[[int], FieldEndProperties | None] | None
+    ) = None,
 ) -> EndnoteCollection:
     """Parse endnote bodies and map their main-story reference CPs."""
 
@@ -146,6 +150,7 @@ def read_endnotes(
             report,
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
+            field_end_properties_at=field_end_properties_at,
             story_name=story_name,
         )
         endnotes.append(

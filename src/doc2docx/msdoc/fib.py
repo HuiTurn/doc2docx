@@ -21,7 +21,10 @@ FCLCB97_PLCF_HDD_INDEX = 11
 FCLCB97_PLCF_BTE_CHPX_INDEX = 12
 FCLCB97_PLCF_BTE_PAPX_INDEX = 13
 FCLCB97_STTBF_FFN_INDEX = 15
+FCLCB97_PLCF_FLD_MOM_INDEX = 16
 FCLCB97_PLCF_FLD_HDR_INDEX = 17
+FCLCB97_PLCF_FLD_FTN_INDEX = 18
+FCLCB97_PLCF_FLD_ATN_INDEX = 19
 FCLCB97_DOP_INDEX = 31
 FCLCB97_CLX_INDEX = 33
 FCLCB97_GRP_XST_ATN_OWNERS_INDEX = 36
@@ -32,6 +35,7 @@ FCLCB97_PLCF_ATN_BKF_INDEX = 42
 FCLCB97_PLCF_ATN_BKL_INDEX = 43
 FCLCB97_PLCF_END_REF_INDEX = 46
 FCLCB97_PLCF_END_TXT_INDEX = 47
+FCLCB97_PLCF_FLD_EDN_INDEX = 48
 FCLCB97_DGG_INFO_INDEX = 50
 FCLCB97_PLCF_TXBX_TXT_INDEX = 56
 FCLCB97_PLCF_FLD_TXBX_INDEX = 57
@@ -263,6 +267,24 @@ class FileInformationBlock:
         return self.fib_rg_fc_lcb[FCLCB97_PLCF_FLD_HDR_INDEX]
 
     @property
+    def plcf_fld_mom(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_FLD_MOM_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_FLD_MOM_INDEX]
+
+    @property
+    def plcf_fld_ftn(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_FLD_FTN_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_FLD_FTN_INDEX]
+
+    @property
+    def plcf_fld_atn(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_FLD_ATN_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_FLD_ATN_INDEX]
+
+    @property
     def dop(self) -> FcLcb:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_DOP_INDEX:
             return FcLcb(0, 0)
@@ -297,6 +319,12 @@ class FileInformationBlock:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_END_TXT_INDEX:
             return FcLcb(0, 0)
         return self.fib_rg_fc_lcb[FCLCB97_PLCF_END_TXT_INDEX]
+
+    @property
+    def plcf_fld_edn(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_FLD_EDN_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_FLD_EDN_INDEX]
 
     @property
     def plcf_hdr_txbx_txt(self) -> FcLcb:

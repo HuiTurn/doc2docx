@@ -14,6 +14,7 @@ from ..model import (
     CommentRangeEnd,
     CommentRangeStart,
     CommentReference,
+    FieldEndProperties,
     ParagraphProperties,
     parse_main_story,
 )
@@ -332,6 +333,9 @@ def read_comments(
     report: ConversionReport,
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
+    field_end_properties_at: (
+        Callable[[int], FieldEndProperties | None] | None
+    ) = None,
 ) -> CommentCollection:
     """Parse comment bodies, authors, references, and optional range anchors."""
 
@@ -467,6 +471,7 @@ def read_comments(
             report,
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
+            field_end_properties_at=field_end_properties_at,
             story_name=story_name,
         )
         comments.append(

@@ -9,6 +9,7 @@ from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
 from ..model import (
     CharacterProperties,
+    FieldEndProperties,
     Footnote,
     FootnoteReference,
     ParagraphProperties,
@@ -45,6 +46,9 @@ def read_footnotes(
     report: ConversionReport,
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
+    field_end_properties_at: (
+        Callable[[int], FieldEndProperties | None] | None
+    ) = None,
 ) -> FootnoteCollection:
     """Parse footnote bodies and map their main-story reference CPs."""
 
@@ -146,6 +150,7 @@ def read_footnotes(
             report,
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
+            field_end_properties_at=field_end_properties_at,
             story_name=story_name,
         )
         footnotes.append(

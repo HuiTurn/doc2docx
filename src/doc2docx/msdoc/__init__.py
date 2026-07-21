@@ -2,6 +2,7 @@ from .comments import CommentCollection, read_comments
 from .document_properties import WordDocumentSettings, read_document_settings
 from .endnotes import EndnoteCollection, read_endnotes
 from .fib import FileInformationBlock
+from .fields import FieldTable, read_field_table
 from .fonts import read_font_table
 from .formatting import FormattingMap, read_formatting
 from .footnotes import FootnoteCollection, read_footnotes
@@ -38,6 +39,7 @@ from .styles import read_style_sheet
 __all__ = [
     "CommentCollection",
     "FileInformationBlock",
+    "FieldTable",
     "EndnoteCollection",
     "FormattingMap",
     "FootnoteCollection",
@@ -57,6 +59,7 @@ __all__ = [
     "read_comments",
     "read_endnotes",
     "read_font_table",
+    "read_field_table",
     "read_formatting",
     "read_footnotes",
     "read_header_floating_pictures",

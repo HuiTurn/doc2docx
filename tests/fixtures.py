@@ -561,7 +561,7 @@ def build_header_textbox_word_cfb(
     )
     first_field_character = 0x14 if malformed_field else 0x13
     plcf_fields += bytes(
-        (first_field_character, 0x21, 0x14, 0x00, 0x15, 0x00)
+        (first_field_character, 0x21, 0x14, 0x00, 0x15, 0x80)
     )
     plcf_fields_offset = 460
 
@@ -694,7 +694,7 @@ def build_main_textbox_word_cfb(
             end_cp,
             len(textbox_document),
         )
-        plcf_fields += bytes((0x13, 0x21, 0x14, 0x00, 0x15, 0x00))
+        plcf_fields += bytes((0x13, 0x21, 0x14, 0x00, 0x15, 0x80))
     dgg_info = (
         _header_textbox_officeart(shape_id, main_shape=True)
         if officeart_style

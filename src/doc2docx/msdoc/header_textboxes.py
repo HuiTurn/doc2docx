@@ -10,6 +10,7 @@ from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
 from ..model import (
     CharacterProperties,
+    FieldEndProperties,
     FloatingTextBox,
     Paragraph,
     ParagraphProperties,
@@ -17,6 +18,7 @@ from ..model import (
     Table,
     parse_main_story,
 )
+from .fields import read_field_table
 from .pieces import PieceTable
 
 
@@ -38,6 +40,7 @@ class TextBoxCollection:
     by_anchor_cp: Mapping[int, FloatingTextBox]
     textbox_count: int = 0
     field_count: int = 0
+    field_character_count: int = 0
     styled_textbox_count: int = 0
 
     def textbox_at(self, cp: int) -> FloatingTextBox | None:
@@ -99,76 +102,6 @@ def _plc_count(size: int, data_size: int, structure: str) -> int:
             f"{structure} size {size} is not valid for {data_size}-byte data elements"
         )
     return (size - 4) // (4 + data_size)
-
-
-def _read_textbox_fields(
-    table_stream: bytes,
-    piece_table: PieceTable,
-    *,
-    offset: int,
-    size: int,
-    ccp_textboxes: int,
-    textbox_cp_start: int,
-    field_structure: str,
-    textbox_story_name: str,
-    report: ConversionReport,
-) -> int:
-    if size == 0:
-        return 0
-    raw = _checked_range(
-        table_stream,
-        offset=offset,
-        size=size,
-        structure=field_structure,
-    )
-    count = _plc_count(size, 2, field_structure)
-    cps = struct.unpack_from(f"<{count + 1}I", raw, 0)
-    field_cps = cps[:-1]
-    if any(current <= previous for previous, current in zip(field_cps, field_cps[1:])):
-        raise InvalidWordDocument(
-            f"{field_structure} field CP values are not increasing"
-        )
-    if any(cp >= ccp_textboxes for cp in field_cps):
-        raise InvalidWordDocument(
-            f"{field_structure} field CP points beyond the textbox document"
-        )
-    data_offset = 4 * (count + 1)
-    stack: list[bool] = []
-    begin_count = 0
-    for index, cp in enumerate(field_cps):
-        fldch = raw[data_offset + index * 2] & 0x1F
-        if fldch not in (0x13, 0x14, 0x15):
-            raise InvalidWordDocument(
-                f"{field_structure} entry {index} has invalid field character 0x{fldch:02X}"
-            )
-        units = piece_table.extract_characters(
-            textbox_cp_start + cp,
-            textbox_cp_start + cp + 1,
-            report,
-            story=textbox_story_name,
-        )
-        if len(units) != 1 or ord(units[0].text) != fldch:
-            raise InvalidWordDocument(
-                f"{field_structure} entry {index} does not match its story character"
-            )
-        if fldch == 0x13:
-            stack.append(False)
-            begin_count += 1
-        elif fldch == 0x14:
-            if not stack or stack[-1]:
-                raise InvalidWordDocument(
-                    f"{field_structure} contains an invalid field-separator sequence"
-                )
-            stack[-1] = True
-        else:
-            if not stack:
-                raise InvalidWordDocument(
-                    f"{field_structure} contains an unmatched field-end character"
-                )
-            stack.pop()
-    if stack:
-        raise InvalidWordDocument(f"{field_structure} contains an unterminated field")
-    return begin_count
 
 
 def read_shape_anchors(
@@ -275,6 +208,7 @@ def _read_textbox_entries(
     report: ConversionReport,
     character_properties_at: Callable[[int], CharacterProperties] | None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None,
+    field_end_properties_at: Callable[[int], FieldEndProperties | None] | None,
 ) -> tuple[_TextBoxEntry, ...]:
     raw = _checked_range(
         table_stream,
@@ -344,6 +278,7 @@ def _read_textbox_entries(
             report,
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
+            field_end_properties_at=field_end_properties_at,
             story_name=f"{textbox_story_name}-{index}",
         )
         entries.append(
@@ -460,15 +395,15 @@ def _read_textboxes(
             f"{context_name} range [{textbox_cp_start}, {cp_end}) exceeds "
             f"Piece Table CP {piece_table.cp_end}"
         )
-    field_count = _read_textbox_fields(
+    fields = read_field_table(
         table_stream,
         piece_table,
         offset=field_offset,
         size=field_size,
-        ccp_textboxes=ccp_textboxes,
-        textbox_cp_start=textbox_cp_start,
-        field_structure=field_structure,
-        textbox_story_name=textbox_location_story,
+        story_length=ccp_textboxes,
+        story_cp_start=textbox_cp_start,
+        structure=field_structure,
+        story_name=textbox_location_story,
         report=report,
     )
     spas = read_shape_anchors(
@@ -494,6 +429,7 @@ def _read_textboxes(
         report=report,
         character_properties_at=character_properties_at,
         paragraph_properties_at=paragraph_properties_at,
+        field_end_properties_at=fields.end_properties_at,
     )
     _validate_break_descriptors(
         table_stream,
@@ -567,7 +503,8 @@ def _read_textboxes(
     return TextBoxCollection(
         by_anchor_cp=by_anchor_cp,
         textbox_count=len(entries),
-        field_count=field_count,
+        field_count=fields.field_count,
+        field_character_count=fields.character_count,
         styled_textbox_count=len(entries) - approximated_style_count,
     )
 
