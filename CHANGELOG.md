@@ -5,6 +5,8 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.31.0 - 2026-07-22 (M15a-M15c)
+
 ### M15c
 
 - Repair the observed unassigned East Asian language ID `0x00FF` to the BCP 47
