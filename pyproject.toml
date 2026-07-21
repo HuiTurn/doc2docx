@@ -12,6 +12,11 @@ license = {text = "MIT"}
 authors = [{name = "doc2docx contributors"}]
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/HuiTurn/doc2docx"
+Repository = "https://github.com/HuiTurn/doc2docx"
+Issues = "https://github.com/HuiTurn/doc2docx/issues"
+
 [project.scripts]
 doc2docx = "doc2docx.cli:main"
 
