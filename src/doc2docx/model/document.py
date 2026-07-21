@@ -348,7 +348,7 @@ class CommentReference:
 
 @dataclass(slots=True, frozen=True)
 class InlinePicture:
-    """One main/header raster picture recovered from the DOC Data stream."""
+    """One main/header picture recovered from the DOC Data stream."""
 
     picture_id: int
     source_offset: int
@@ -363,7 +363,7 @@ class InlinePicture:
 
 @dataclass(slots=True, frozen=True)
 class FloatingPicture:
-    """One raster picture positioned by a main/header DOC Spa anchor."""
+    """One picture positioned by a main/header DOC Spa anchor."""
 
     picture_id: int
     shape_id: int

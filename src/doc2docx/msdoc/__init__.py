@@ -20,6 +20,7 @@ from .header_textboxes import (
     read_shape_anchors,
 )
 from .officeart import (
+    OfficeArtImage,
     OfficeArtRasterImage,
     OfficeArtShapeCollection,
     read_officeart_shapes,
@@ -45,6 +46,7 @@ __all__ = [
     "ShapeAnchor",
     "TextBoxCollection",
     "OfficeArtShapeCollection",
+    "OfficeArtImage",
     "OfficeArtRasterImage",
     "Piece",
     "PieceTable",

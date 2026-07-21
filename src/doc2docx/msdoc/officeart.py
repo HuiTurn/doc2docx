@@ -22,17 +22,21 @@ _MAX_RECORD_DEPTH = 32
 
 
 @dataclass(slots=True, frozen=True)
-class OfficeArtRasterImage:
+class OfficeArtImage:
     data: bytes
     extension: str
     content_type: str
     blip_index: int | None = None
 
 
+# Backwards-compatible name retained for callers of the M8a-M8d API.
+OfficeArtRasterImage = OfficeArtImage
+
+
 @dataclass(slots=True, frozen=True)
 class OfficeArtShapeCollection:
     by_shape_id: Mapping[int, ShapeStyle]
-    images_by_shape_id: Mapping[int, OfficeArtRasterImage] = field(
+    images_by_shape_id: Mapping[int, OfficeArtImage] = field(
         default_factory=dict
     )
     unsupported_image_types_by_shape_id: Mapping[int, int] = field(
@@ -42,7 +46,7 @@ class OfficeArtShapeCollection:
     def style_at(self, shape_id: int) -> ShapeStyle | None:
         return self.by_shape_id.get(shape_id)
 
-    def image_at(self, shape_id: int) -> OfficeArtRasterImage | None:
+    def image_at(self, shape_id: int) -> OfficeArtImage | None:
         return self.images_by_shape_id.get(shape_id)
 
     def unsupported_image_type_at(self, shape_id: int) -> int | None:
@@ -69,7 +73,7 @@ class _Property:
 
 @dataclass(slots=True, frozen=True)
 class _BlipEntry:
-    image: OfficeArtRasterImage | None = None
+    image: OfficeArtImage | None = None
     unsupported_record_type: int | None = None
 
 
@@ -344,7 +348,7 @@ def _decode_blip_entry(
         return _BlipEntry(unsupported_record_type=exc.record_type), limit
     return (
         _BlipEntry(
-            image=OfficeArtRasterImage(
+            image=OfficeArtImage(
                 image_data,
                 extension,
                 content_type,
@@ -526,7 +530,7 @@ def read_officeart_shapes(
         drawings.append((drawing_label, drawing))
 
     by_shape_id: dict[int, ShapeStyle] = {}
-    images_by_shape_id: dict[int, OfficeArtRasterImage] = {}
+    images_by_shape_id: dict[int, OfficeArtImage] = {}
     unsupported_image_types_by_shape_id: dict[int, int] = {}
     for drawing_label, drawing in drawings:
         for container in _shape_containers(drawing):

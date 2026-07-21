@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from xml.etree import ElementTree as ET
 import zipfile
+import zlib
 
 from doc2docx.diagnostics import ConversionReport
 from doc2docx.errors import InvalidWordDocument
@@ -53,10 +54,22 @@ def _picf_with_blip(
     instance: int,
     image_data: bytes,
 ) -> bytes:
+    return _picf_with_blip_payload(
+        record_type,
+        instance,
+        b"\0" * 16 + b"\xFF" + image_data,
+    )
+
+
+def _picf_with_blip_payload(
+    record_type: int,
+    instance: int,
+    payload: bytes,
+) -> bytes:
     shape = _officeart_record(0xF004, b"", version=0xF, instance=0)
     blip = _officeart_record(
         record_type,
-        b"\0" * 16 + b"\xFF" + image_data,
+        payload,
         version=0,
         instance=instance,
     )
@@ -74,7 +87,73 @@ def _picf_with_blip(
     return bytes(picf) + shape + fbse
 
 
+def _metafile_payload(data: bytes, *, compressed: bool) -> bytes:
+    saved = zlib.compress(data) if compressed else data
+    return b"\0" * 16 + struct.pack(
+        "<I4i2iIBB",
+        len(data),
+        0,
+        0,
+        100,
+        100,
+        360000,
+        360000,
+        len(saved),
+        0x00 if compressed else 0xFE,
+        0xFE,
+    ) + saved
+
+
 class InlinePictureTests(unittest.TestCase):
+    def test_parses_compressed_emf_uncompressed_wmf_and_tiff_blips(self) -> None:
+        emf = bytearray(88)
+        struct.pack_into("<II", emf, 0, 1, len(emf))
+        struct.pack_into("<I", emf, 40, 0x464D4520)
+        wmf = struct.pack("<HHHIHIH", 1, 9, 0x0300, 9, 0, 3, 0)
+        tiff = b"II*\0\x08\0\0\0\0\0"
+        cases = (
+            (
+                0xF01A,
+                0x3D4,
+                _metafile_payload(bytes(emf), compressed=True),
+                "emf",
+                bytes(emf),
+            ),
+            (
+                0xF01B,
+                0x216,
+                _metafile_payload(wmf, compressed=False),
+                "wmf",
+                wmf,
+            ),
+            (0xF029, 0x6E4, b"\0" * 16 + b"\xFF" + tiff, "tif", tiff),
+        )
+        for picture_id, (record_type, instance, payload, extension, expected) in enumerate(
+            cases,
+            start=1,
+        ):
+            with self.subTest(extension=extension):
+                picture = parse_inline_picture(
+                    _picf_with_blip_payload(record_type, instance, payload),
+                    0,
+                    picture_id=picture_id,
+                )
+                self.assertEqual(picture.extension, extension)
+                self.assertEqual(picture.data, expected)
+
+    def test_rejects_inconsistent_or_unbounded_metafile_headers(self) -> None:
+        emf = bytearray(88)
+        struct.pack_into("<II", emf, 0, 1, len(emf))
+        struct.pack_into("<I", emf, 40, 0x464D4520)
+        payload = bytearray(_metafile_payload(bytes(emf), compressed=True))
+        struct.pack_into("<I", payload, 16, 257 * 1024 * 1024)
+        with self.assertRaises(InvalidWordDocument):
+            parse_inline_picture(
+                _picf_with_blip_payload(0xF01A, 0x3D4, bytes(payload)),
+                0,
+                picture_id=1,
+            )
+
     def test_parses_png_jpeg_and_dib_blips(self) -> None:
         jpeg = b"\xFF\xD8sample\xFF\xD9"
         dib = struct.pack(
@@ -117,7 +196,7 @@ class InlinePictureTests(unittest.TestCase):
         with self.assertRaises(InvalidWordDocument):
             parse_inline_picture(bytes(malformed), 0, picture_id=1)
 
-        unsupported = _picf_with_blip(0xF029, 0x6E4, b"TIFF")
+        unsupported = _picf_with_blip(0xF01C, 0x542, b"PICT")
         properties = CharacterProperties(special=True, picture_location=0)
         report = ConversionReport("unknown-picture.doc")
         collection = read_inline_pictures(

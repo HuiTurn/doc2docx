@@ -547,7 +547,7 @@ def convert(
     ):
         report.warning(
             "PICTURES_DEFERRED",
-            "the FIB reports pictures, but no supported raster picture was recovered",
+            "the FIB reports pictures, but no supported picture was recovered",
         )
     secondary_stories = fib.secondary_story_character_counts
     secondary_stories.pop("footnotes", None)
@@ -590,7 +590,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M8d conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M8e conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

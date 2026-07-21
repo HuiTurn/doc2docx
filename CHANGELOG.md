@@ -8,6 +8,17 @@ current capabilities without release-by-release notes.
 - Continue expanding MS-DOC compatibility with specification-backed parsers,
   focused tests, and real Word 97 sample rendering.
 
+## 0.21.0 - 2026-07-22 (M8e)
+
+- Decode TIFF, EMF, and WMF OfficeArt BLIPs in inline and floating picture
+  paths, including compressed and uncompressed metafile payloads.
+- Enforce declared compressed/uncompressed sizes, supported compression flags,
+  the metafile filter byte, format signatures, and a bounded expansion limit.
+- Preserve EMF/WMF media as native DOCX image parts; validate with a real Word
+  97 DOC containing both formats and rendered output. LibreOffice normalized
+  the TIFF sample to PNG, while native TIFF BLIPs are covered by constructed
+  record tests.
+
 ## 0.20.0 - 2026-07-22 (M8d)
 
 - Recover inline PNG, JPEG, and DIB pictures from header/footer stories through

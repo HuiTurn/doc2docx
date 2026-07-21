@@ -1,10 +1,11 @@
-"""Inline raster-picture extraction from PICF and OfficeArt records."""
+"""Inline picture extraction from PICF and OfficeArt records."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 import struct
+import zlib
 
 from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
@@ -19,7 +20,14 @@ _OFFICEART_FBSE = 0xF007
 _BLIP_JPEG_TYPES = frozenset((0xF01D, 0xF02A))
 _BLIP_PNG = 0xF01E
 _BLIP_DIB = 0xF01F
-_SUPPORTED_BLIP_TYPES = _BLIP_JPEG_TYPES | frozenset((_BLIP_PNG, _BLIP_DIB))
+_BLIP_EMF = 0xF01A
+_BLIP_WMF = 0xF01B
+_BLIP_TIFF = 0xF029
+_METAFILE_BLIP_TYPES = frozenset((_BLIP_EMF, _BLIP_WMF))
+_SUPPORTED_BLIP_TYPES = _BLIP_JPEG_TYPES | frozenset(
+    (_BLIP_PNG, _BLIP_DIB, _BLIP_TIFF, *_METAFILE_BLIP_TYPES)
+)
+_MAX_DECOMPRESSED_IMAGE_BYTES = 256 * 1024 * 1024
 
 
 @dataclass(slots=True, frozen=True)
@@ -118,6 +126,120 @@ def _dib_to_bmp(dib: bytes) -> bytes:
     return struct.pack("<2sIHHI", b"BM", file_size, 0, 0, 14 + pixel_offset) + dib
 
 
+def _decompress_metafile(payload: bytes, expected_size: int) -> bytes:
+    if expected_size <= 0 or expected_size > _MAX_DECOMPRESSED_IMAGE_BYTES:
+        raise InvalidWordDocument(
+            "OfficeArt metafile uncompressed size is outside safe limits"
+        )
+    decompressor = zlib.decompressobj()
+    result = bytearray()
+    remaining = payload
+    try:
+        while remaining:
+            chunk = decompressor.decompress(
+                remaining,
+                expected_size + 1 - len(result),
+            )
+            result.extend(chunk)
+            if len(result) > expected_size or decompressor.unconsumed_tail:
+                raise InvalidWordDocument(
+                    "OfficeArt metafile expands beyond its declared size"
+                )
+            remaining = b""
+        result.extend(decompressor.flush())
+    except zlib.error as exc:
+        raise InvalidWordDocument(
+            f"OfficeArt metafile DEFLATE data is invalid: {exc}"
+        ) from exc
+    if (
+        not decompressor.eof
+        or decompressor.unused_data
+        or len(result) != expected_size
+    ):
+        raise InvalidWordDocument(
+            "OfficeArt metafile DEFLATE size does not match its header"
+        )
+    return bytes(result)
+
+
+def _validate_emf(data: bytes) -> None:
+    if len(data) < 44:
+        raise InvalidWordDocument("OfficeArt EMF data is truncated")
+    record_type, header_size = struct.unpack_from("<II", data, 0)
+    signature = struct.unpack_from("<I", data, 40)[0]
+    if record_type != 1 or header_size < 44 or header_size > len(data):
+        raise InvalidWordDocument("OfficeArt EMF has an invalid header record")
+    if signature != 0x464D4520:
+        raise InvalidWordDocument("OfficeArt EMF signature is invalid")
+
+
+def _validate_wmf(data: bytes) -> None:
+    header_offset = 22 if data.startswith(b"\xD7\xCD\xC6\x9A") else 0
+    if len(data) < header_offset + 18:
+        raise InvalidWordDocument("OfficeArt WMF data is truncated")
+    metafile_type, header_words, _version, file_words = struct.unpack_from(
+        "<HHHI", data, header_offset
+    )
+    if metafile_type not in (1, 2) or header_words != 9:
+        raise InvalidWordDocument("OfficeArt WMF has an invalid METAHEADER")
+    if file_words < header_words or file_words * 2 > len(data) - header_offset:
+        raise InvalidWordDocument("OfficeArt WMF size exceeds its BLIP data")
+
+
+def _decode_metafile_blip(
+    data: bytes | memoryview,
+    record: _OfficeArtRecord,
+) -> tuple[bytes, str, str]:
+    if record.record_type == _BLIP_EMF:
+        one_uid_instance, two_uid_instance = 0x3D4, 0x3D5
+        extension, content_type = "emf", "image/x-emf"
+    elif record.record_type == _BLIP_WMF:
+        one_uid_instance, two_uid_instance = 0x216, 0x217
+        extension, content_type = "wmf", "image/x-wmf"
+    else:
+        raise UnsupportedBlipFormat(record.record_type)
+    if record.instance == one_uid_instance:
+        uid_count = 1
+    elif record.instance == two_uid_instance:
+        uid_count = 2
+    else:
+        raise InvalidWordDocument(
+            f"OfficeArt BLIP 0x{record.record_type:04X} has invalid instance "
+            f"0x{record.instance:03X}"
+        )
+    header_start = record.payload_start + uid_count * 16
+    if header_start > record.end - 34:
+        raise InvalidWordDocument("OfficeArt metafile header is truncated")
+    uncompressed_size = struct.unpack_from("<I", data, header_start)[0]
+    saved_size = struct.unpack_from("<I", data, header_start + 28)[0]
+    compression, filter_value = struct.unpack_from("<BB", data, header_start + 32)
+    file_start = header_start + 34
+    payload = bytes(data[file_start:record.end])
+    if saved_size != len(payload):
+        raise InvalidWordDocument(
+            "OfficeArt metafile compressed size does not match its header"
+        )
+    if filter_value != 0xFE:
+        raise InvalidWordDocument("OfficeArt metafile filter must be 0xFE")
+    if compression == 0x00:
+        image_data = _decompress_metafile(payload, uncompressed_size)
+    elif compression == 0xFE:
+        if uncompressed_size != len(payload):
+            raise InvalidWordDocument(
+                "uncompressed OfficeArt metafile size does not match its header"
+            )
+        image_data = payload
+    else:
+        raise InvalidWordDocument(
+            f"OfficeArt metafile compression 0x{compression:02X} is unsupported"
+        )
+    if record.record_type == _BLIP_EMF:
+        _validate_emf(image_data)
+    else:
+        _validate_wmf(image_data)
+    return image_data, extension, content_type
+
+
 def _decode_blip(
     data: bytes | memoryview,
     record: _OfficeArtRecord,
@@ -127,6 +249,8 @@ def _decode_blip(
             f"OfficeArt BLIP 0x{record.record_type:04X} has invalid version "
             f"{record.version}"
         )
+    if record.record_type in _METAFILE_BLIP_TYPES:
+        return _decode_metafile_blip(data, record)
     if record.record_type in _BLIP_JPEG_TYPES:
         one_uid_instances = {0x46A, 0x6E2}
         two_uid_instances = {0x46B, 0x6E3}
@@ -142,6 +266,11 @@ def _decode_blip(
         two_uid_instances = {0x7A9}
         extension = "bmp"
         content_type = "image/bmp"
+    elif record.record_type == _BLIP_TIFF:
+        one_uid_instances = {0x6E4}
+        two_uid_instances = {0x6E5}
+        extension = "tif"
+        content_type = "image/tiff"
     else:
         raise UnsupportedBlipFormat(record.record_type)
 
@@ -164,8 +293,10 @@ def _decode_blip(
     elif record.record_type in _BLIP_JPEG_TYPES:
         if not image_data.startswith(b"\xFF\xD8") or not image_data.endswith(b"\xFF\xD9"):
             raise InvalidWordDocument("OfficeArt JPEG BLIP has invalid SOI/EOI markers")
-    else:
+    elif record.record_type == _BLIP_DIB:
         image_data = _dib_to_bmp(image_data)
+    elif not image_data.startswith((b"II*\0", b"MM\0*")):
+        raise InvalidWordDocument("OfficeArt TIFF byte-order signature is invalid")
     return image_data, extension, content_type
 
 
@@ -175,7 +306,7 @@ def decode_officeart_blip(
     *,
     limit: int | None = None,
 ) -> tuple[bytes, str, str, int]:
-    """Decode one bounded PNG/JPEG/DIB OfficeArtBlip record."""
+    """Decode one bounded supported OfficeArtBlip record."""
 
     record_limit = len(data) if limit is None else limit
     record = _record_at(data, offset, record_limit, label="OfficeArtBlip")

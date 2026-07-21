@@ -1,4 +1,4 @@
-"""Main/header floating raster pictures from PlcSpa and OfficeArt."""
+"""Main/header floating pictures from PlcSpa and OfficeArt."""
 
 from __future__ import annotations
 
