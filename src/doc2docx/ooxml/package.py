@@ -518,6 +518,8 @@ def _has_character_properties(properties: CharacterProperties) -> bool:
         properties,
         picture_location=None,
         picture_is_binary=None,
+        revision_format_id=None,
+        revision_text_id=None,
     ) != CharacterProperties()
 
 
@@ -640,6 +642,13 @@ def _append_run_properties(
     *,
     valid_style_ids: set[int] | None = None,
 ) -> None:
+    if properties.revision_text_id is not None:
+        run.set(_qn(W_NS, "rsidR"), f"{properties.revision_text_id:08X}")
+    if properties.revision_format_id is not None:
+        run.set(
+            _qn(W_NS, "rsidRPr"),
+            f"{properties.revision_format_id:08X}",
+        )
     if not _has_character_properties(properties):
         return
     run_properties = ET.SubElement(run, _qn(W_NS, "rPr"))
@@ -1644,7 +1653,16 @@ def _append_paragraph(
         tuple[int, int], tuple[_HeaderFooterPart, ...]
     ] | None = None,
 ) -> None:
-    paragraph_element = ET.SubElement(parent, _qn(W_NS, "p"))
+    paragraph_attributes = {}
+    if paragraph.properties.revision_save_id is not None:
+        paragraph_attributes[_qn(W_NS, "rsidP")] = (
+            f"{paragraph.properties.revision_save_id:08X}"
+        )
+    paragraph_element = ET.SubElement(
+        parent,
+        _qn(W_NS, "p"),
+        paragraph_attributes,
+    )
     _append_paragraph_properties(
         paragraph_element,
         paragraph.properties,
@@ -1809,11 +1827,39 @@ def _append_table_property_elements(
         properties.borders,
         include_inside=True,
     )
+    if properties.auto_fit is not None:
+        ET.SubElement(
+            parent,
+            _qn(W_NS, "tblLayout"),
+            {
+                _qn(W_NS, "type"): (
+                    "autofit" if properties.auto_fit else "fixed"
+                )
+            },
+        )
     _append_cell_margins(
         parent,
         properties.default_cell_margins,
         container_name="tblCellMar",
     )
+    table_look = {
+        _qn(W_NS, "firstRow"): properties.first_row_style,
+        _qn(W_NS, "lastRow"): properties.last_row_style,
+        _qn(W_NS, "firstColumn"): properties.first_column_style,
+        _qn(W_NS, "lastColumn"): properties.last_column_style,
+        _qn(W_NS, "noHBand"): properties.no_row_banding,
+        _qn(W_NS, "noVBand"): properties.no_column_banding,
+    }
+    if any(value is not None for value in table_look.values()):
+        ET.SubElement(
+            parent,
+            _qn(W_NS, "tblLook"),
+            {
+                name: "1" if value else "0"
+                for name, value in table_look.items()
+                if value is not None
+            },
+        )
 
 
 def _append_table_cell(

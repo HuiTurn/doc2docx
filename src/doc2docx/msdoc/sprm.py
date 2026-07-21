@@ -491,6 +491,22 @@ def _parse_table_indent(operand: bytes) -> int | None:
     return width
 
 
+def _parse_table_look(operand: bytes) -> dict[str, bool]:
+    if len(operand) != 4:
+        raise InvalidWordDocument("TLP must contain exactly four bytes")
+    _, flags = struct.unpack("<hH", operand)
+    if flags & 0xF800:
+        raise InvalidWordDocument("TLP has nonzero padding bits")
+    return {
+        "first_row_style": bool(flags & 0x0020),
+        "last_row_style": bool(flags & 0x0040),
+        "first_column_style": bool(flags & 0x0080),
+        "last_column_style": bool(flags & 0x0100),
+        "no_row_banding": bool(flags & 0x0200),
+        "no_column_banding": bool(flags & 0x0400),
+    }
+
+
 def _parse_cell_width(operand: bytes) -> TableCellWidthOverride | None:
     if len(operand) != 6 or operand[0] != 5:
         raise InvalidWordDocument("TableCellWidthOperand must contain five data bytes")
@@ -677,6 +693,14 @@ def apply_character_modifiers(
                     paragraph_style_properties,
                     style_properties_at(style_id),
                 )
+        elif opcode == 0x0802:  # sprmCFFldVanish
+            # WordprocessingML field instructions are already hidden by their
+            # fldChar/instrText structure. Emitting w:vanish would also hide
+            # the cached field result in common consumers.
+            if operand[0] in (0x80, 0x81):
+                style_relative_toggle_count += 1
+            elif operand[0] not in (0x00, 0x01):
+                unsupported.add(opcode)
         elif opcode in _CHARACTER_TOGGLES:
             value = operand[0]
             if value in (0x00, 0x01):
@@ -748,6 +772,16 @@ def apply_character_modifiers(
             properties = replace(
                 properties,
                 spacing_twips=struct.unpack("<h", operand)[0],
+            )
+        elif opcode == 0x6815:  # sprmCRsidProp
+            properties = replace(
+                properties,
+                revision_format_id=struct.unpack("<I", operand)[0],
+            )
+        elif opcode == 0x6816:  # sprmCRsidText
+            properties = replace(
+                properties,
+                revision_text_id=struct.unpack("<I", operand)[0],
             )
         elif opcode == 0x2A0C:
             highlight = _ICO_HIGHLIGHT.get(operand[0])
@@ -973,6 +1007,21 @@ def apply_paragraph_modifiers(
                     left_indent_twips=_parse_table_indent(operand),
                 ),
             )
+        elif opcode == 0x3615:  # sprmTFAutofit
+            if operand[0] not in (0x00, 0x01):
+                unsupported.add(opcode)
+            else:
+                row = properties.table_row or TableRowProperties()
+                properties = replace(
+                    properties,
+                    table_row=replace(row, auto_fit=bool(operand[0])),
+                )
+        elif opcode == 0x740A:  # sprmTTlp
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(row, **_parse_table_look(operand)),
+            )
         elif opcode in (0xF617, 0xF618):
             # Zero leading/trailing width is the default and has no OOXML
             # effect. A nonzero value also requires gridBefore/gridAfter
@@ -1069,6 +1118,11 @@ def apply_paragraph_modifiers(
                 unsupported.add(opcode)
             else:
                 properties = replace(properties, justification=justification)
+        elif opcode == 0x6467:  # sprmPRsid
+            properties = replace(
+                properties,
+                revision_save_id=struct.unpack("<I", operand)[0],
+            )
         elif opcode == 0x2405:
             properties = replace(properties, keep_lines=bool(operand[0]))
         elif opcode == 0x2406:

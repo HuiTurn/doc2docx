@@ -206,6 +206,61 @@ class SprmTests(unittest.TestCase):
         self.assertTrue(character.complex_script_bold)
         self.assertFalse(character.complex_script_italic)
 
+    def test_field_hidden_and_revision_save_ids_are_parsed(self) -> None:
+        character, unsupported, relative_count = apply_character_modifiers(
+            parse_grpprl(
+                struct.pack("<HB", 0x0802, 0x81)
+                + struct.pack("<HI", 0x6815, 0x12345678)
+                + struct.pack("<HI", 0x6816, 0x90ABCDEF),
+                label="character-revision.grpprl",
+            )
+        )
+
+        self.assertFalse(unsupported)
+        self.assertEqual(relative_count, 1)
+        self.assertEqual(character.revision_format_id, 0x12345678)
+        self.assertEqual(character.revision_text_id, 0x90ABCDEF)
+
+        paragraph, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(
+                struct.pack("<HI", 0x6467, 0x13572468),
+                label="paragraph-revision.grpprl",
+            ),
+            style_id=0,
+        )
+        self.assertFalse(unsupported)
+        self.assertEqual(paragraph.revision_save_id, 0x13572468)
+
+    def test_table_layout_and_style_look_are_parsed(self) -> None:
+        properties, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(
+                struct.pack("<HB", 0x3615, 1)
+                + struct.pack("<HhH", 0x740A, 0, 0x04A0),
+                label="table-layout.grpprl",
+            ),
+            style_id=0,
+        )
+
+        self.assertFalse(unsupported)
+        assert properties.table_row is not None
+        row = properties.table_row
+        self.assertTrue(row.auto_fit)
+        self.assertTrue(row.first_row_style)
+        self.assertFalse(row.last_row_style)
+        self.assertTrue(row.first_column_style)
+        self.assertFalse(row.last_column_style)
+        self.assertFalse(row.no_row_banding)
+        self.assertTrue(row.no_column_banding)
+
+        with self.assertRaisesRegex(InvalidWordDocument, "padding"):
+            apply_paragraph_modifiers(
+                parse_grpprl(
+                    struct.pack("<HhH", 0x740A, -1, 0x8000),
+                    label="invalid-table-layout.grpprl",
+                ),
+                style_id=0,
+            )
+
     def test_symbol_character_uses_its_font_table_entry(self) -> None:
         character, unsupported, _ = apply_character_modifiers(
             parse_grpprl(

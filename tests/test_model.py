@@ -12,6 +12,7 @@ from doc2docx.model import (
     Document,
     Field,
     Paragraph,
+    ParagraphProperties,
     Symbol,
     Tab,
     TextRun,
@@ -62,6 +63,34 @@ class DocumentModelTests(unittest.TestCase):
             document.paragraphs[0].mark_properties,
             mark_properties,
         )
+
+    def test_revision_ids_are_written_on_native_nodes(self) -> None:
+        character = CharacterProperties(
+            revision_format_id=0x12345678,
+            revision_text_id=0x90ABCDEF,
+        )
+        document = Document(
+            (
+                Paragraph(
+                    (TextRun("revision text", character),),
+                    ParagraphProperties(revision_save_id=0x13572468),
+                ),
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "revision-ids.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        paragraph = root.find(f"./{W}body/{W}p")
+        assert paragraph is not None
+        self.assertEqual(paragraph.get(f"{W}rsidP"), "13572468")
+        run = paragraph.find(f"{W}r")
+        assert run is not None
+        self.assertEqual(run.get(f"{W}rsidRPr"), "12345678")
+        self.assertEqual(run.get(f"{W}rsidR"), "90ABCDEF")
 
     def test_story_control_characters_map_to_ir(self) -> None:
         report = ConversionReport("fixture.doc")

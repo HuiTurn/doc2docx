@@ -147,6 +147,8 @@ class CharacterProperties:
     language: str | None = None
     east_asia_language: str | None = None
     complex_script_language: str | None = None
+    revision_format_id: int | None = None
+    revision_text_id: int | None = None
     symbol_font: str | None = None
     symbol_character_code: int | None = None
 
@@ -228,6 +230,13 @@ class TableRowProperties:
     cell_definitions: tuple[TableCellDefinition, ...] = ()
     alignment: str | None = None
     left_indent_twips: int | None = None
+    auto_fit: bool | None = None
+    first_row_style: bool | None = None
+    last_row_style: bool | None = None
+    first_column_style: bool | None = None
+    last_column_style: bool | None = None
+    no_row_banding: bool | None = None
+    no_column_banding: bool | None = None
     gap_half_twips: int | None = None
     height_twips: int | None = None
     height_rule: str | None = None
@@ -251,6 +260,7 @@ class ParagraphProperties:
     """Direct paragraph properties represented in WordprocessingML units."""
 
     style_id: int | None = None
+    revision_save_id: int | None = None
     justification: str | None = None
     keep_lines: bool | None = None
     keep_next: bool | None = None

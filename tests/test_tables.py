@@ -34,6 +34,13 @@ class TableConversionTests(unittest.TestCase):
             preferred_width=2200,
             preferred_width_type="dxa",
             left_indent_twips=-360,
+            auto_fit=True,
+            first_row_style=True,
+            last_row_style=False,
+            first_column_style=True,
+            last_column_style=False,
+            no_row_banding=False,
+            no_column_banding=True,
             cell_boundaries_twips=(0, 1000, 2200),
             cell_definitions=(TableCellDefinition(), TableCellDefinition()),
             borders=TableBorders(
@@ -75,6 +82,29 @@ class TableConversionTests(unittest.TestCase):
         assert table_indent is not None
         self.assertEqual(table_indent.get(f"{W}w"), "-360")
         self.assertEqual(table_indent.get(f"{W}type"), "dxa")
+        table_layout = root.find(f".//{W}tblPr/{W}tblLayout")
+        assert table_layout is not None
+        self.assertEqual(table_layout.get(f"{W}type"), "autofit")
+        table_look = root.find(f".//{W}tblPr/{W}tblLook")
+        assert table_look is not None
+        self.assertEqual(table_look.get(f"{W}firstRow"), "1")
+        self.assertEqual(table_look.get(f"{W}lastRow"), "0")
+        self.assertEqual(table_look.get(f"{W}firstColumn"), "1")
+        self.assertEqual(table_look.get(f"{W}lastColumn"), "0")
+        self.assertEqual(table_look.get(f"{W}noHBand"), "0")
+        self.assertEqual(table_look.get(f"{W}noVBand"), "1")
+        table_property_names = [
+            child.tag.removeprefix(W)
+            for child in root.findall(f".//{W}tblPr/*")
+        ]
+        self.assertLess(
+            table_property_names.index("tblLayout"),
+            table_property_names.index("tblCellMar"),
+        )
+        self.assertLess(
+            table_property_names.index("tblCellMar"),
+            table_property_names.index("tblLook"),
+        )
         cell_widths = root.findall(f".//{W}tr/{W}tc/{W}tcPr/{W}tcW")
         self.assertEqual([value.get(f"{W}w") for value in cell_widths], ["900", "1200"])
         first_top = root.find(f".//{W}tr/{W}tc[1]/{W}tcPr/{W}tcBorders/{W}top")

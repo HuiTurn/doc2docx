@@ -5,6 +5,10 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+- Preserve character-formatting, text-insertion, and paragraph-formatting
+  revision save identifiers as native WordprocessingML attributes.
+- Honor field-hidden formatting through native field-code semantics, and
+  preserve fixed/automatic table layout and table style look flags.
 - Continue expanding MS-DOC compatibility with specification-backed parsers,
   focused tests, and real Word 97 sample rendering.
 
