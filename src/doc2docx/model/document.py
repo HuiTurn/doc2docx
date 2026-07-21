@@ -11,6 +11,52 @@ from ..diagnostics import ConversionReport, SourceLocation
 
 _MAX_TABLE_DEPTH = 64
 
+# These fields update from document-local metadata, pagination, statistics, or
+# the clock. Fields that can execute commands, load templates/add-ins, or read
+# external resources deliberately remain flattened to their cached result.
+_SAFE_LIVE_FIELD_TYPES = frozenset(
+    {
+        "AUTHOR",
+        "COMMENTS",
+        "CREATEDATE",
+        "DATE",
+        "EDITTIME",
+        "FILENAME",
+        "FILESIZE",
+        "KEYWORDS",
+        "LASTSAVEDBY",
+        "NUMCHARS",
+        "NUMPAGES",
+        "NUMWORDS",
+        "PAGE",
+        "PRINTDATE",
+        "REVNUM",
+        "SAVEDATE",
+        "SECTION",
+        "SECTIONPAGES",
+        "SUBJECT",
+        "TIME",
+        "TITLE",
+    }
+)
+_EXTERNAL_OR_ACTIVE_FIELD_TYPES = frozenset(
+    {
+        "ADDIN",
+        "CONTROL",
+        "DDE",
+        "DDEAUTO",
+        "EMBED",
+        "HTMLCONTROL",
+        "IMPORT",
+        "INCLUDE",
+        "INCLUDEPICTURE",
+        "INCLUDETEXT",
+        "LINK",
+        "MACROBUTTON",
+        "PRINT",
+    }
+)
+
 
 class BreakType(StrEnum):
     LINE = "line"
@@ -367,6 +413,7 @@ class Field:
     instruction: str
     result: tuple["Inline", ...] = ()
     properties: CharacterProperties = field(default_factory=CharacterProperties)
+    has_separator: bool = True
 
 
 @dataclass(slots=True, frozen=True)
@@ -634,6 +681,33 @@ class HeaderFooterStory:
 
 
 @dataclass(slots=True, frozen=True)
+class CoreProperties:
+    """Document metadata carried by OLE SummaryInformation/docProps/core.xml."""
+
+    title: str | None = None
+    subject: str | None = None
+    creator: str | None = None
+    keywords: str | None = None
+    description: str | None = None
+    last_modified_by: str | None = None
+    revision: str | None = None
+    created: str | None = None
+    modified: str | None = None
+    last_printed: str | None = None
+
+    @property
+    def has_values(self) -> bool:
+        return self.value_count > 0
+
+    @property
+    def value_count(self) -> int:
+        return sum(
+            getattr(self, name) is not None
+            for name in self.__dataclass_fields__
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class Document:
     paragraphs: tuple[Paragraph, ...]
     fonts: tuple[FontDefinition, ...] = ()
@@ -643,6 +717,7 @@ class Document:
     footnotes: tuple[Footnote, ...] = ()
     endnotes: tuple[Endnote, ...] = ()
     comments: tuple[Comment, ...] = ()
+    core_properties: CoreProperties = field(default_factory=CoreProperties)
     numbering: NumberingDefinitions = field(default_factory=NumberingDefinitions)
     pictures: tuple[InlinePicture | FloatingPicture, ...] = ()
     even_and_odd_headers: bool = False
@@ -957,6 +1032,8 @@ def parse_main_story(
     unsupported_controls: dict[int, int] = {}
     deferred_markers: dict[str, int] = {}
     flattened_fields = 0
+    flattened_field_types: dict[str, int] = {}
+    active_field_types: set[str] = set()
     field_stack: list[_FieldContext] = []
     last_was_terminator = False
     section_values = tuple(sections)
@@ -1066,19 +1143,26 @@ def parse_main_story(
             instruction_tokens = instruction.lstrip().split(maxsplit=1)
             field_type = instruction_tokens[0].upper() if instruction_tokens else ""
             parent_is_visible = visible()
-            if field_type in {"PAGE", "NUMPAGES", "SECTIONPAGES"}:
+            if field_type in _SAFE_LIVE_FIELD_TYPES:
                 if parent_is_visible:
                     current_inlines().append(
                         Field(
                             instruction=instruction,
                             result=tuple(context.result),
                             properties=context.properties,
+                            has_separator=context.has_separator,
                         )
                     )
             else:
                 if parent_is_visible:
                     extend_visible_inlines(context.result)
                 flattened_fields += 1
+                normalized_type = field_type or "UNKNOWN"
+                flattened_field_types[normalized_type] = (
+                    flattened_field_types.get(normalized_type, 0) + 1
+                )
+                if field_type in _EXTERNAL_OR_ACTIVE_FIELD_TYPES:
+                    active_field_types.add(field_type)
             continue
         if not visible():
             for context in reversed(field_stack):
@@ -1279,6 +1363,9 @@ def parse_main_story(
 
     if field_stack:
         flattened_fields += len(field_stack)
+        flattened_field_types["UNTERMINATED"] = (
+            flattened_field_types.get("UNTERMINATED", 0) + len(field_stack)
+        )
         report.warning(
             "UNTERMINATED_FIELD",
             f"{story_name} story contains an unterminated field; its instruction was hidden",
@@ -1295,6 +1382,17 @@ def parse_main_story(
             "unsupported field structures were flattened to their displayed result",
             location=SourceLocation(story=story_name),
             field_count=flattened_fields,
+            field_types={
+                key: flattened_field_types[key]
+                for key in sorted(flattened_field_types)
+            },
+        )
+    if active_field_types:
+        report.warning(
+            "ACTIVE_FIELDS_FLATTENED",
+            "fields that can execute actions or access external content were kept as cached text",
+            location=SourceLocation(story=story_name),
+            field_types=sorted(active_field_types),
         )
     unmatched_section_ends = sorted(
         set(internal_sections_by_end) - matched_section_ends

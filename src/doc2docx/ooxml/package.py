@@ -16,6 +16,7 @@ from ..model import (
     CharacterProperties,
     CommentRangeEnd,
     CommentRangeStart,
+    CoreProperties,
     CommentReference,
     Document,
     Endnote,
@@ -81,6 +82,9 @@ COMMENTS_CONTENT_TYPE = (
 NUMBERING_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"
 )
+CORE_PROPERTIES_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-package.core-properties+xml"
+)
 STYLES_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
 )
@@ -108,6 +112,9 @@ COMMENTS_REL = (
 NUMBERING_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering"
 )
+CORE_PROPERTIES_REL = (
+    "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties"
+)
 IMAGE_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
 )
@@ -118,6 +125,10 @@ WORD_2003_NS = "urn:schemas-microsoft-com:office:word"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 PIC_NS = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+CP_NS = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+DC_NS = "http://purl.org/dc/elements/1.1/"
+DCTERMS_NS = "http://purl.org/dc/terms/"
+XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 
 ET.register_namespace("w", W_NS)
 ET.register_namespace("r", R_NS)
@@ -127,6 +138,10 @@ ET.register_namespace("w10", WORD_2003_NS)
 ET.register_namespace("a", A_NS)
 ET.register_namespace("wp", WP_NS)
 ET.register_namespace("pic", PIC_NS)
+ET.register_namespace("cp", CP_NS)
+ET.register_namespace("dc", DC_NS)
+ET.register_namespace("dcterms", DCTERMS_NS)
+ET.register_namespace("xsi", XSI_NS)
 
 
 @dataclass(slots=True, frozen=True)
@@ -185,6 +200,7 @@ def _content_types_xml(
     has_endnotes: bool,
     has_comments: bool,
     has_numbering: bool,
+    has_core_properties: bool,
     pictures: tuple[InlinePicture | FloatingPicture, ...],
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
@@ -226,6 +242,13 @@ def _content_types_xml(
         PartName="/word/document.xml",
         ContentType=WORD_DOCUMENT_CONTENT_TYPE,
     )
+    if has_core_properties:
+        ET.SubElement(
+            root,
+            "Override",
+            PartName="/docProps/core.xml",
+            ContentType=CORE_PROPERTIES_CONTENT_TYPE,
+        )
     if has_styles:
         ET.SubElement(
             root,
@@ -287,7 +310,7 @@ def _content_types_xml(
     return _xml_bytes(root)
 
 
-def _root_relationships_xml() -> bytes:
+def _root_relationships_xml(*, has_core_properties: bool) -> bytes:
     root = ET.Element("Relationships", xmlns=REL_NS)
     ET.SubElement(
         root,
@@ -296,6 +319,14 @@ def _root_relationships_xml() -> bytes:
         Type=OFFICE_DOCUMENT_REL,
         Target="word/document.xml",
     )
+    if has_core_properties:
+        ET.SubElement(
+            root,
+            "Relationship",
+            Id="rId2",
+            Type=CORE_PROPERTIES_REL,
+            Target="docProps/core.xml",
+        )
     return _xml_bytes(root)
 
 
@@ -1090,24 +1121,25 @@ def _append_field(
     instruction = ET.SubElement(instruction_run, _qn(W_NS, "instrText"))
     instruction.set(_qn(XML_NS, "space"), "preserve")
     instruction.text = field.instruction
-    separator_run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
-    _append_run_properties(
-        separator_run,
-        field.properties,
-        valid_style_ids=valid_character_style_ids,
-    )
-    ET.SubElement(
-        separator_run,
-        _qn(W_NS, "fldChar"),
-        {_qn(W_NS, "fldCharType"): "separate"},
-    )
-    for inline in field.result:
-        _append_inline(
-            paragraph_element,
-            inline,
-            valid_paragraph_style_ids=valid_paragraph_style_ids,
-            valid_character_style_ids=valid_character_style_ids,
+    if field.has_separator:
+        separator_run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+        _append_run_properties(
+            separator_run,
+            field.properties,
+            valid_style_ids=valid_character_style_ids,
         )
+        ET.SubElement(
+            separator_run,
+            _qn(W_NS, "fldChar"),
+            {_qn(W_NS, "fldCharType"): "separate"},
+        )
+        for inline in field.result:
+            _append_inline(
+                paragraph_element,
+                inline,
+                valid_paragraph_style_ids=valid_paragraph_style_ids,
+                valid_character_style_ids=valid_character_style_ids,
+            )
     end_run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
     _append_run_properties(
         end_run,
@@ -2389,6 +2421,37 @@ def _numbering_xml(
     return _xml_bytes(root)
 
 
+def _core_properties_xml(properties: CoreProperties) -> bytes:
+    root = ET.Element(_qn(CP_NS, "coreProperties"))
+    simple_values = (
+        (DC_NS, "title", properties.title),
+        (DC_NS, "subject", properties.subject),
+        (DC_NS, "creator", properties.creator),
+        (CP_NS, "keywords", properties.keywords),
+        (DC_NS, "description", properties.description),
+        (CP_NS, "lastModifiedBy", properties.last_modified_by),
+        (CP_NS, "revision", properties.revision),
+    )
+    for namespace, name, value in simple_values:
+        if value is not None:
+            ET.SubElement(root, _qn(namespace, name)).text = value
+    date_values = (
+        ("created", properties.created),
+        ("modified", properties.modified),
+    )
+    for name, value in date_values:
+        if value is None:
+            continue
+        element = ET.SubElement(root, _qn(DCTERMS_NS, name))
+        element.set(_qn(XSI_NS, "type"), "dcterms:W3CDTF")
+        element.text = value
+    if properties.last_printed is not None:
+        ET.SubElement(root, _qn(CP_NS, "lastPrinted")).text = (
+            properties.last_printed
+        )
+    return _xml_bytes(root)
+
+
 def _write_part(package: zipfile.ZipFile, name: str, data: bytes) -> None:
     info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
     info.compress_type = zipfile.ZIP_DEFLATED
@@ -2413,6 +2476,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
     has_numbering = bool(
         document.numbering.abstracts or document.numbering.instances
     )
+    has_core_properties = document.core_properties.has_values
     picture_ids = [picture.picture_id for picture in document.pictures]
     if any(picture_id <= 0 for picture_id in picture_ids) or len(
         set(picture_ids)
@@ -2442,11 +2506,24 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     has_endnotes=has_endnotes,
                     has_comments=has_comments,
                     has_numbering=has_numbering,
+                    has_core_properties=has_core_properties,
                     pictures=document.pictures,
                     header_footer_parts=header_footer_parts,
                 ),
             )
-            _write_part(package, "_rels/.rels", _root_relationships_xml())
+            _write_part(
+                package,
+                "_rels/.rels",
+                _root_relationships_xml(
+                    has_core_properties=has_core_properties,
+                ),
+            )
+            if has_core_properties:
+                _write_part(
+                    package,
+                    "docProps/core.xml",
+                    _core_properties_xml(document.core_properties),
+                )
             _write_part(
                 package,
                 "word/document.xml",

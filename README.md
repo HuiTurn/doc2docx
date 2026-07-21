@@ -16,8 +16,10 @@ faithful conversion.
 - Preserves text, common character and paragraph formatting, fonts, styles,
   native numbered and bulleted lists, tables, page layout, sections, headers,
   and footers.
-- Converts footnotes, endnotes, comments, page-number fields, and positioned
-  textboxes to native WordprocessingML structures where possible.
+- Converts footnotes, endnotes, comments, common date/metadata/page/statistic
+  fields, and positioned textboxes to native WordprocessingML structures.
+- Preserves core document metadata such as title, author, subject, keywords,
+  revision, and creation/modification dates.
 - Restores inline and floating PNG, JPEG, BMP/DIB, TIFF, EMF, and WMF pictures
   in the main document and header/footer stories.
 - Produces a structured diagnostic report for unsupported, repaired, or
@@ -71,9 +73,10 @@ will not overwrite the input file.
 Password-protected documents are rejected. Embedded OLE objects, Macintosh
 PICT images, advanced drawing effects, non-rectangular wrap polygons, rare list
 continuation cases, conditional table styles, uncommon secondary stories, and
-many specialized fields remain incomplete. Some legacy layout behavior can
-only be approximated in WordprocessingML and is called out in the conversion
-report.
+many specialized fields remain incomplete. Fields that can execute actions or
+access external content are deliberately kept as cached text. Some legacy
+layout behavior can only be approximated in WordprocessingML and is called out
+in the conversion report.
 
 See [CHANGELOG.md](CHANGELOG.md) for milestone and release details.
 

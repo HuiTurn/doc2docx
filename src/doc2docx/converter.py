@@ -18,7 +18,15 @@ from .errors import (
     StreamNotFound,
     UnsafeOutputPathError,
 )
-from .model import Document, Paragraph, Symbol, Table, parse_main_story
+from .model import (
+    CoreProperties,
+    Document,
+    Paragraph,
+    Symbol,
+    Table,
+    parse_main_story,
+)
+from .oleps import read_summary_information
 from .msdoc import (
     FileInformationBlock,
     read_comments,
@@ -88,6 +96,20 @@ def convert(
     report = ConversionReport(str(source_path), str(destination_path))
 
     compound, word_document, fib = _load_word_parts(source_path, limits=limits)
+    try:
+        summary_information = read_summary_information(
+            compound.open_stream("\x05SummaryInformation"),
+            report=report,
+        )
+    except StreamNotFound:
+        summary_information = CoreProperties()
+    except InvalidWordDocument as exc:
+        summary_information = CoreProperties()
+        report.warning(
+            "SUMMARY_INFORMATION_MALFORMED",
+            "malformed optional document metadata was omitted",
+            reason=str(exc),
+        )
     repaired_entries = [entry for entry in compound.entries if entry.name_was_repaired]
     if repaired_entries:
         report.warning(
@@ -415,6 +437,7 @@ def convert(
         footnotes=footnotes.footnotes,
         endnotes=endnotes.endnotes,
         comments=comments.comments,
+        core_properties=summary_information,
         numbering=numbering,
         pictures=(
             inline_pictures.pictures
@@ -445,6 +468,7 @@ def convert(
             "style_count": sum(
                 1 for style in style_sheet.styles if style is not None
             ),
+            "core_property_count": summary_information.value_count,
             "abstract_numbering_count": len(numbering.abstracts),
             "numbering_instance_count": len(numbering.instances),
             "numbering_level_count": sum(
@@ -615,7 +639,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M9a conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M10a conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

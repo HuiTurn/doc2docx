@@ -8,6 +8,22 @@ current capabilities without release-by-release notes.
 - Continue expanding MS-DOC compatibility with specification-backed parsers,
   focused tests, and real Word 97 sample rendering.
 
+## 0.23.0 - 2026-07-22 (M10a)
+
+- Preserve common date/time, document metadata, pagination, section, filename,
+  file-size, and document-statistic fields as live WordprocessingML fields,
+  including fields without a cached-result separator.
+- Keep DDE, external-include, link/OLE-control, macro-button, print, and add-in
+  fields as cached display text, with an explicit safety diagnostic instead of
+  activating them in the output package.
+- Parse the OLE `\x05SummaryInformation` property set with bounded offsets,
+  code-page-aware strings, typed FILETIME values, and recoverable diagnostics.
+- Emit `docProps/core.xml`, its package relationship and content type so title,
+  author, subject, keywords, comments, revision, and core timestamps survive
+  conversion and continue to back live metadata fields.
+- Validate with constructed malformed/property-type cases and a real Word 97
+  DOC containing DATE, TIME, NUMPAGES, NUMWORDS, TITLE, and FILENAME fields.
+
 ## 0.22.0 - 2026-07-22 (M9a)
 
 - Parse native `PlfLst`/`LSTF`/`LVL` list definitions and
