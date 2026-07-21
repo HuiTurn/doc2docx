@@ -7,6 +7,7 @@ from .formatting import FormattingMap, read_formatting
 from .footnotes import FootnoteCollection, read_footnotes
 from .floating_pictures import (
     FloatingPictureCollection,
+    read_header_floating_pictures,
     read_main_floating_pictures,
 )
 from .headers import HeaderFooterCollection, read_header_footer_stories
@@ -55,6 +56,7 @@ __all__ = [
     "read_font_table",
     "read_formatting",
     "read_footnotes",
+    "read_header_floating_pictures",
     "read_main_floating_pictures",
     "read_header_footer_stories",
     "read_header_textboxes",

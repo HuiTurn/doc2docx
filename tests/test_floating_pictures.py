@@ -10,12 +10,15 @@ from doc2docx.model import (
     CharacterProperties,
     Document,
     FloatingPicture,
+    HeaderFooterStory,
     Paragraph,
+    SectionProperties,
 )
 from doc2docx.msdoc import (
     OfficeArtRasterImage,
     OfficeArtShapeCollection,
     ShapeAnchor,
+    read_header_floating_pictures,
     read_main_floating_pictures,
 )
 from doc2docx.ooxml import write_docx
@@ -23,6 +26,7 @@ from doc2docx.ooxml import write_docx
 
 WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
@@ -48,6 +52,35 @@ def _anchor(shape_id: int, *, wrap_type: str = "square") -> ShapeAnchor:
 
 
 class FloatingPictureTests(unittest.TestCase):
+    def test_header_anchor_is_exposed_at_absolute_story_cp(self) -> None:
+        shape_id = 2049
+        officeart = OfficeArtShapeCollection(
+            {},
+            {
+                shape_id: OfficeArtRasterImage(
+                    _PNG,
+                    "png",
+                    "image/png",
+                    1,
+                )
+            },
+        )
+        collection = read_header_floating_pictures(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            header_story_cp_start=100,
+            first_picture_id=4,
+            report=ConversionReport("header-floating-picture.doc"),
+            character_properties_at=lambda cp: CharacterProperties(
+                special=cp == 107
+            ),
+        )
+
+        self.assertEqual(len(collection.pictures), 1)
+        self.assertEqual(collection.pictures[0].picture_id, 4)
+        self.assertEqual(collection.pictures[0].anchor_cp, 107)
+        self.assertIs(collection.picture_at(107), collection.pictures[0])
+
     def test_associates_spa_anchor_with_officeart_raster_image(self) -> None:
         shape_id = 1026
         officeart = OfficeArtShapeCollection(
@@ -147,6 +180,84 @@ class FloatingPictureTests(unittest.TestCase):
         )
         assert blip is not None
         self.assertEqual(blip.get(f"{R}embed"), "rIdImage1")
+
+    def test_scopes_image_relationships_to_document_and_header_parts(self) -> None:
+        main_picture = FloatingPicture(
+            picture_id=1,
+            shape_id=1026,
+            anchor_cp=7,
+            data=_PNG,
+            extension="png",
+            content_type="image/png",
+            left_twips=720,
+            top_twips=8,
+            width_twips=2160,
+            height_twips=1080,
+            horizontal_relative="column",
+            vertical_relative="paragraph",
+            wrap_type="square",
+            wrap_side="both",
+            behind_text=False,
+            anchor_locked=False,
+        )
+        header_picture = FloatingPicture(
+            picture_id=2,
+            shape_id=2049,
+            anchor_cp=10,
+            data=_PNG,
+            extension="png",
+            content_type="image/png",
+            left_twips=0,
+            top_twips=0,
+            width_twips=1440,
+            height_twips=720,
+            horizontal_relative="margin",
+            vertical_relative="paragraph",
+            wrap_type="none",
+            wrap_side="both",
+            behind_text=True,
+            anchor_locked=False,
+        )
+        header = HeaderFooterStory(
+            10,
+            11,
+            (Paragraph((header_picture,)),),
+        )
+        document = Document(
+            (Paragraph((main_picture,)),),
+            sections=(SectionProperties(0, 1, default_header=header),),
+            pictures=(main_picture, header_picture),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "scoped-pictures.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                document_rels = ET.fromstring(
+                    package.read("word/_rels/document.xml.rels")
+                )
+                header_rels = ET.fromstring(
+                    package.read("word/_rels/header1.xml.rels")
+                )
+                header_xml = ET.fromstring(package.read("word/header1.xml"))
+
+        document_images = {
+            item.get("Id")
+            for item in document_rels.findall(f"{REL}Relationship")
+            if item.get("Type", "").endswith("/image")
+        }
+        header_images = {
+            item.get("Id")
+            for item in header_rels.findall(f"{REL}Relationship")
+            if item.get("Type", "").endswith("/image")
+        }
+        self.assertEqual(document_images, {"rIdImage1"})
+        self.assertEqual(header_images, {"rIdImage2"})
+        header_blip = header_xml.find(
+            ".//{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
+        )
+        assert header_blip is not None
+        self.assertEqual(header_blip.get(f"{R}embed"), "rIdImage2")
 
 
 if __name__ == "__main__":

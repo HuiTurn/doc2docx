@@ -1,4 +1,4 @@
-"""Main-story floating raster pictures from PlcSpaMom and OfficeArt."""
+"""Main/header floating raster pictures from PlcSpa and OfficeArt."""
 
 from __future__ import annotations
 
@@ -23,16 +23,19 @@ class FloatingPictureCollection:
         return (self.by_anchor_cp or {}).get(cp)
 
 
-def read_main_floating_pictures(
+def _read_floating_pictures(
     anchors_by_shape_id: Mapping[int, ShapeAnchor],
     officeart: OfficeArtShapeCollection,
     *,
+    anchor_story_cp_start: int,
+    anchor_story_name: str,
+    spa_structure: str,
     excluded_shape_ids: Set[int] | frozenset[int] = frozenset(),
     first_picture_id: int = 1,
     report: ConversionReport,
     character_properties_at: Callable[[int], CharacterProperties],
 ) -> FloatingPictureCollection:
-    """Associate main-story shape anchors with supported OfficeArt BLIPs."""
+    """Associate one story's shape anchors with supported OfficeArt BLIPs."""
 
     if first_picture_id <= 0:
         raise ValueError("first_picture_id must be positive")
@@ -45,6 +48,7 @@ def read_main_floating_pictures(
         anchors_by_shape_id.values(),
         key=lambda value: value.anchor_cp,
     ):
+        absolute_anchor_cp = anchor_story_cp_start + anchor.anchor_cp
         if anchor.shape_id in excluded_shape_ids:
             continue
         image = officeart.image_at(anchor.shape_id)
@@ -56,9 +60,9 @@ def read_main_floating_pictures(
                     "FLOATING_PICTURE_FORMAT_DEFERRED",
                     "a floating picture uses an unsupported OfficeArt BLIP format",
                     location=SourceLocation(
-                        story="main",
-                        cp_start=anchor.anchor_cp,
-                        cp_end=anchor.anchor_cp + 1,
+                        story=anchor_story_name,
+                        cp_start=absolute_anchor_cp,
+                        cp_end=absolute_anchor_cp + 1,
                     ),
                     shape_id=anchor.shape_id,
                     record_type=f"0x{unsupported_type:04X}",
@@ -66,21 +70,23 @@ def read_main_floating_pictures(
             else:
                 non_picture_shape_count += 1
             continue
-        properties = character_properties_at(anchor.anchor_cp)
+        properties = character_properties_at(absolute_anchor_cp)
         if properties.special is not True:
             raise InvalidWordDocument(
-                f"PlcSpaMom picture anchor at CP {anchor.anchor_cp} has no sprmCFSpec"
+                f"{spa_structure} picture anchor at CP {anchor.anchor_cp} "
+                "has no sprmCFSpec"
             )
-        if anchor.anchor_cp in by_anchor_cp:
+        if absolute_anchor_cp in by_anchor_cp:
             raise InvalidWordDocument(
-                f"multiple floating pictures use main-story CP {anchor.anchor_cp}"
+                f"multiple floating pictures use {anchor_story_name} CP "
+                f"{anchor.anchor_cp}"
             )
         if anchor.wrap_type in ("tight", "through"):
             approximated_wrap_count += 1
         picture = FloatingPicture(
             picture_id=first_picture_id + len(pictures),
             shape_id=anchor.shape_id,
-            anchor_cp=anchor.anchor_cp,
+            anchor_cp=absolute_anchor_cp,
             data=image.data,
             extension=image.extension,
             content_type=image.content_type,
@@ -102,13 +108,13 @@ def read_main_floating_pictures(
             ),
         )
         pictures.append(picture)
-        by_anchor_cp[anchor.anchor_cp] = picture
+        by_anchor_cp[absolute_anchor_cp] = picture
 
     if approximated_wrap_count:
         report.warning(
             "FLOATING_PICTURE_WRAP_APPROXIMATED",
             "tight/through picture wrap polygons were approximated as square wrapping",
-            location=SourceLocation(story="main"),
+            location=SourceLocation(story=anchor_story_name),
             picture_count=approximated_wrap_count,
         )
     return FloatingPictureCollection(
@@ -116,4 +122,53 @@ def read_main_floating_pictures(
         by_anchor_cp=by_anchor_cp,
         deferred_count=deferred_count,
         non_picture_shape_count=non_picture_shape_count,
+    )
+
+
+def read_main_floating_pictures(
+    anchors_by_shape_id: Mapping[int, ShapeAnchor],
+    officeart: OfficeArtShapeCollection,
+    *,
+    excluded_shape_ids: Set[int] | frozenset[int] = frozenset(),
+    first_picture_id: int = 1,
+    report: ConversionReport,
+    character_properties_at: Callable[[int], CharacterProperties],
+) -> FloatingPictureCollection:
+    """Associate main-story shape anchors with supported OfficeArt BLIPs."""
+
+    return _read_floating_pictures(
+        anchors_by_shape_id,
+        officeart,
+        anchor_story_cp_start=0,
+        anchor_story_name="main",
+        spa_structure="PlcSpaMom",
+        excluded_shape_ids=excluded_shape_ids,
+        first_picture_id=first_picture_id,
+        report=report,
+        character_properties_at=character_properties_at,
+    )
+
+
+def read_header_floating_pictures(
+    anchors_by_shape_id: Mapping[int, ShapeAnchor],
+    officeart: OfficeArtShapeCollection,
+    *,
+    header_story_cp_start: int,
+    excluded_shape_ids: Set[int] | frozenset[int] = frozenset(),
+    first_picture_id: int = 1,
+    report: ConversionReport,
+    character_properties_at: Callable[[int], CharacterProperties],
+) -> FloatingPictureCollection:
+    """Associate header/footer shape anchors with supported OfficeArt BLIPs."""
+
+    return _read_floating_pictures(
+        anchors_by_shape_id,
+        officeart,
+        anchor_story_cp_start=header_story_cp_start,
+        anchor_story_name="headers",
+        spa_structure="PlcSpaHdr",
+        excluded_shape_ids=excluded_shape_ids,
+        first_picture_id=first_picture_id,
+        report=report,
+        character_properties_at=character_properties_at,
     )

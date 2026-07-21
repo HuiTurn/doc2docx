@@ -131,6 +131,35 @@ class _HeaderFooterPart:
     story: HeaderFooterStory
 
 
+def _pictures_in_inlines(
+    inlines: tuple[object, ...],
+) -> tuple[InlinePicture | FloatingPicture, ...]:
+    pictures: list[InlinePicture | FloatingPicture] = []
+    for inline in inlines:
+        if isinstance(inline, (InlinePicture, FloatingPicture)):
+            pictures.append(inline)
+        elif isinstance(inline, Field):
+            pictures.extend(_pictures_in_inlines(inline.result))
+        elif isinstance(inline, FloatingTextBox):
+            pictures.extend(_pictures_in_blocks(inline.body_blocks))
+    return tuple(pictures)
+
+
+def _pictures_in_blocks(
+    blocks: tuple[Paragraph | Table, ...],
+) -> tuple[InlinePicture | FloatingPicture, ...]:
+    pictures: list[InlinePicture | FloatingPicture] = []
+    for block in blocks:
+        if isinstance(block, Paragraph):
+            pictures.extend(_pictures_in_inlines(block.inlines))
+            continue
+        for row in block.rows:
+            for cell in row.cells:
+                pictures.extend(_pictures_in_blocks(cell.body_blocks))
+    # One relationship per target is sufficient even when a drawing is reused.
+    return tuple({picture.picture_id: picture for picture in pictures}.values())
+
+
 def _qn(namespace: str, local_name: str) -> str:
     return f"{{{namespace}}}{local_name}"
 
@@ -335,6 +364,21 @@ def _document_relationships_xml(
             Id=part.relationship_id,
             Type=HEADER_REL if part.kind == "header" else FOOTER_REL,
             Target=part.part_name,
+        )
+    return _xml_bytes(root)
+
+
+def _image_relationships_xml(
+    pictures: tuple[InlinePicture | FloatingPicture, ...],
+) -> bytes:
+    root = ET.Element("Relationships", xmlns=REL_NS)
+    for picture in pictures:
+        ET.SubElement(
+            root,
+            "Relationship",
+            Id=f"rIdImage{picture.picture_id}",
+            Type=IMAGE_REL,
+            Target=f"media/image{picture.picture_id}.{picture.extension}",
         )
     return _xml_bytes(root)
 
@@ -2149,6 +2193,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
         has_endnotes=has_endnotes,
         has_comments=has_comments,
     )
+    main_pictures = _pictures_in_blocks(document.body_blocks)
     try:
         with zipfile.ZipFile(output, mode="w") as package:
             _write_part(
@@ -2178,7 +2223,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                 or has_footnotes
                 or has_endnotes
                 or has_comments
-                or document.pictures
+                or main_pictures
                 or header_footer_parts
             ):
                 _write_part(
@@ -2191,7 +2236,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                         has_footnotes=has_footnotes,
                         has_endnotes=has_endnotes,
                         has_comments=has_comments,
-                        pictures=document.pictures,
+                        pictures=main_pictures,
                         header_footer_parts=header_footer_parts,
                     ),
                 )
@@ -2244,6 +2289,13 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     f"word/{part.part_name}",
                     _header_footer_xml(part, document),
                 )
+                part_pictures = _pictures_in_blocks(part.story.body_blocks)
+                if part_pictures:
+                    _write_part(
+                        package,
+                        f"word/_rels/{part.part_name}.rels",
+                        _image_relationships_xml(part_pictures),
+                    )
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         raise PackageWriteError(f"could not write DOCX package: {exc}") from exc
 

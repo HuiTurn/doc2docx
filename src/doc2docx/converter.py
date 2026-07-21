@@ -27,6 +27,7 @@ from .msdoc import (
     read_font_table,
     read_formatting,
     read_footnotes,
+    read_header_floating_pictures,
     read_header_footer_stories,
     read_header_textboxes,
     read_main_floating_pictures,
@@ -283,21 +284,6 @@ def convert(
         paragraph_properties_at=formatting.paragraph_properties_at,
         shape_style_at=officeart_shapes.style_at,
     )
-    header_table = fib.plcf_hdd
-    header_footers = read_header_footer_stories(
-        table_stream,
-        piece_table,
-        sections,
-        offset=header_table.fc,
-        size=header_table.lcb,
-        ccp_headers=fib.ccp_headers,
-        header_story_cp_start=fib.header_story_cp_start,
-        report=report,
-        character_properties_at=formatting.character_properties_at,
-        paragraph_properties_at=formatting.paragraph_properties_at,
-        floating_textbox_at=header_textboxes.textbox_at,
-    )
-    sections = header_footers.sections
     main_characters = piece_table.extract_characters(
         0,
         fib.ccp_text,
@@ -335,6 +321,44 @@ def convert(
         report=report,
         character_properties_at=formatting.character_properties_at,
     )
+    header_shape_anchors = read_shape_anchors(
+        table_stream,
+        piece_table,
+        offset=spa_headers.fc,
+        size=spa_headers.lcb,
+        ccp_anchor_story=fib.ccp_headers,
+        anchor_story_cp_start=fib.header_story_cp_start,
+        spa_structure="PlcSpaHdr",
+        anchor_story_name="headers",
+        report=report,
+    )
+    header_floating_pictures = read_header_floating_pictures(
+        header_shape_anchors,
+        officeart_shapes,
+        header_story_cp_start=fib.header_story_cp_start,
+        excluded_shape_ids=header_textboxes.shape_ids,
+        first_picture_id=(
+            len(inline_pictures.pictures) + len(floating_pictures.pictures) + 1
+        ),
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
+    header_table = fib.plcf_hdd
+    header_footers = read_header_footer_stories(
+        table_stream,
+        piece_table,
+        sections,
+        offset=header_table.fc,
+        size=header_table.lcb,
+        ccp_headers=fib.ccp_headers,
+        header_story_cp_start=fib.header_story_cp_start,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+        paragraph_properties_at=formatting.paragraph_properties_at,
+        floating_textbox_at=header_textboxes.textbox_at,
+        floating_picture_at=header_floating_pictures.picture_at,
+    )
+    sections = header_footers.sections
     parsed_document = parse_main_story(
         main_characters,
         report,
@@ -358,7 +382,11 @@ def convert(
         footnotes=footnotes.footnotes,
         endnotes=endnotes.endnotes,
         comments=comments.comments,
-        pictures=inline_pictures.pictures + floating_pictures.pictures,
+        pictures=(
+            inline_pictures.pictures
+            + floating_pictures.pictures
+            + header_floating_pictures.pictures
+        ),
         even_and_odd_headers=document_settings.even_and_odd_headers,
         adjust_line_height_in_table=(
             document_settings.adjust_line_height_in_table
@@ -440,10 +468,24 @@ def convert(
             "inline_picture_count": len(inline_pictures.pictures),
             "deferred_inline_picture_count": inline_pictures.deferred_count,
             "inline_binary_data_count": inline_pictures.binary_data_count,
-            "floating_picture_count": len(floating_pictures.pictures),
-            "deferred_floating_picture_count": floating_pictures.deferred_count,
+            "floating_picture_count": (
+                len(floating_pictures.pictures)
+                + len(header_floating_pictures.pictures)
+            ),
+            "main_floating_picture_count": len(floating_pictures.pictures),
+            "header_floating_picture_count": len(
+                header_floating_pictures.pictures
+            ),
+            "deferred_floating_picture_count": (
+                floating_pictures.deferred_count
+                + header_floating_pictures.deferred_count
+            ),
+            "deferred_header_floating_picture_count": (
+                header_floating_pictures.deferred_count
+            ),
             "non_picture_floating_shape_count": (
                 floating_pictures.non_picture_shape_count
+                + header_floating_pictures.non_picture_shape_count
             ),
             "symbol_character_count": sum(
                 isinstance(inline, Symbol)
@@ -465,10 +507,11 @@ def convert(
         fib.base.has_pictures
         and not inline_pictures.pictures
         and not floating_pictures.pictures
+        and not header_floating_pictures.pictures
     ):
         report.warning(
             "PICTURES_DEFERRED",
-            "the FIB reports pictures, but no supported inline raster picture was recovered",
+            "the FIB reports pictures, but no supported raster picture was recovered",
         )
     secondary_stories = fib.secondary_story_character_counts
     secondary_stories.pop("footnotes", None)
@@ -511,7 +554,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M8b conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M8c conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

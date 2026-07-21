@@ -363,7 +363,7 @@ class InlinePicture:
 
 @dataclass(slots=True, frozen=True)
 class FloatingPicture:
-    """One main-story raster picture positioned by a DOC Spa anchor."""
+    """One raster picture positioned by a main/header DOC Spa anchor."""
 
     picture_id: int
     shape_id: int
