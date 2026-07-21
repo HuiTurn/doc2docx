@@ -424,6 +424,7 @@ def _append_paragraph_properties(
         or properties.keep_lines is not None
         or properties.keep_next is not None
         or properties.page_break_before is not None
+        or properties.outline_level is not None
         or properties.widow_control is not None
         or properties.kinsoku is not None
         or properties.word_wrap is not None
@@ -433,6 +434,8 @@ def _append_paragraph_properties(
         or properties.auto_space_east_asian_numbers is not None
         or properties.snap_to_grid is not None
         or properties.adjust_right_indent is not None
+        or properties.borders is not None
+        or properties.tab_stops is not None
         or properties.left_indent_twips is not None
         or properties.right_indent_twips is not None
         or properties.first_line_indent_twips is not None
@@ -507,6 +510,23 @@ def _append_paragraph_properties(
         "snapToGrid",
         properties.snap_to_grid,
     )
+    if properties.borders is not None:
+        _append_borders(
+            paragraph_properties,
+            "pBdr",
+            properties.borders,
+            include_inside=False,
+        )
+    if properties.tab_stops:
+        tabs = ET.SubElement(paragraph_properties, _qn(W_NS, "tabs"))
+        for tab_stop in properties.tab_stops:
+            attributes = {
+                _qn(W_NS, "val"): tab_stop.alignment,
+                _qn(W_NS, "pos"): str(tab_stop.position_twips),
+            }
+            if tab_stop.leader is not None:
+                attributes[_qn(W_NS, "leader")] = tab_stop.leader
+            ET.SubElement(tabs, _qn(W_NS, "tab"), attributes)
     spacing: dict[str, str] = {}
     if properties.space_before_twips is not None:
         spacing[_qn(W_NS, "before")] = str(properties.space_before_twips)
@@ -543,6 +563,12 @@ def _append_paragraph_properties(
             paragraph_properties,
             _qn(W_NS, "jc"),
             {_qn(W_NS, "val"): properties.justification},
+        )
+    if properties.outline_level is not None:
+        ET.SubElement(
+            paragraph_properties,
+            _qn(W_NS, "outlineLvl"),
+            {_qn(W_NS, "val"): str(properties.outline_level)},
         )
     if _has_character_properties(mark_properties):
         mark_run_properties = ET.SubElement(
@@ -998,11 +1024,16 @@ def _append_table_property_elements(
     *,
     include_width: bool,
 ) -> None:
-    if include_width:
+    if include_width or properties.preferred_width_type is not None:
+        width_type = properties.preferred_width_type or "auto"
+        width = properties.preferred_width or 0
         ET.SubElement(
             parent,
             _qn(W_NS, "tblW"),
-            {_qn(W_NS, "w"): "0", _qn(W_NS, "type"): "auto"},
+            {
+                _qn(W_NS, "w"): str(width),
+                _qn(W_NS, "type"): width_type,
+            },
         )
     if properties.alignment is not None:
         ET.SubElement(

@@ -10,6 +10,96 @@ from doc2docx.msdoc.sprm import (
 
 
 class SprmTests(unittest.TestCase):
+    def test_modern_table_borders_widths_and_colors_are_parsed(self) -> None:
+        border = bytes((0x11, 0x22, 0x33, 0, 4, 1, 0x22, 0))
+        table_borders = bytes((48,)) + border * 6
+        cell_width = bytes((5, 0, 2, 3)) + struct.pack("<H", 1200)
+        top_colors = bytes((8, 0xFF, 0, 0, 0, 0, 0, 0, 0xFF))
+        grpprl = b"".join(
+            (
+                struct.pack("<HH", 0x548A, 1),
+                struct.pack("<H", 0xD613) + table_borders,
+                struct.pack("<HBH", 0xF614, 3, 2400),
+                struct.pack("<HBH", 0xF617, 3, 0),
+                struct.pack("<HBH", 0xF618, 3, 0),
+                struct.pack("<H", 0xD635) + cell_width,
+                struct.pack("<H", 0xD61A) + top_colors,
+            )
+        )
+
+        properties, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(grpprl, label="modern-table.grpprl"),
+            style_id=0,
+        )
+
+        self.assertFalse(unsupported)
+        assert properties.table_row is not None
+        row = properties.table_row
+        self.assertEqual(row.alignment, "center")
+        self.assertEqual(row.preferred_width_type, "dxa")
+        self.assertEqual(row.preferred_width, 2400)
+        assert row.borders.top is not None
+        self.assertEqual(row.borders.top.color, "112233")
+        self.assertEqual(row.borders.top.space_points, 2)
+        self.assertTrue(row.borders.top.shadow)
+        self.assertEqual(row.cell_width_overrides[0].width_twips, 1200)
+        self.assertEqual(row.cell_top_border_colors, ("FF0000", "auto"))
+
+    def test_paragraph_outline_and_borders_are_parsed(self) -> None:
+        modern_border = bytes((8, 0, 0, 0, 0xFF, 4, 1, 0, 0))
+        grpprl = b"".join(
+            (
+                struct.pack("<HB", 0x2640, 3),
+                struct.pack("<H4s", 0x6424, bytes((4, 1, 2, 0))),
+                struct.pack("<H", 0xC650) + modern_border,
+            )
+        )
+
+        properties, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(grpprl, label="paragraph-borders.grpprl"),
+            style_id=0,
+        )
+
+        self.assertFalse(unsupported)
+        self.assertEqual(properties.outline_level, 3)
+        assert properties.borders is not None
+        assert properties.borders.top is not None
+        assert properties.borders.bottom is not None
+        self.assertEqual(properties.borders.top.color, "0000FF")
+        self.assertEqual(properties.borders.bottom.color, "auto")
+
+    def test_custom_tab_additions_and_deletions_are_parsed(self) -> None:
+        operand = bytes((8, 0, 2, 0x39, 0x10, 0x72, 0x20, 0x01, 0x02))
+        properties, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(
+                struct.pack("<H", 0xC60D) + operand,
+                label="tabs.grpprl",
+            ),
+            style_id=0,
+        )
+
+        self.assertFalse(unsupported)
+        assert properties.tab_stops is not None
+        self.assertEqual(
+            [(tab.position_twips, tab.alignment) for tab in properties.tab_stops],
+            [(4153, "center"), (8306, "right")],
+        )
+
+        delete_operand = bytes((6, 2, 0x39, 0x10, 0x72, 0x20, 0))
+        deleted, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(
+                struct.pack("<H", 0xC60D) + delete_operand,
+                label="deleted-tabs.grpprl",
+            ),
+            style_id=0,
+        )
+        self.assertFalse(unsupported)
+        assert deleted.tab_stops is not None
+        self.assertEqual(
+            [(tab.position_twips, tab.alignment) for tab in deleted.tab_stops],
+            [(4153, "clear"), (8306, "clear")],
+        )
+
     def test_east_asian_grid_controls_are_parsed(self) -> None:
         paragraph_grpprl = b"".join(
             struct.pack("<HB", opcode, value)

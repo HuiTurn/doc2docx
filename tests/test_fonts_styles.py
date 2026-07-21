@@ -7,6 +7,7 @@ from xml.etree import ElementTree as ET
 
 from doc2docx.diagnostics import ConversionReport
 from doc2docx.model import (
+    BorderProperties,
     CharacterProperties,
     Document,
     Paragraph,
@@ -18,6 +19,8 @@ from doc2docx.model import (
     TableCell,
     TableRow,
     TableRowProperties,
+    TableBorders,
+    TabStop,
     TextRun,
 )
 from doc2docx.msdoc import read_font_table, read_style_sheet
@@ -149,6 +152,60 @@ def _table_style_sheet() -> bytes:
 
 
 class FontAndStyleTests(unittest.TestCase):
+    def test_writes_paragraph_outline_and_borders(self) -> None:
+        document = Document(
+            (
+                Paragraph(
+                    (TextRun("Outlined"),),
+                    ParagraphProperties(
+                        outline_level=2,
+                        borders=TableBorders(
+                            top=BorderProperties("single", 4, "112233"),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "outlined.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        outline = root.find(f".//{W}pPr/{W}outlineLvl")
+        border = root.find(f".//{W}pPr/{W}pBdr/{W}top")
+        assert outline is not None
+        assert border is not None
+        self.assertEqual(outline.get(f"{W}val"), "2")
+        self.assertEqual(border.get(f"{W}color"), "112233")
+
+    def test_writes_custom_tab_stops(self) -> None:
+        document = Document(
+            (
+                Paragraph(
+                    (TextRun("Tabbed"),),
+                    ParagraphProperties(
+                        tab_stops=(
+                            TabStop(720, "clear"),
+                            TabStop(1440, "center", "dot"),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "tabs.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        tabs = root.findall(f".//{W}pPr/{W}tabs/{W}tab")
+        self.assertEqual(
+            [(tab.get(f"{W}pos"), tab.get(f"{W}val")) for tab in tabs],
+            [("720", "clear"), ("1440", "center")],
+        )
+        self.assertEqual(tabs[1].get(f"{W}leader"), "dot")
+
     def test_root_style_materializes_document_default_fonts(self) -> None:
         effective = CharacterProperties(
             ascii_font="Times New Roman",

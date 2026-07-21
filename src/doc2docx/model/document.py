@@ -97,11 +97,25 @@ class ShadingProperties:
 
 
 @dataclass(slots=True, frozen=True)
+class TabStop:
+    position_twips: int
+    alignment: str
+    leader: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class TableCellMarginOverride:
     first_cell: int
     limit_cell: int
     sides: tuple[str, ...]
     width_twips: int | None
+
+
+@dataclass(slots=True, frozen=True)
+class TableCellWidthOverride:
+    first_cell: int
+    limit_cell: int
+    width_twips: int
 
 
 @dataclass(slots=True, frozen=True)
@@ -118,6 +132,8 @@ class TableCellDefinition:
 @dataclass(slots=True, frozen=True)
 class TableRowProperties:
     table_style_id: int | None = None
+    preferred_width: int | None = None
+    preferred_width_type: str | None = None
     cell_boundaries_twips: tuple[int, ...] = ()
     cell_definitions: tuple[TableCellDefinition, ...] = ()
     alignment: str | None = None
@@ -132,7 +148,12 @@ class TableRowProperties:
         default_factory=TableCellMargins
     )
     cell_margin_overrides: tuple[TableCellMarginOverride, ...] = ()
+    cell_width_overrides: tuple[TableCellWidthOverride, ...] = ()
     cell_shadings: tuple[ShadingProperties | None, ...] = ()
+    cell_top_border_colors: tuple[str | None, ...] = ()
+    cell_left_border_colors: tuple[str | None, ...] = ()
+    cell_bottom_border_colors: tuple[str | None, ...] = ()
+    cell_right_border_colors: tuple[str | None, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -144,6 +165,7 @@ class ParagraphProperties:
     keep_lines: bool | None = None
     keep_next: bool | None = None
     page_break_before: bool | None = None
+    outline_level: int | None = None
     widow_control: bool | None = None
     kinsoku: bool | None = None
     word_wrap: bool | None = None
@@ -153,6 +175,8 @@ class ParagraphProperties:
     auto_space_east_asian_numbers: bool | None = None
     snap_to_grid: bool | None = None
     adjust_right_indent: bool | None = None
+    borders: TableBorders | None = None
+    tab_stops: tuple[TabStop, ...] | None = None
     left_indent_twips: int | None = None
     right_indent_twips: int | None = None
     first_line_indent_twips: int | None = None
@@ -456,6 +480,30 @@ def _cell_margins(
     return margins
 
 
+def _cell_width(
+    properties: TableRowProperties,
+    cell_index: int,
+) -> int | None:
+    width = None
+    for override in properties.cell_width_overrides:
+        if override.first_cell <= cell_index < override.limit_cell:
+            width = override.width_twips
+    return width
+
+
+def _border_with_color(
+    border: BorderProperties | None,
+    colors: tuple[str | None, ...],
+    cell_index: int,
+) -> BorderProperties | None:
+    if cell_index >= len(colors):
+        return border
+    color = colors[cell_index]
+    if color is None:
+        return None
+    return replace(border, color=color) if border is not None else None
+
+
 def _build_table_row(
     raw_cells: list[tuple[Block, ...]],
     properties: TableRowProperties,
@@ -488,9 +536,35 @@ def _build_table_row(
             if index + 1 < len(boundaries)
             else None
         )
-        width = definition.preferred_width_twips
+        width = _cell_width(properties, index)
+        if width is None:
+            width = definition.preferred_width_twips
         if width is None and grid_width is not None and grid_width >= 0:
             width = grid_width
+        borders = definition.borders
+        borders = replace(
+            borders,
+            top=_border_with_color(
+                borders.top or properties.borders.top,
+                properties.cell_top_border_colors,
+                index,
+            ),
+            left=_border_with_color(
+                borders.left or properties.borders.left,
+                properties.cell_left_border_colors,
+                index,
+            ),
+            bottom=_border_with_color(
+                borders.bottom or properties.borders.bottom,
+                properties.cell_bottom_border_colors,
+                index,
+            ),
+            right=_border_with_color(
+                borders.right or properties.borders.right,
+                properties.cell_right_border_colors,
+                index,
+            ),
+        )
         content_blocks = cell_blocks or (Paragraph(()),)
         cell = TableCell(
             paragraphs=tuple(
@@ -501,7 +575,7 @@ def _build_table_row(
             vertical_alignment=definition.vertical_alignment,
             fit_text=definition.fit_text,
             no_wrap=definition.no_wrap,
-            borders=definition.borders,
+            borders=borders,
             margins=_cell_margins(properties, index),
             shading=(
                 properties.cell_shadings[index]

@@ -13,9 +13,11 @@ from ..model import (
     CharacterProperties,
     ParagraphProperties,
     ShadingProperties,
+    TabStop,
     TableBorders,
     TableCellDefinition,
     TableCellMarginOverride,
+    TableCellWidthOverride,
     TableRowProperties,
 )
 
@@ -305,6 +307,42 @@ def _parse_brc80(data: bytes) -> BorderProperties | None:
     )
 
 
+def _parse_colorref(data: bytes) -> str | None:
+    if len(data) != 4:
+        raise InvalidWordDocument("COLORREF must contain exactly four bytes")
+    if data == b"\xFF\xFF\xFF\xFF":
+        return None
+    if data[3] == 0xFF:
+        return "auto"
+    return f"{data[0]:02X}{data[1]:02X}{data[2]:02X}"
+
+
+def _parse_brc(data: bytes) -> BorderProperties | None:
+    if len(data) != 8:
+        raise InvalidWordDocument("Brc must contain exactly eight bytes")
+    if data[4:] == b"\xFF\xFF\xFF\xFF" or data[5] in (0x00, 0xFF):
+        return None
+    style = _BORDER_STYLES.get(data[5])
+    if style is None:
+        return None
+    flags = struct.unpack_from("<H", data, 6)[0]
+    color = _parse_colorref(data[:4])
+    return BorderProperties(
+        style=style,
+        size_eighth_points=max(data[4], 2),
+        color=color or "auto",
+        space_points=flags & 0x1F,
+        shadow=bool(flags & 0x20),
+        frame=bool(flags & 0x40),
+    )
+
+
+def _parse_brc_operand(operand: bytes) -> BorderProperties | None:
+    if len(operand) != 9 or operand[0] != 8:
+        raise InvalidWordDocument("BrcOperand must contain exactly eight data bytes")
+    return _parse_brc(operand[1:])
+
+
 def _parse_table_borders80(operand: bytes) -> TableBorders:
     if len(operand) != 25 or operand[0] != 0x18:
         raise InvalidWordDocument("sprmTTableBorders80 operand must contain 24 bytes")
@@ -313,6 +351,139 @@ def _parse_table_borders80(operand: bytes) -> TableBorders:
         for index in range(6)
     ]
     return TableBorders(*values)
+
+
+def _parse_table_borders(operand: bytes) -> TableBorders:
+    if len(operand) != 49 or operand[0] != 0x30:
+        raise InvalidWordDocument("TableBordersOperand must contain 48 data bytes")
+    values = [
+        _parse_brc(operand[1 + index * 8 : 9 + index * 8])
+        for index in range(6)
+    ]
+    return TableBorders(*values)
+
+
+def _parse_border_colors(operand: bytes) -> tuple[str | None, ...]:
+    if not operand or operand[0] != len(operand) - 1 or operand[0] % 4:
+        raise InvalidWordDocument("BrcCvOperand has an invalid byte count")
+    if operand[0] > 252:
+        raise InvalidWordDocument("BrcCvOperand has too many colors")
+    return tuple(
+        _parse_colorref(operand[position : position + 4])
+        for position in range(1, len(operand), 4)
+    )
+
+
+_WIDTH_TYPES = {
+    0: "nil",
+    1: "auto",
+    2: "pct",
+    3: "dxa",
+}
+
+
+_TAB_ALIGNMENTS = {
+    0: "left",
+    1: "center",
+    2: "right",
+    3: "decimal",
+    4: "bar",
+    6: "num",
+}
+
+_TAB_LEADERS = {
+    0: None,
+    1: "dot",
+    2: "hyphen",
+    3: "underscore",
+    4: "heavy",
+    5: "middleDot",
+    7: None,
+}
+
+
+def _parse_tab_changes(operand: bytes) -> tuple[TabStop, ...]:
+    if not operand or operand[0] != len(operand) - 1 or operand[0] < 2:
+        raise InvalidWordDocument("PChgTabsPapxOperand has an invalid byte count")
+    position = 1
+    delete_count = operand[position]
+    position += 1
+    if delete_count > 64 or position + delete_count * 2 > len(operand):
+        raise InvalidWordDocument("PChgTabsDel exceeds its operand")
+    deleted = struct.unpack_from(f"<{delete_count}h", operand, position)
+    position += delete_count * 2
+    if tuple(sorted(deleted)) != deleted:
+        raise InvalidWordDocument("deleted tab stops are not in ascending order")
+    if position >= len(operand):
+        raise InvalidWordDocument("PChgTabsPapxOperand has no PChgTabsAdd")
+    add_count = operand[position]
+    position += 1
+    required = position + add_count * 3
+    if add_count > 64 or required != len(operand):
+        raise InvalidWordDocument("PChgTabsAdd does not match its operand")
+    added = struct.unpack_from(f"<{add_count}h", operand, position)
+    position += add_count * 2
+    if tuple(sorted(added)) != added:
+        raise InvalidWordDocument("added tab stops are not in ascending order")
+    values = [TabStop(value, "clear") for value in deleted]
+    for tab_position, descriptor in zip(added, operand[position:]):
+        alignment = _TAB_ALIGNMENTS.get(descriptor & 0x07)
+        leader = _TAB_LEADERS.get((descriptor >> 3) & 0x07)
+        if alignment is None or ((descriptor >> 3) & 0x07) not in _TAB_LEADERS:
+            raise InvalidWordDocument("custom tab stop has an invalid descriptor")
+        values.append(TabStop(tab_position, alignment, leader))
+    return tuple(values)
+
+
+def _parse_table_width(operand: bytes) -> tuple[str, int]:
+    if len(operand) != 3:
+        raise InvalidWordDocument("FtsWWidth_Table must contain exactly three bytes")
+    width_type_value, width = struct.unpack("<BH", operand)
+    width_type = _WIDTH_TYPES.get(width_type_value)
+    if width_type is None:
+        raise InvalidWordDocument("FtsWWidth_Table has an invalid width type")
+    if width_type in ("nil", "auto") and width:
+        raise InvalidWordDocument("automatic table widths must have a zero value")
+    if width_type == "pct" and width > 30000:
+        raise InvalidWordDocument("percentage table width exceeds 600 percent")
+    if width_type == "dxa" and width > 31680:
+        raise InvalidWordDocument("table width exceeds 22 inches")
+    return width_type, width
+
+
+def _parse_table_part_width(operand: bytes) -> tuple[str, int]:
+    if len(operand) != 3:
+        raise InvalidWordDocument("FtsWWidth_TablePart must contain three bytes")
+    width_type_value, width = struct.unpack("<BH", operand)
+    width_type = _WIDTH_TYPES.get(width_type_value)
+    if width_type is None:
+        raise InvalidWordDocument("FtsWWidth_TablePart has an invalid width type")
+    if width_type == "nil":
+        return width_type, 0
+    if width_type == "auto" and width:
+        raise InvalidWordDocument("automatic table-part widths must be zero")
+    if width_type == "pct" and width > 5000:
+        raise InvalidWordDocument("table-part width exceeds 100 percent")
+    if width_type == "dxa" and width > 31680:
+        raise InvalidWordDocument("table-part width exceeds 22 inches")
+    return width_type, width
+
+
+def _parse_cell_width(operand: bytes) -> TableCellWidthOverride | None:
+    if len(operand) != 6 or operand[0] != 5:
+        raise InvalidWordDocument("TableCellWidthOperand must contain five data bytes")
+    first_cell, limit_cell, width_type, width = struct.unpack_from(
+        "<BBBH",
+        operand,
+        1,
+    )
+    if first_cell >= limit_cell or limit_cell > 63:
+        raise InvalidWordDocument("TableCellWidthOperand has an invalid cell range")
+    if width_type != 3:
+        return None
+    if width > 31680:
+        raise InvalidWordDocument("preferred cell width exceeds 22 inches")
+    return TableCellWidthOverride(first_cell, limit_cell, width)
 
 
 def _parse_cssa(
@@ -664,7 +835,7 @@ def apply_paragraph_modifiers(
                     table_style_id=struct.unpack("<H", operand)[0],
                 ),
             )
-        elif opcode == 0x5400:
+        elif opcode in (0x5400, 0x548A):
             alignment = {0: "left", 1: "center", 2: "right"}.get(
                 struct.unpack("<H", operand)[0]
             )
@@ -724,6 +895,30 @@ def apply_paragraph_modifiers(
                 properties,
                 table_row=replace(row, borders=_parse_table_borders80(operand)),
             )
+        elif opcode == 0xD613:
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(row, borders=_parse_table_borders(operand)),
+            )
+        elif opcode == 0xF614:
+            width_type, width = _parse_table_width(operand)
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    preferred_width=width,
+                    preferred_width_type=width_type,
+                ),
+            )
+        elif opcode in (0xF617, 0xF618):
+            # Zero leading/trailing width is the default and has no OOXML
+            # effect. A nonzero value also requires gridBefore/gridAfter
+            # reconstruction, which is intentionally left diagnostic for now.
+            _, width = _parse_table_part_width(operand)
+            if width:
+                unsupported.add(opcode)
         elif opcode == 0xD608:
             definition = _parse_tdef_table(operand)
             row = properties.table_row or TableRowProperties()
@@ -776,6 +971,37 @@ def apply_paragraph_modifiers(
                         ),
                     ),
                 )
+        elif opcode == 0xD635:
+            override = _parse_cell_width(operand)
+            if override is None:
+                unsupported.add(opcode)
+            else:
+                row = properties.table_row or TableRowProperties()
+                properties = replace(
+                    properties,
+                    table_row=replace(
+                        row,
+                        cell_width_overrides=(
+                            *row.cell_width_overrides,
+                            override,
+                        ),
+                    ),
+                )
+        elif opcode in (0xD61A, 0xD61B, 0xD61C, 0xD61D):
+            row = properties.table_row or TableRowProperties()
+            attribute = {
+                0xD61A: "cell_top_border_colors",
+                0xD61B: "cell_left_border_colors",
+                0xD61C: "cell_bottom_border_colors",
+                0xD61D: "cell_right_border_colors",
+            }[opcode]
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    **{attribute: _parse_border_colors(operand)},
+                ),
+            )
         elif opcode in (0x2403, 0x2461):
             justification = _JUSTIFICATION.get(operand[0])
             if justification is None:
@@ -788,6 +1014,19 @@ def apply_paragraph_modifiers(
             properties = replace(properties, keep_next=bool(operand[0]))
         elif opcode == 0x2407:
             properties = replace(properties, page_break_before=bool(operand[0]))
+        elif opcode == 0x2640:
+            if operand[0] > 9:
+                unsupported.add(opcode)
+            else:
+                properties = replace(properties, outline_level=operand[0])
+        elif opcode == 0xC60D:
+            properties = replace(
+                properties,
+                tab_stops=(
+                    *(properties.tab_stops or ()),
+                    *_parse_tab_changes(operand),
+                ),
+            )
         elif opcode in _PARAGRAPH_TOGGLES:
             if operand[0] not in (0x00, 0x01):
                 unsupported.add(opcode)
@@ -856,6 +1095,32 @@ def apply_paragraph_modifiers(
                 )
             else:
                 unsupported.add(opcode)
+        elif opcode in (0x6424, 0x6425, 0x6426, 0x6427):
+            border = _parse_brc80(operand)
+            borders = properties.borders or TableBorders()
+            attribute = {
+                0x6424: "top",
+                0x6425: "left",
+                0x6426: "bottom",
+                0x6427: "right",
+            }[opcode]
+            properties = replace(
+                properties,
+                borders=replace(borders, **{attribute: border}),
+            )
+        elif opcode in (0xC64E, 0xC64F, 0xC650, 0xC651):
+            border = _parse_brc_operand(operand)
+            borders = properties.borders or TableBorders()
+            attribute = {
+                0xC64E: "top",
+                0xC64F: "left",
+                0xC650: "bottom",
+                0xC651: "right",
+            }[opcode]
+            properties = replace(
+                properties,
+                borders=replace(borders, **{attribute: border}),
+            )
         else:
             unsupported.add(opcode)
     return properties, unsupported

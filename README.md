@@ -4,7 +4,7 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M6b implementation supports unencrypted CFB/OLE Word documents,
+The current M0–M6c implementation supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
 UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
 preserves a useful first set of direct character and paragraph properties. It
@@ -14,9 +14,10 @@ toggles, parses unconditional table-style TAPX/PAPX/CHPX properties, preserves
 `sprmTIstd` as native DOCX table-style references, and applies simple and complex
 piece-level PRMs in specification order.
 It reconstructs tables from DOC cell/row markers, including nested tables, and
-preserves their column grid, preferred cell widths, basic merges, alignment,
-row sizing, Word 97 borders and shading, and default or range-specific cell
-margins. It also follows main-story `PlcfSed` records through `Sed.fcSepx` to
+preserves their column grid, explicit table and cell widths, basic merges,
+alignment, row sizing, Word 97 and modern borders, per-cell border colors,
+shading, and default or range-specific cell margins. It also follows main-story
+`PlcfSed` records through `Sed.fcSepx` to
 each `Sepx.grpprl`, reconstructing single or multiple sections. Section-break
 types, paper size, portrait/landscape orientation, page margins, header/footer
 distance, and gutter width are emitted as WordprocessingML section properties.
@@ -33,7 +34,8 @@ controls, script-specific font hints, language/proofing metadata, complex-script
 font size and emphasis, and Word's table-grid line-height compatibility setting
 are also carried into the DOCX package. Paragraph-mark formatting, spacing in
 hundredths of a line, and `sprmCSymbol` characters are preserved as native
-WordprocessingML run and symbol elements.
+WordprocessingML run and symbol elements. Paragraph borders, outline levels, and
+custom tab additions/deletions are retained as native paragraph properties.
 
 ## Usage
 
@@ -55,16 +57,17 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-M6b currently preserves bold, italic, strike, double strike, capitalization,
+M6c currently preserves bold, italic, strike, double strike, capitalization,
 hidden text, underline, text color, highlight, font size, vertical alignment,
 paragraph justification, indents, spacing, line spacing, and keep/page-break
 flags, font names, paragraph/character style references, style inheritance,
 basic section/page layout, ordinary paragraph/table content in headers and
 footers, positioned header/footer textboxes, and basic dynamic page-number
 fields. It additionally distinguishes Latin/East Asian/complex-script run
-properties and preserves East Asian document-grid pagination controls. Basic
-unconditional table styles are emitted as `w:style` definitions and selected by
-`w:tblStyle`; conditional cell/band/corner variants remain deferred.
+properties and preserves East Asian document-grid pagination controls. Paragraph
+borders, outline levels, and custom tab stops are preserved. Basic unconditional
+table styles are emitted as `w:style` definitions and selected by `w:tblStyle`;
+conditional cell/band/corner variants remain deferred.
 Conditional table styles, newer color-based table shading, cell spacing,
 numbering styles, multi-column layout, page-number settings, header/footer
 non-textbox shapes and full OfficeArt styling, main-story textboxes, other
@@ -90,5 +93,7 @@ Sepx page-layout parsing, multi-section break placement, PlcfHdd guard and story
 mapping, header textbox/shape/field PLC validation, live PAGE-field output,
 header/footer OPC relationships, East Asian document grids and paragraph
 controls, script-specific language/font properties, malformed input checks, CLI
-coverage, symbol characters, paragraph-mark formatting, unconditional table-style
-inheritance, and end-to-end DOCX package validation.
+coverage, symbol characters, paragraph-mark formatting, paragraph borders and
+outline levels, custom tab stops, unconditional table-style inheritance, modern
+table borders, explicit table/cell widths, per-cell border colors, and end-to-end
+DOCX package validation.

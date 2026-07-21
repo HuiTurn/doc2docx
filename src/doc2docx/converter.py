@@ -244,6 +244,16 @@ def convert(
                 and table.rows[0].properties.table_style_id is not None
                 for table in tables
             ),
+            "preferred_width_table_count": sum(
+                bool(table.rows)
+                and table.rows[0].properties.preferred_width_type is not None
+                for table in tables
+            ),
+            "cell_width_override_count": sum(
+                len(row.properties.cell_width_overrides)
+                for table in tables
+                for row in table.rows
+            ),
             "table_row_count": sum(len(table.rows) for table in tables),
             "table_cell_count": sum(
                 len(row.cells) for table in tables for row in table.rows
@@ -264,6 +274,15 @@ def convert(
                 for paragraph in document.paragraphs
                 for inline in paragraph.inlines
             ),
+            "custom_tab_stop_count": sum(
+                len(paragraph.properties.tab_stops or ())
+                for paragraph in document.paragraphs
+            )
+            + sum(
+                len(style.paragraph_properties.tab_stops or ())
+                for style in style_sheet.styles
+                if style is not None
+            ),
         }
     )
     if fib.base.has_pictures:
@@ -277,7 +296,7 @@ def convert(
     if secondary_stories:
         report.warning(
             "SECONDARY_STORIES_DEFERRED",
-            "some secondary document stories remain unsupported after M6b",
+            "some secondary document stories remain unsupported after M6c",
             stories=secondary_stories,
         )
 
@@ -308,7 +327,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M6b conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M6c conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

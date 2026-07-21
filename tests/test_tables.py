@@ -6,14 +6,17 @@ from xml.etree import ElementTree as ET
 
 from doc2docx.diagnostics import ConversionReport
 from doc2docx.model import (
+    BorderProperties,
     Document,
     Paragraph,
     ParagraphProperties,
     ShadingProperties,
     Table,
+    TableBorders,
     TableCellDefinition,
     TableCellMarginOverride,
     TableCellMargins,
+    TableCellWidthOverride,
     TableRowProperties,
     TextRun,
     parse_main_story,
@@ -25,6 +28,54 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class TableConversionTests(unittest.TestCase):
+    def test_preferred_table_and_cell_widths_and_border_colors_are_written(self) -> None:
+        border = BorderProperties("single", 4, "auto")
+        row = TableRowProperties(
+            preferred_width=2200,
+            preferred_width_type="dxa",
+            cell_boundaries_twips=(0, 1000, 2200),
+            cell_definitions=(TableCellDefinition(), TableCellDefinition()),
+            borders=TableBorders(
+                top=border,
+                left=border,
+                bottom=border,
+                right=border,
+                inside_horizontal=border,
+                inside_vertical=border,
+            ),
+            cell_width_overrides=(TableCellWidthOverride(0, 1, 900),),
+            cell_top_border_colors=("FF0000", "auto"),
+        )
+        cell_properties = ParagraphProperties(in_table=True)
+        row_mark = ParagraphProperties(
+            in_table=True,
+            table_terminating=True,
+            table_row=row,
+        )
+
+        document = parse_main_story(
+            "A\x07B\x07\x07",
+            ConversionReport("widths.doc"),
+            paragraph_properties_at=(
+                lambda cp: row_mark if cp == 4 else cell_properties
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "widths.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        table_width = root.find(f".//{W}tblPr/{W}tblW")
+        assert table_width is not None
+        self.assertEqual(table_width.get(f"{W}w"), "2200")
+        self.assertEqual(table_width.get(f"{W}type"), "dxa")
+        cell_widths = root.findall(f".//{W}tr/{W}tc/{W}tcPr/{W}tcW")
+        self.assertEqual([value.get(f"{W}w") for value in cell_widths], ["900", "1200"])
+        first_top = root.find(f".//{W}tr/{W}tc[1]/{W}tcPr/{W}tcBorders/{W}top")
+        assert first_top is not None
+        self.assertEqual(first_top.get(f"{W}color"), "FF0000")
+
     def test_cell_margins_and_shading_are_written(self) -> None:
         row = TableRowProperties(
             cell_boundaries_twips=(0, 1000, 2200),
