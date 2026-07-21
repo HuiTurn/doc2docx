@@ -574,6 +574,12 @@ def _append_character_property_elements(
             _qn(W_NS, "color"),
             {_qn(W_NS, "val"): properties.color},
         )
+    if properties.spacing_twips is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "spacing"),
+            {_qn(W_NS, "val"): str(properties.spacing_twips)},
+        )
     if properties.kerning_half_points is not None:
         ET.SubElement(
             run_properties,
@@ -666,6 +672,9 @@ def _append_paragraph_properties(
         or properties.widow_control is not None
         or properties.suppress_line_numbers is not None
         or properties.suppress_auto_hyphens is not None
+        or properties.contextual_spacing is not None
+        or properties.auto_spacing_before is not None
+        or properties.auto_spacing_after is not None
         or properties.bidirectional is not None
         or properties.kinsoku is not None
         or properties.word_wrap is not None
@@ -703,6 +712,26 @@ def _append_paragraph_properties(
             _qn(W_NS, "pStyle"),
             {_qn(W_NS, "val"): f"DocStyle{properties.style_id}"},
         )
+    _append_boolean_property(
+        paragraph_properties,
+        "keepNext",
+        properties.keep_next,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "keepLines",
+        properties.keep_lines,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "pageBreakBefore",
+        properties.page_break_before,
+    )
+    _append_boolean_property(
+        paragraph_properties,
+        "widowControl",
+        properties.widow_control,
+    )
     if (
         properties.numbering_id is not None
         or properties.numbering_level is not None
@@ -742,38 +771,30 @@ def _append_paragraph_properties(
             )
     _append_boolean_property(
         paragraph_properties,
-        "keepNext",
-        properties.keep_next,
-    )
-    _append_boolean_property(
-        paragraph_properties,
-        "keepLines",
-        properties.keep_lines,
-    )
-    _append_boolean_property(
-        paragraph_properties,
-        "pageBreakBefore",
-        properties.page_break_before,
-    )
-    _append_boolean_property(
-        paragraph_properties,
-        "widowControl",
-        properties.widow_control,
-    )
-    _append_boolean_property(
-        paragraph_properties,
         "suppressLineNumbers",
         properties.suppress_line_numbers,
     )
+    if properties.borders is not None:
+        _append_borders(
+            paragraph_properties,
+            "pBdr",
+            properties.borders,
+            include_inside=False,
+        )
+    if properties.tab_stops:
+        tabs = ET.SubElement(paragraph_properties, _qn(W_NS, "tabs"))
+        for tab_stop in properties.tab_stops:
+            attributes = {
+                _qn(W_NS, "val"): tab_stop.alignment,
+                _qn(W_NS, "pos"): str(tab_stop.position_twips),
+            }
+            if tab_stop.leader is not None:
+                attributes[_qn(W_NS, "leader")] = tab_stop.leader
+            ET.SubElement(tabs, _qn(W_NS, "tab"), attributes)
     _append_boolean_property(
         paragraph_properties,
         "suppressAutoHyphens",
         properties.suppress_auto_hyphens,
-    )
-    _append_boolean_property(
-        paragraph_properties,
-        "bidi",
-        properties.bidirectional,
     )
     _append_boolean_property(paragraph_properties, "kinsoku", properties.kinsoku)
     _append_boolean_property(paragraph_properties, "wordWrap", properties.word_wrap)
@@ -799,6 +820,11 @@ def _append_paragraph_properties(
     )
     _append_boolean_property(
         paragraph_properties,
+        "bidi",
+        properties.bidirectional,
+    )
+    _append_boolean_property(
+        paragraph_properties,
         "adjustRightInd",
         properties.adjust_right_indent,
     )
@@ -807,23 +833,6 @@ def _append_paragraph_properties(
         "snapToGrid",
         properties.snap_to_grid,
     )
-    if properties.borders is not None:
-        _append_borders(
-            paragraph_properties,
-            "pBdr",
-            properties.borders,
-            include_inside=False,
-        )
-    if properties.tab_stops:
-        tabs = ET.SubElement(paragraph_properties, _qn(W_NS, "tabs"))
-        for tab_stop in properties.tab_stops:
-            attributes = {
-                _qn(W_NS, "val"): tab_stop.alignment,
-                _qn(W_NS, "pos"): str(tab_stop.position_twips),
-            }
-            if tab_stop.leader is not None:
-                attributes[_qn(W_NS, "leader")] = tab_stop.leader
-            ET.SubElement(tabs, _qn(W_NS, "tab"), attributes)
     spacing: dict[str, str] = {}
     if properties.space_before_twips is not None:
         spacing[_qn(W_NS, "before")] = str(properties.space_before_twips)
@@ -837,6 +846,14 @@ def _append_paragraph_properties(
         spacing[_qn(W_NS, "line")] = str(properties.line_spacing_twips)
     if properties.line_rule is not None:
         spacing[_qn(W_NS, "lineRule")] = properties.line_rule
+    if properties.auto_spacing_before is not None:
+        spacing[_qn(W_NS, "beforeAutospacing")] = (
+            "1" if properties.auto_spacing_before else "0"
+        )
+    if properties.auto_spacing_after is not None:
+        spacing[_qn(W_NS, "afterAutospacing")] = (
+            "1" if properties.auto_spacing_after else "0"
+        )
     if spacing:
         ET.SubElement(paragraph_properties, _qn(W_NS, "spacing"), spacing)
     indentation: dict[str, str] = {}
@@ -855,6 +872,11 @@ def _append_paragraph_properties(
             )
     if indentation:
         ET.SubElement(paragraph_properties, _qn(W_NS, "ind"), indentation)
+    _append_boolean_property(
+        paragraph_properties,
+        "contextualSpacing",
+        properties.contextual_spacing,
+    )
     if properties.justification is not None:
         ET.SubElement(
             paragraph_properties,

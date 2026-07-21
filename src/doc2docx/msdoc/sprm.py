@@ -119,6 +119,9 @@ _PARAGRAPH_TOGGLES = {
     0x2441: "bidirectional",
     0x2447: "snap_to_grid",
     0x2448: "adjust_right_indent",
+    0x245B: "auto_spacing_before",
+    0x245C: "auto_spacing_after",
+    0x246D: "contextual_spacing",
 }
 
 _FONT_HINTS = {
@@ -726,6 +729,11 @@ def apply_character_modifiers(
                 properties = replace(properties, color=_ICO_RGB[operand[0]])
             else:
                 unsupported.add(opcode)
+        elif opcode == 0x8840:  # sprmCDxaSpace
+            properties = replace(
+                properties,
+                spacing_twips=struct.unpack("<h", operand)[0],
+            )
         elif opcode == 0x2A0C:
             highlight = _ICO_HIGHLIGHT.get(operand[0])
             if highlight is None:

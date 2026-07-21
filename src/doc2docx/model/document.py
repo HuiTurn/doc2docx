@@ -140,6 +140,7 @@ class CharacterProperties:
     size_half_points: int | None = None
     complex_script_size_half_points: int | None = None
     kerning_half_points: int | None = None
+    spacing_twips: int | None = None
     vertical_align: str | None = None
     position_half_points: int | None = None
     snap_to_grid: bool | None = None
@@ -258,6 +259,9 @@ class ParagraphProperties:
     widow_control: bool | None = None
     suppress_line_numbers: bool | None = None
     suppress_auto_hyphens: bool | None = None
+    contextual_spacing: bool | None = None
+    auto_spacing_before: bool | None = None
+    auto_spacing_after: bool | None = None
     bidirectional: bool | None = None
     kinsoku: bool | None = None
     word_wrap: bool | None = None

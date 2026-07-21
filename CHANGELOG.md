@@ -7,6 +7,10 @@ current capabilities without release-by-release notes.
 
 - Continue expanding MS-DOC compatibility with specification-backed parsers,
   focused tests, and real Word 97 sample rendering.
+- Preserve signed character spacing from `sprmCDxaSpace` in direct and style
+  formatting as native WordprocessingML character pitch adjustments.
+- Preserve contextual paragraph spacing and automatic spacing before/after,
+  and serialize paragraph properties in WordprocessingML schema order.
 
 ## 0.28.0 - 2026-07-22 (M12a-M12b)
 

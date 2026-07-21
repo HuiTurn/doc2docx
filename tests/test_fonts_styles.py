@@ -172,6 +172,9 @@ class FontAndStyleTests(unittest.TestCase):
                         outline_level=2,
                         suppress_line_numbers=True,
                         suppress_auto_hyphens=True,
+                        contextual_spacing=True,
+                        auto_spacing_before=True,
+                        auto_spacing_after=False,
                         bidirectional=True,
                         borders=TableBorders(
                             top=BorderProperties("single", 4, "112233"),
@@ -196,6 +199,23 @@ class FontAndStyleTests(unittest.TestCase):
         self.assertEqual(border.get(f"{W}color"), "112233")
         for name in ("suppressLineNumbers", "suppressAutoHyphens", "bidi"):
             self.assertIsNotNone(paragraph_properties.find(f"{W}{name}"))
+        spacing = paragraph_properties.find(f"{W}spacing")
+        assert spacing is not None
+        self.assertEqual(spacing.get(f"{W}beforeAutospacing"), "1")
+        self.assertEqual(spacing.get(f"{W}afterAutospacing"), "0")
+        self.assertIsNotNone(paragraph_properties.find(f"{W}contextualSpacing"))
+        self.assertEqual(
+            [child.tag for child in paragraph_properties],
+            [
+                f"{W}suppressLineNumbers",
+                f"{W}pBdr",
+                f"{W}suppressAutoHyphens",
+                f"{W}bidi",
+                f"{W}spacing",
+                f"{W}contextualSpacing",
+                f"{W}outlineLvl",
+            ],
+        )
 
     def test_writes_custom_tab_stops(self) -> None:
         document = Document(
@@ -330,6 +350,7 @@ class FontAndStyleTests(unittest.TestCase):
             size_half_points=21,
             complex_script_size_half_points=24,
             kerning_half_points=2,
+            spacing_twips=-20,
             no_proof=True,
             language="en-US",
             east_asia_language="zh-CN",
@@ -372,6 +393,10 @@ class FontAndStyleTests(unittest.TestCase):
         self.assertEqual(
             run_properties.find(f"{W}kern").get(f"{W}val"),  # type: ignore[union-attr]
             "2",
+        )
+        self.assertEqual(
+            run_properties.find(f"{W}spacing").get(f"{W}val"),  # type: ignore[union-attr]
+            "-20",
         )
         self.assertIsNotNone(run_properties.find(f"{W}noProof"))
         language = run_properties.find(f"{W}lang")

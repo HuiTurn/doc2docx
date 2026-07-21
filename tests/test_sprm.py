@@ -144,6 +144,9 @@ class SprmTests(unittest.TestCase):
                 (0x2441, 1),
                 (0x2447, 0),
                 (0x2448, 1),
+                (0x245B, 1),
+                (0x245C, 0),
+                (0x246D, 1),
             )
         )
         properties, unsupported = apply_paragraph_modifiers(
@@ -164,6 +167,9 @@ class SprmTests(unittest.TestCase):
         self.assertTrue(properties.auto_space_east_asian_numbers)
         self.assertFalse(properties.snap_to_grid)
         self.assertTrue(properties.adjust_right_indent)
+        self.assertTrue(properties.auto_spacing_before)
+        self.assertFalse(properties.auto_spacing_after)
+        self.assertTrue(properties.contextual_spacing)
 
         character, unsupported, _ = apply_character_modifiers(
             parse_grpprl(
@@ -178,6 +184,7 @@ class SprmTests(unittest.TestCase):
                 + struct.pack("<HH", 0x4873, 0x0400)
                 + struct.pack("<HH", 0x4A61, 24)
                 + struct.pack("<Hh", 0x484B, 2)
+                + struct.pack("<Hh", 0x8840, -20)
                 + struct.pack("<HB", 0x0855, 1)
                 + struct.pack("<HB", 0x0875, 1)
                 + struct.pack("<HB", 0x085C, 1)
@@ -193,6 +200,7 @@ class SprmTests(unittest.TestCase):
         self.assertEqual(character.complex_script_language, "ar")
         self.assertEqual(character.complex_script_size_half_points, 24)
         self.assertEqual(character.kerning_half_points, 2)
+        self.assertEqual(character.spacing_twips, -20)
         self.assertTrue(character.special)
         self.assertTrue(character.no_proof)
         self.assertTrue(character.complex_script_bold)
