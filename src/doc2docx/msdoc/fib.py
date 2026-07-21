@@ -12,6 +12,7 @@ FIB_IDENT = 0xA5EC
 # FibRgFcLcb97 includes the deprecated fcPlcPad/lcbPlcPad pair after
 # fcPlcfSed/lcbPlcfSed. Therefore fcClx/lcbClx is pair 33 (zero-based).
 FCLCB97_STSHF_INDEX = 1
+FCLCB97_PLCF_SED_INDEX = 6
 FCLCB97_PLCF_BTE_CHPX_INDEX = 12
 FCLCB97_PLCF_BTE_PAPX_INDEX = 13
 FCLCB97_STTBF_FFN_INDEX = 15
@@ -120,6 +121,12 @@ class FileInformationBlock:
         if len(self.fib_rg_fc_lcb) <= FCLCB97_STSHF_INDEX:
             return FcLcb(0, 0)
         return self.fib_rg_fc_lcb[FCLCB97_STSHF_INDEX]
+
+    @property
+    def plcf_sed(self) -> FcLcb:
+        if len(self.fib_rg_fc_lcb) <= FCLCB97_PLCF_SED_INDEX:
+            return FcLcb(0, 0)
+        return self.fib_rg_fc_lcb[FCLCB97_PLCF_SED_INDEX]
 
     @property
     def sttbf_ffn(self) -> FcLcb:

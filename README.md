@@ -4,7 +4,7 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M4b implementation supports unencrypted CFB/OLE Word documents,
+The current M0–M5a implementation supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
 UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
 preserves a useful first set of direct character and paragraph properties. It
@@ -14,7 +14,10 @@ toggles, and applies simple and complex piece-level PRMs in specification order.
 It reconstructs tables from DOC cell/row markers, including nested tables, and
 preserves their column grid, preferred cell widths, basic merges, alignment,
 row sizing, Word 97 borders and shading, and default or range-specific cell
-margins.
+margins. It also follows main-story `PlcfSed` records through `Sed.fcSepx` to
+each `Sepx.grpprl`, reconstructing single or multiple sections. Section-break
+types, paper size, portrait/landscape orientation, page margins, header/footer
+distance, and gutter width are emitted as WordprocessingML section properties.
 
 ## Usage
 
@@ -34,14 +37,17 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-M4b currently preserves bold, italic, strike, double strike, capitalization,
+M5a currently preserves bold, italic, strike, double strike, capitalization,
 hidden text, underline, text color, highlight, font size, vertical alignment,
 paragraph justification, indents, spacing, line spacing, and keep/page-break
-flags, font names, paragraph/character style references, and style inheritance.
+flags, font names, paragraph/character style references, style inheritance, and
+basic section/page layout.
 Conditional table styles, newer color-based table shading, cell spacing,
-numbering styles, secondary stories, images, live fields, embedded objects, and
-encrypted documents are intentionally deferred to later iterations. Unsupported
-or lossy content is reported rather than silently treated as fully converted.
+numbering styles, multi-column layout, title-page rules, page-number settings,
+header/footer content, other secondary stories, images, live fields, embedded
+objects, and encrypted documents are intentionally deferred to later iterations.
+Unsupported or lossy content is reported rather than silently treated as fully
+converted.
 
 ## Tests
 
@@ -54,5 +60,6 @@ PYTHONPATH=src python -m unittest discover -v
 It includes constructed CFB version 3/version 4 files, regular and mini streams,
 both Table stream variants, mixed compressed/UTF-16 text pieces, UTF-16 surrogate
 pair coordinates, CHPX/PAPX and piece-level PRM formatting, font/style table
-parsing, nested table reconstruction, grids, cell margins and shading, malformed
-input checks, CLI coverage, and end-to-end DOCX package validation.
+parsing, nested table reconstruction, grids, cell margins and shading, PlcfSed and
+Sepx page-layout parsing, multi-section break placement, malformed input checks,
+CLI coverage, and end-to-end DOCX package validation.

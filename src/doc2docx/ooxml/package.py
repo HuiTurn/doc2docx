@@ -17,6 +17,7 @@ from ..model import (
     FontDefinition,
     Paragraph,
     ParagraphProperties,
+    SectionProperties,
     ShadingProperties,
     StyleSheet,
     Tab,
@@ -336,6 +337,43 @@ def _append_text_run(
     text_element.text = text
 
 
+def _append_section_properties(
+    parent: ET.Element,
+    section: SectionProperties,
+    *,
+    include_break_type: bool,
+) -> None:
+    section_properties = ET.SubElement(parent, _qn(W_NS, "sectPr"))
+    if include_break_type:
+        ET.SubElement(
+            section_properties,
+            _qn(W_NS, "type"),
+            {_qn(W_NS, "val"): section.break_type.value},
+        )
+    ET.SubElement(
+        section_properties,
+        _qn(W_NS, "pgSz"),
+        {
+            _qn(W_NS, "w"): str(section.page_width_twips),
+            _qn(W_NS, "h"): str(section.page_height_twips),
+            _qn(W_NS, "orient"): section.orientation,
+        },
+    )
+    ET.SubElement(
+        section_properties,
+        _qn(W_NS, "pgMar"),
+        {
+            _qn(W_NS, "top"): str(section.margin_top_twips),
+            _qn(W_NS, "right"): str(section.margin_right_twips),
+            _qn(W_NS, "bottom"): str(section.margin_bottom_twips),
+            _qn(W_NS, "left"): str(section.margin_left_twips),
+            _qn(W_NS, "header"): str(section.header_distance_twips),
+            _qn(W_NS, "footer"): str(section.footer_distance_twips),
+            _qn(W_NS, "gutter"): str(section.gutter_twips),
+        },
+    )
+
+
 def _append_paragraph(
     parent: ET.Element,
     paragraph: Paragraph,
@@ -349,6 +387,16 @@ def _append_paragraph(
         paragraph.properties,
         valid_style_ids=valid_paragraph_style_ids,
     )
+    if paragraph.section_end is not None:
+        paragraph_properties = paragraph_element.find(_qn(W_NS, "pPr"))
+        if paragraph_properties is None:
+            paragraph_properties = ET.Element(_qn(W_NS, "pPr"))
+            paragraph_element.insert(0, paragraph_properties)
+        _append_section_properties(
+            paragraph_properties,
+            paragraph.section_end,
+            include_break_type=True,
+        )
     for inline in paragraph.inlines:
         if isinstance(inline, TextRun):
             _append_text_run(
@@ -666,6 +714,12 @@ def _document_xml(document: Document) -> bytes:
                 valid_paragraph_style_ids=valid_paragraph_style_ids,
                 valid_character_style_ids=valid_character_style_ids,
             )
+    if document.sections:
+        _append_section_properties(
+            body,
+            document.sections[-1],
+            include_break_type=False,
+        )
     return _xml_bytes(root)
 
 

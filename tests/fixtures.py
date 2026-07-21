@@ -68,6 +68,7 @@ def _build_fib(
     *,
     ccp_text: int,
     clx_size: int,
+    section_plc: tuple[int, int] = (0, 0),
     chpx_plc: tuple[int, int] = (0, 0),
     papx_plc: tuple[int, int] = (0, 0),
     cb_mac: int = 1110,
@@ -99,6 +100,7 @@ def _build_fib(
     struct.pack_into("<H", fib, position, 93)
     position += 2
     pairs = [(0, 0)] * 93
+    pairs[6] = section_plc
     pairs[12] = chpx_plc
     pairs[13] = papx_plc
     pairs[33] = (0, clx_size)
@@ -106,6 +108,139 @@ def _build_fib(
         struct.pack_into("<II", fib, position, fc, lcb)
         position += 8
     return bytes(fib)
+
+
+def _wrap_regular_word_streams(
+    word_document: bytes | bytearray,
+    table_stream: bytes | bytearray,
+    *,
+    uses_1table: bool = True,
+) -> bytes:
+    if len(word_document) != 4096 or len(table_stream) != 4096:
+        raise ValueError("fixture WordDocument and Table streams must be 4096 bytes")
+    sectors = [bytearray(SECTOR_SIZE) for _ in range(18)]
+    for index in range(8):
+        sectors[index][:] = word_document[index * 512 : (index + 1) * 512]
+        sectors[8 + index][:] = table_stream[index * 512 : (index + 1) * 512]
+
+    directory = bytearray(SECTOR_SIZE)
+    directory[0:128] = _directory_entry("Root Entry", 5, child=1)
+    directory[128:256] = _directory_entry(
+        "WordDocument", 2, right=2, start=0, size=4096
+    )
+    table_name = "1Table" if uses_1table else "0Table"
+    directory[256:384] = _directory_entry(table_name, 2, start=8, size=4096)
+    sectors[16][:] = directory
+
+    fat = [FREESECT] * 128
+    for start in (0, 8):
+        for sector_id in range(start, start + 7):
+            fat[sector_id] = sector_id + 1
+        fat[start + 7] = ENDOFCHAIN
+    fat[16] = ENDOFCHAIN
+    fat[17] = FATSECT
+    struct.pack_into("<128I", sectors[17], 0, *fat)
+    return _header(fat_sector=17, directory_sector=16) + b"".join(sectors)
+
+
+def build_sectioned_word_cfb() -> bytes:
+    """A two-section DOC with a continuous break and landscape final section."""
+
+    text = b"Portrait\fLandscape\r"
+    text_fc = 1024
+    compressed_fc = (text_fc * 2) | 0x40000000
+    plc_pcd = struct.pack("<2I", 0, len(text))
+    plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
+    clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
+
+    def section_grpprl(
+        *,
+        break_kind: int,
+        orientation: int,
+        width: int,
+        height: int,
+        left: int,
+        right: int,
+        top: int,
+        bottom: int,
+        header: int,
+        footer: int,
+        gutter: int,
+    ) -> bytes:
+        return b"".join(
+            (
+                struct.pack("<HB", 0x3009, break_kind),
+                struct.pack("<HB", 0x301D, orientation),
+                struct.pack("<HH", 0xB01F, width),
+                struct.pack("<HH", 0xB020, height),
+                struct.pack("<HH", 0xB021, left),
+                struct.pack("<HH", 0xB022, right),
+                struct.pack("<Hh", 0x9023, top),
+                struct.pack("<Hh", 0x9024, bottom),
+                struct.pack("<HH", 0xB017, header),
+                struct.pack("<HH", 0xB018, footer),
+                struct.pack("<HH", 0xB025, gutter),
+            )
+        )
+
+    first_sepx_fc = 1200
+    second_sepx_fc = 1300
+    first_grpprl = section_grpprl(
+        break_kind=0,
+        orientation=1,
+        width=12240,
+        height=15840,
+        left=1440,
+        right=1440,
+        top=1440,
+        bottom=1440,
+        header=720,
+        footer=720,
+        gutter=0,
+    )
+    second_grpprl = section_grpprl(
+        break_kind=2,
+        orientation=2,
+        width=15840,
+        height=12240,
+        left=1000,
+        right=1100,
+        top=-900,
+        bottom=1200,
+        header=500,
+        footer=600,
+        gutter=100,
+    )
+
+    first_section_end = len(b"Portrait\f")
+    plcf_sed = struct.pack("<3I", 0, first_section_end, len(text))
+    plcf_sed += struct.pack("<HiHI", 0, first_sepx_fc, 0, 0)
+    plcf_sed += struct.pack("<HiHI", 0, second_sepx_fc, 0, 0)
+    plcf_sed_offset = 128
+
+    word_document = bytearray(4096)
+    word_document[:1024] = _build_fib(
+        ccp_text=len(text),
+        clx_size=len(clx),
+        section_plc=(plcf_sed_offset, len(plcf_sed)),
+        cb_mac=1400,
+    )
+    word_document[text_fc : text_fc + len(text)] = text
+    struct.pack_into("<h", word_document, first_sepx_fc, len(first_grpprl))
+    word_document[
+        first_sepx_fc + 2 : first_sepx_fc + 2 + len(first_grpprl)
+    ] = first_grpprl
+    struct.pack_into("<h", word_document, second_sepx_fc, len(second_grpprl))
+    word_document[
+        second_sepx_fc + 2 : second_sepx_fc + 2 + len(second_grpprl)
+    ] = second_grpprl
+
+    table_stream = bytearray(4096)
+    table_stream[: len(clx)] = clx
+    table_stream[
+        plcf_sed_offset : plcf_sed_offset + len(plcf_sed)
+    ] = plcf_sed
+    return _wrap_regular_word_streams(word_document, table_stream)
 
 
 def build_word_cfb(

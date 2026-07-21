@@ -23,6 +23,7 @@ from .msdoc import (
     read_font_table,
     read_formatting,
     read_piece_table,
+    read_sections,
     read_style_sheet,
 )
 from .ooxml import validate_docx, write_docx
@@ -88,6 +89,16 @@ def convert(
 
     table_name = fib.base.table_stream_name
     table_stream = compound.open_stream(table_name)
+    section_table = fib.plcf_sed
+    sections = read_sections(
+        table_stream,
+        word_document,
+        offset=section_table.fc,
+        size=section_table.lcb,
+        main_story_cp_count=fib.ccp_text,
+        document_lid=fib.base.lid,
+        report=report,
+    )
     font_table = fib.sttbf_ffn
     fonts = read_font_table(
         table_stream,
@@ -140,12 +151,14 @@ def convert(
         report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
+        sections=sections,
     )
     document = Document(
-        parsed_document.paragraphs,
-        fonts,
-        style_sheet,
-        parsed_document.blocks,
+        paragraphs=parsed_document.paragraphs,
+        fonts=fonts,
+        styles=style_sheet,
+        blocks=parsed_document.blocks,
+        sections=sections,
     )
     tables = tuple(_iter_tables(document.body_blocks))
 
@@ -174,6 +187,7 @@ def convert(
             "table_cell_count": sum(
                 len(row.cells) for table in tables for row in table.rows
             ),
+            "section_count": len(sections),
         }
     )
     if fib.base.has_pictures:
@@ -216,7 +230,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M4b conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M5a conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
@@ -267,6 +281,8 @@ def inspect_doc(
             "lcbPlcfBtePapx": fib.plcf_bte_papx.lcb,
             "fcStshf": fib.stshf.fc,
             "lcbStshf": fib.stshf.lcb,
+            "fcPlcfSed": fib.plcf_sed.fc,
+            "lcbPlcfSed": fib.plcf_sed.lcb,
             "fcSttbfFfn": fib.sttbf_ffn.fc,
             "lcbSttbfFfn": fib.sttbf_ffn.lcb,
         },

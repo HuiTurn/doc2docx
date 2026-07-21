@@ -3,4 +3,4 @@
 from .converter import ConversionResult, convert, inspect_doc
 
 __all__ = ["ConversionResult", "convert", "inspect_doc"]
-__version__ = "0.5.0"
+__version__ = "0.6.0"

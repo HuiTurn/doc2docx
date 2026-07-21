@@ -17,6 +17,14 @@ class BreakType(StrEnum):
     PAGE = "page"
 
 
+class SectionBreakType(StrEnum):
+    CONTINUOUS = "continuous"
+    NEXT_COLUMN = "nextColumn"
+    NEXT_PAGE = "nextPage"
+    EVEN_PAGE = "evenPage"
+    ODD_PAGE = "oddPage"
+
+
 @dataclass(slots=True, frozen=True)
 class CharacterProperties:
     """Direct character properties; ``None`` means not specified by the DOC run."""
@@ -237,9 +245,29 @@ Inline = TextRun | Tab | Break
 
 
 @dataclass(slots=True, frozen=True)
+class SectionProperties:
+    """Resolved page layout for one half-open main-story CP range."""
+
+    cp_start: int
+    cp_end: int
+    break_type: SectionBreakType = SectionBreakType.NEXT_PAGE
+    page_width_twips: int = 12240
+    page_height_twips: int = 15840
+    orientation: str = "portrait"
+    margin_top_twips: int = 1440
+    margin_right_twips: int = 1440
+    margin_bottom_twips: int = 1440
+    margin_left_twips: int = 1440
+    header_distance_twips: int = 720
+    footer_distance_twips: int = 720
+    gutter_twips: int = 0
+
+
+@dataclass(slots=True, frozen=True)
 class Paragraph:
     inlines: tuple[Inline, ...]
     properties: ParagraphProperties = field(default_factory=ParagraphProperties)
+    section_end: SectionProperties | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -281,6 +309,7 @@ class Document:
     fonts: tuple[FontDefinition, ...] = ()
     styles: StyleSheet = field(default_factory=StyleSheet)
     blocks: tuple[Block, ...] = ()
+    sections: tuple[SectionProperties, ...] = ()
 
     @property
     def body_blocks(self) -> tuple[Block, ...]:
@@ -502,6 +531,7 @@ def parse_main_story(
     *,
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
+    sections: Sequence[SectionProperties] = (),
 ) -> Document:
     if isinstance(text, str):
         characters = tuple(
@@ -524,6 +554,11 @@ def parse_main_story(
     flattened_fields = 0
     field_stack: list[bool] = []  # False=instruction, True=result
     last_was_terminator = False
+    section_values = tuple(sections)
+    internal_sections_by_end = {
+        section.cp_end: section for section in section_values[:-1]
+    }
+    matched_section_ends: set[int] = set()
 
     def visible() -> bool:
         return all(field_stack)
@@ -552,9 +587,12 @@ def parse_main_story(
         text_properties = properties
         text_buffer.append(character)
 
-    def finish_paragraph(properties: ParagraphProperties) -> None:
+    def finish_paragraph(
+        properties: ParagraphProperties,
+        section_end: SectionProperties | None = None,
+    ) -> None:
         flush_text()
-        paragraph = Paragraph(tuple(inlines), properties)
+        paragraph = Paragraph(tuple(inlines), properties, section_end)
         paragraphs.append(paragraph)
         flow.append(paragraph)
         inlines.clear()
@@ -610,12 +648,24 @@ def parse_main_story(
             inlines.append(Break(BreakType.LINE, character_properties))
             last_was_terminator = False
         elif character == "\f":
-            flush_text()
-            inlines.append(Break(BreakType.PAGE, character_properties))
-            deferred_markers["BREAK_KIND_APPROXIMATED"] = (
-                deferred_markers.get("BREAK_KIND_APPROXIMATED", 0) + 1
-            )
-            last_was_terminator = False
+            section = internal_sections_by_end.get(unit.cp_end)
+            if section is not None:
+                paragraph_properties = (
+                    paragraph_properties_at(cp_offset)
+                    if paragraph_properties_at is not None
+                    else default_paragraph_properties
+                )
+                finish_paragraph(paragraph_properties, section)
+                matched_section_ends.add(section.cp_end)
+                last_was_terminator = True
+            else:
+                flush_text()
+                inlines.append(Break(BreakType.PAGE, character_properties))
+                if not section_values:
+                    deferred_markers["BREAK_KIND_APPROXIMATED"] = (
+                        deferred_markers.get("BREAK_KIND_APPROXIMATED", 0) + 1
+                    )
+                last_was_terminator = False
         elif value == 0x07:
             paragraph_properties = (
                 paragraph_properties_at(cp_offset)
@@ -684,6 +734,16 @@ def parse_main_story(
             "field structures were flattened to their displayed result in M2",
             field_count=flattened_fields,
         )
+    unmatched_section_ends = sorted(
+        set(internal_sections_by_end) - matched_section_ends
+    )
+    if unmatched_section_ends:
+        report.warning(
+            "SECTION_BOUNDARY_NOT_FOUND",
+            "some PlcfSed section boundaries did not end at a section-mark character",
+            location=SourceLocation(story="main"),
+            cp_ends=unmatched_section_ends,
+        )
     for codepoint, count in sorted(unsupported_controls.items()):
         report.warning(
             "UNSUPPORTED_CONTROL_CHARACTER",
@@ -717,4 +777,5 @@ def parse_main_story(
     return Document(
         tuple(paragraphs),
         blocks=_assemble_table_blocks(flow, report),
+        sections=section_values,
     )

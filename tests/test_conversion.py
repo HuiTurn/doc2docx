@@ -11,6 +11,7 @@ from doc2docx.errors import EncryptedDocumentError, UnsafeOutputPathError
 from .fixtures import (
     build_formatted_word_cfb,
     build_nested_table_word_cfb,
+    build_sectioned_word_cfb,
     build_table_word_cfb,
     build_word_cfb,
 )
@@ -20,6 +21,61 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_section_layout_and_break_types_are_emitted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "sections.doc"
+            destination = temporary / "sections.docx"
+            source.write_bytes(build_sectioned_word_cfb())
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.statistics["section_count"], 2)
+            self.assertFalse(result.report.warnings)
+            self.assertEqual(len(result.document.sections), 2)
+            self.assertEqual(result.document.sections[0].break_type, "continuous")
+            self.assertEqual(result.document.sections[1].orientation, "landscape")
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+            body = root.find(f"{W}body")
+            assert body is not None
+            self.assertEqual(
+                [element.tag for element in body],
+                [f"{W}p", f"{W}p", f"{W}sectPr"],
+            )
+            paragraphs = body.findall(f"{W}p")
+            self.assertEqual(
+                ["".join(paragraph.itertext()) for paragraph in paragraphs],
+                ["Portrait", "Landscape"],
+            )
+            self.assertFalse(root.findall(f".//{W}br"))
+
+            first_section = paragraphs[0].find(f"{W}pPr/{W}sectPr")
+            assert first_section is not None
+            self.assertEqual(
+                first_section.find(f"{W}type").get(f"{W}val"),  # type: ignore[union-attr]
+                "continuous",
+            )
+            first_page = first_section.find(f"{W}pgSz")
+            assert first_page is not None
+            self.assertEqual(first_page.get(f"{W}w"), "12240")
+            self.assertEqual(first_page.get(f"{W}orient"), "portrait")
+
+            final_section = body.find(f"{W}sectPr")
+            assert final_section is not None
+            final_page = final_section.find(f"{W}pgSz")
+            final_margins = final_section.find(f"{W}pgMar")
+            assert final_page is not None
+            assert final_margins is not None
+            self.assertEqual(final_page.get(f"{W}w"), "15840")
+            self.assertEqual(final_page.get(f"{W}h"), "12240")
+            self.assertEqual(final_page.get(f"{W}orient"), "landscape")
+            self.assertEqual(final_margins.get(f"{W}top"), "-900")
+            self.assertEqual(final_margins.get(f"{W}header"), "500")
+            self.assertEqual(final_margins.get(f"{W}footer"), "600")
+            self.assertEqual(final_margins.get(f"{W}gutter"), "100")
+
     def test_nested_doc_table_is_emitted_and_counted_recursively(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
@@ -178,6 +234,7 @@ class ConversionTests(unittest.TestCase):
             self.assertEqual(info["fib"]["ccpText"], 9)
             self.assertEqual(info["fib"]["lcbPlcfBteChpx"], 0)
             self.assertEqual(info["fib"]["lcbPlcfBtePapx"], 0)
+            self.assertEqual(info["fib"]["lcbPlcfSed"], 0)
             self.assertEqual(
                 {item["path"] for item in info["entries"]},
                 {"WordDocument", "1Table"},
