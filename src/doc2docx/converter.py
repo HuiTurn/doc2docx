@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ from .errors import (
     InvalidWordDocument,
     UnsafeOutputPathError,
 )
-from .model import Document, Table, parse_main_story
+from .model import Document, Paragraph, Table, parse_main_story
 from .msdoc import (
     FileInformationBlock,
     read_font_table,
@@ -32,6 +33,16 @@ class ConversionResult:
     output_path: Path
     report: ConversionReport
     document: Document
+
+
+def _iter_tables(blocks: Iterable[Paragraph | Table]) -> Iterator[Table]:
+    for block in blocks:
+        if not isinstance(block, Table):
+            continue
+        yield block
+        for row in block.rows:
+            for cell in row.cells:
+                yield from _iter_tables(cell.body_blocks)
 
 
 def _load_word_parts(
@@ -136,7 +147,7 @@ def convert(
         style_sheet,
         parsed_document.blocks,
     )
-    tables = [block for block in document.body_blocks if isinstance(block, Table)]
+    tables = tuple(_iter_tables(document.body_blocks))
 
     report.statistics.update(
         {
@@ -205,7 +216,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M4a conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M4b conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

@@ -17,11 +17,13 @@ from ..model import (
     FontDefinition,
     Paragraph,
     ParagraphProperties,
+    ShadingProperties,
     StyleSheet,
     Tab,
     Table,
     TableBorders,
     TableCell,
+    TableCellMargins,
     TextRun,
 )
 
@@ -422,6 +424,50 @@ def _append_borders(
             )
 
 
+def _append_cell_margins(
+    parent: ET.Element,
+    margins: TableCellMargins,
+    *,
+    container_name: str = "tcMar",
+) -> None:
+    values = (
+        ("top", margins.top),
+        ("left", margins.left),
+        ("bottom", margins.bottom),
+        ("right", margins.right),
+    )
+    if not any(value is not None for _, value in values):
+        return
+    container = ET.SubElement(parent, _qn(W_NS, container_name))
+    for side, value in values:
+        if value is not None:
+            ET.SubElement(
+                container,
+                _qn(W_NS, side),
+                {
+                    _qn(W_NS, "w"): str(value),
+                    _qn(W_NS, "type"): "dxa",
+                },
+            )
+
+
+def _append_shading(
+    parent: ET.Element,
+    shading: ShadingProperties | None,
+) -> None:
+    if shading is None:
+        return
+    ET.SubElement(
+        parent,
+        _qn(W_NS, "shd"),
+        {
+            _qn(W_NS, "val"): shading.pattern,
+            _qn(W_NS, "color"): shading.foreground,
+            _qn(W_NS, "fill"): shading.background,
+        },
+    )
+
+
 def _append_table_cell(
     row_element: ET.Element,
     cell: TableCell,
@@ -438,6 +484,8 @@ def _append_table_cell(
         or cell.fit_text is not None
         or cell.no_wrap is not None
         or cell.borders != TableBorders()
+        or cell.margins != TableCellMargins()
+        or cell.shading is not None
     )
     if has_properties:
         properties = ET.SubElement(cell_element, _qn(W_NS, "tcPr"))
@@ -468,7 +516,9 @@ def _append_table_cell(
             cell.borders,
             include_inside=False,
         )
+        _append_shading(properties, cell.shading)
         _append_boolean_property(properties, "noWrap", cell.no_wrap)
+        _append_cell_margins(properties, cell.margins)
         _append_boolean_property(properties, "tcFitText", cell.fit_text)
         if cell.vertical_alignment is not None:
             ET.SubElement(
@@ -476,10 +526,26 @@ def _append_table_cell(
                 _qn(W_NS, "vAlign"),
                 {_qn(W_NS, "val"): cell.vertical_alignment},
             )
-    for paragraph in cell.paragraphs or (Paragraph(()),):
+    content = cell.body_blocks or (Paragraph(()),)
+    for block in content:
+        if isinstance(block, Paragraph):
+            _append_paragraph(
+                cell_element,
+                block,
+                valid_paragraph_style_ids=valid_paragraph_style_ids,
+                valid_character_style_ids=valid_character_style_ids,
+            )
+        elif isinstance(block, Table):
+            _append_table(
+                cell_element,
+                block,
+                valid_paragraph_style_ids=valid_paragraph_style_ids,
+                valid_character_style_ids=valid_character_style_ids,
+            )
+    if isinstance(content[-1], Table):
         _append_paragraph(
             cell_element,
-            paragraph,
+            Paragraph(()),
             valid_paragraph_style_ids=valid_paragraph_style_ids,
             valid_character_style_ids=valid_character_style_ids,
         )
@@ -527,17 +593,11 @@ def _append_table(
             first_properties.borders,
             include_inside=True,
         )
-        if first_properties.gap_half_twips is not None:
-            margins = ET.SubElement(table_properties, _qn(W_NS, "tblCellMar"))
-            for side in ("left", "right"):
-                ET.SubElement(
-                    margins,
-                    _qn(W_NS, side),
-                    {
-                        _qn(W_NS, "w"): str(first_properties.gap_half_twips),
-                        _qn(W_NS, "type"): "dxa",
-                    },
-                )
+        _append_cell_margins(
+            table_properties,
+            first_properties.default_cell_margins,
+            container_name="tblCellMar",
+        )
 
     grid = ET.SubElement(table_element, _qn(W_NS, "tblGrid"))
     boundaries = (

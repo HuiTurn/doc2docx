@@ -11,8 +11,10 @@ from ..model import (
     BorderProperties,
     CharacterProperties,
     ParagraphProperties,
+    ShadingProperties,
     TableBorders,
     TableCellDefinition,
+    TableCellMarginOverride,
     TableRowProperties,
 )
 
@@ -185,6 +187,51 @@ _BORDER_STYLES = {
     0x1B: "inset",
 }
 
+_SHADING_PATTERNS = {
+    0x00: "clear",
+    0x01: "solid",
+    0x02: "pct5",
+    0x03: "pct10",
+    0x04: "pct20",
+    0x05: "pct25",
+    0x06: "pct30",
+    0x07: "pct40",
+    0x08: "pct50",
+    0x09: "pct60",
+    0x0A: "pct70",
+    0x0B: "pct75",
+    0x0C: "pct80",
+    0x0D: "pct90",
+    0x0E: "horzStripe",
+    0x0F: "vertStripe",
+    0x10: "reverseDiagStripe",
+    0x11: "diagStripe",
+    0x12: "horzCross",
+    0x13: "diagCross",
+    0x14: "thinHorzStripe",
+    0x15: "thinVertStripe",
+    0x16: "thinReverseDiagStripe",
+    0x17: "thinDiagStripe",
+    0x18: "thinHorzCross",
+    0x19: "thinDiagCross",
+    0x25: "pct12",
+    0x26: "pct15",
+    0x2B: "pct35",
+    0x2E: "pct45",
+    0x31: "pct55",
+    0x33: "pct62",
+    0x34: "pct65",
+    0x39: "pct85",
+    0x3C: "pct95",
+}
+
+_CELL_MARGIN_SIDES = (
+    (0x01, "top"),
+    (0x02, "left"),
+    (0x04, "bottom"),
+    (0x08, "right"),
+)
+
 
 def _parse_brc80(data: bytes) -> BorderProperties | None:
     if len(data) != 4:
@@ -213,6 +260,69 @@ def _parse_table_borders80(operand: bytes) -> TableBorders:
         for index in range(6)
     ]
     return TableBorders(*values)
+
+
+def _parse_cssa(
+    operand: bytes,
+) -> tuple[int, int, tuple[str, ...], int | None]:
+    if len(operand) != 7 or operand[0] != 6:
+        raise InvalidWordDocument("CSSAOperand must contain exactly six data bytes")
+    first_cell, limit_cell, side_flags, width_type, width = struct.unpack_from(
+        "<BBBBH",
+        operand,
+        1,
+    )
+    if first_cell > limit_cell or limit_cell > 63:
+        raise InvalidWordDocument("CSSAOperand contains an invalid cell range")
+    if not side_flags or side_flags & ~0x0F:
+        raise InvalidWordDocument("CSSAOperand contains invalid cell sides")
+    if width_type not in (0, 3):
+        raise InvalidWordDocument("CSSAOperand contains an unsupported width type")
+    if width_type == 0 and width:
+        raise InvalidWordDocument("CSSAOperand ftsNil width must be zero")
+    if width > 31680:
+        raise InvalidWordDocument("CSSAOperand cell margin exceeds 22 inches")
+    sides = tuple(name for mask, name in _CELL_MARGIN_SIDES if side_flags & mask)
+    return first_cell, limit_cell, sides, width if width_type == 3 else None
+
+
+def _parse_shd80(data: bytes) -> tuple[ShadingProperties | None, bool]:
+    if len(data) != 2:
+        raise InvalidWordDocument("Shd80 must contain exactly two bytes")
+    value = struct.unpack("<H", data)[0]
+    if value in (0x0000, 0xFFFF):
+        return None, False
+    foreground_index = value & 0x1F
+    background_index = (value >> 5) & 0x1F
+    pattern_index = (value >> 10) & 0x3F
+    pattern = _SHADING_PATTERNS.get(pattern_index)
+    unsupported = pattern is None
+    if pattern is None:
+        pattern = "clear"
+    foreground = (
+        "auto" if foreground_index == 0 else _ICO_RGB.get(foreground_index, "auto")
+    )
+    background = (
+        "auto" if background_index == 0 else _ICO_RGB.get(background_index, "auto")
+    )
+    unsupported = unsupported or foreground_index > 0x10 or background_index > 0x10
+    return ShadingProperties(pattern, foreground, background), unsupported
+
+
+def _parse_def_table_shd80(
+    operand: bytes,
+) -> tuple[tuple[ShadingProperties | None, ...], bool]:
+    if not operand or operand[0] != len(operand) - 1 or operand[0] % 2:
+        raise InvalidWordDocument("DefTableShd80Operand has an invalid byte count")
+    if operand[0] > 126:
+        raise InvalidWordDocument("DefTableShd80Operand has too many cells")
+    values: list[ShadingProperties | None] = []
+    unsupported = False
+    for position in range(1, len(operand), 2):
+        shading, approximated = _parse_shd80(operand[position : position + 2])
+        values.append(shading)
+        unsupported = unsupported or approximated
+    return tuple(values), unsupported
 
 
 def _parse_tdef_table(operand: bytes) -> TableRowProperties:
@@ -509,6 +619,47 @@ def apply_paragraph_modifiers(
                     cell_definitions=definition.cell_definitions,
                 ),
             )
+        elif opcode == 0xD609:
+            shadings, approximated = _parse_def_table_shd80(operand)
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(row, cell_shadings=shadings),
+            )
+            if approximated:
+                unsupported.add(opcode)
+        elif opcode in (0xD632, 0xD634):
+            first_cell, limit_cell, sides, width = _parse_cssa(operand)
+            row = properties.table_row or TableRowProperties()
+            if opcode == 0xD634:
+                if (first_cell, limit_cell) != (0, 1):
+                    unsupported.add(opcode)
+                else:
+                    margins = replace(
+                        row.default_cell_margins,
+                        **{side: width for side in sides},
+                    )
+                    properties = replace(
+                        properties,
+                        table_row=replace(row, default_cell_margins=margins),
+                    )
+            else:
+                override = TableCellMarginOverride(
+                    first_cell,
+                    limit_cell,
+                    sides,
+                    width,
+                )
+                properties = replace(
+                    properties,
+                    table_row=replace(
+                        row,
+                        cell_margin_overrides=(
+                            *row.cell_margin_overrides,
+                            override,
+                        ),
+                    ),
+                )
         elif opcode in (0x2403, 0x2461):
             justification = _JUSTIFICATION.get(operand[0])
             if justification is None:

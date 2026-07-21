@@ -9,6 +9,9 @@ from enum import StrEnum
 from ..diagnostics import ConversionReport, SourceLocation
 
 
+_MAX_TABLE_DEPTH = 64
+
+
 class BreakType(StrEnum):
     LINE = "line"
     PAGE = "page"
@@ -59,6 +62,29 @@ class TableBorders:
 
 
 @dataclass(slots=True, frozen=True)
+class TableCellMargins:
+    top: int | None = 0
+    left: int | None = 108
+    bottom: int | None = 0
+    right: int | None = 108
+
+
+@dataclass(slots=True, frozen=True)
+class ShadingProperties:
+    pattern: str
+    foreground: str = "auto"
+    background: str = "auto"
+
+
+@dataclass(slots=True, frozen=True)
+class TableCellMarginOverride:
+    first_cell: int
+    limit_cell: int
+    sides: tuple[str, ...]
+    width_twips: int | None
+
+
+@dataclass(slots=True, frozen=True)
 class TableCellDefinition:
     preferred_width_twips: int | None = None
     horizontal_merge: str | None = None
@@ -81,6 +107,11 @@ class TableRowProperties:
     cant_split: bool | None = None
     is_header: bool | None = None
     borders: TableBorders = field(default_factory=TableBorders)
+    default_cell_margins: TableCellMargins = field(
+        default_factory=TableCellMargins
+    )
+    cell_margin_overrides: tuple[TableCellMarginOverride, ...] = ()
+    cell_shadings: tuple[ShadingProperties | None, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -221,6 +252,13 @@ class TableCell:
     fit_text: bool | None = None
     no_wrap: bool | None = None
     borders: TableBorders = field(default_factory=TableBorders)
+    margins: TableCellMargins = field(default_factory=TableCellMargins)
+    shading: ShadingProperties | None = None
+    blocks: tuple[Paragraph | Table, ...] = ()
+
+    @property
+    def body_blocks(self) -> tuple[Paragraph | Table, ...]:
+        return self.blocks or self.paragraphs
 
 
 @dataclass(slots=True, frozen=True)
@@ -255,8 +293,41 @@ class _TableMarker:
     properties: ParagraphProperties
 
 
+@dataclass(slots=True)
+class _TableContext:
+    depth: int
+    rows: list[TableRow] = field(default_factory=list)
+    raw_cells: list[tuple[Block, ...]] = field(default_factory=list)
+    cell_blocks: list[Block] = field(default_factory=list)
+
+
+def _replace_margin_sides(
+    margins: TableCellMargins,
+    sides: tuple[str, ...],
+    value: int | None,
+) -> TableCellMargins:
+    changes = {side: value for side in sides}
+    return replace(margins, **changes)
+
+
+def _cell_margins(
+    properties: TableRowProperties,
+    cell_index: int,
+) -> TableCellMargins:
+    defaults = properties.default_cell_margins
+    margins = defaults
+    for override in properties.cell_margin_overrides:
+        if override.first_cell <= cell_index < override.limit_cell:
+            for side in override.sides:
+                value = override.width_twips
+                if value is None:
+                    value = getattr(defaults, side)
+                margins = _replace_margin_sides(margins, (side,), value)
+    return margins
+
+
 def _build_table_row(
-    raw_cells: list[tuple[Paragraph, ...]],
+    raw_cells: list[tuple[Block, ...]],
     properties: TableRowProperties,
     report: ConversionReport,
 ) -> TableRow:
@@ -278,7 +349,7 @@ def _build_table_row(
         )
 
     cells: list[TableCell] = []
-    for index, paragraphs in enumerate(raw_cells):
+    for index, cell_blocks in enumerate(raw_cells):
         definition = (
             definitions[index] if index < len(definitions) else TableCellDefinition()
         )
@@ -290,14 +361,24 @@ def _build_table_row(
         width = definition.preferred_width_twips
         if width is None and grid_width is not None and grid_width >= 0:
             width = grid_width
+        content_blocks = cell_blocks or (Paragraph(()),)
         cell = TableCell(
-            paragraphs=paragraphs or (Paragraph(()),),
+            paragraphs=tuple(
+                block for block in content_blocks if isinstance(block, Paragraph)
+            ),
             width_twips=width,
             vertical_merge=definition.vertical_merge,
             vertical_alignment=definition.vertical_alignment,
             fit_text=definition.fit_text,
             no_wrap=definition.no_wrap,
             borders=definition.borders,
+            margins=_cell_margins(properties, index),
+            shading=(
+                properties.cell_shadings[index]
+                if index < len(properties.cell_shadings)
+                else None
+            ),
+            blocks=content_blocks,
         )
         if definition.horizontal_merge == "continue" and cells:
             previous = cells[-1]
@@ -320,71 +401,82 @@ def _assemble_table_blocks(
     flow: list[Paragraph | _TableMarker],
     report: ConversionReport,
 ) -> tuple[Block, ...]:
-    nested_count = sum(
-        1
-        for item in flow
-        if (
-            isinstance(item, _TableMarker)
-            and item.properties.effective_table_depth > 1
-        )
-        or (
-            isinstance(item, Paragraph)
-            and item.properties.effective_table_depth > 1
-        )
-    )
-    if nested_count:
-        report.warning(
-            "NESTED_TABLES_DEFERRED",
-            "nested table structure is deferred beyond M4a; its paragraphs were kept",
-            item_count=nested_count,
-        )
-        return tuple(item for item in flow if isinstance(item, Paragraph))
-
     blocks: list[Block] = []
-    rows: list[TableRow] = []
-    raw_cells: list[tuple[Paragraph, ...]] = []
-    cell_paragraphs: list[Paragraph] = []
+    contexts: list[_TableContext] = []
     malformed_groups = 0
+    limited_depth_items = 0
 
-    def flush_table() -> None:
+    def emit_completed_context(context: _TableContext) -> None:
         nonlocal malformed_groups
-        if rows:
-            blocks.append(Table(tuple(rows)))
-            rows.clear()
-        if raw_cells or cell_paragraphs:
+        completed: list[Block] = []
+        if context.rows:
+            completed.append(Table(tuple(context.rows)))
+        if context.raw_cells or context.cell_blocks:
             malformed_groups += 1
-            for paragraphs in raw_cells:
-                blocks.extend(paragraphs)
-            blocks.extend(cell_paragraphs)
-            raw_cells.clear()
-            cell_paragraphs.clear()
+            for cell_blocks in context.raw_cells:
+                completed.extend(cell_blocks)
+            completed.extend(context.cell_blocks)
+        if contexts:
+            contexts[-1].cell_blocks.extend(completed)
+        else:
+            blocks.extend(completed)
+
+    def close_deeper_than(depth: int) -> None:
+        while len(contexts) > depth:
+            emit_completed_context(contexts.pop())
+
+    def context_at(depth: int) -> _TableContext:
+        nonlocal malformed_groups
+        if depth > len(contexts) + 1:
+            malformed_groups += 1
+        while len(contexts) < depth:
+            contexts.append(_TableContext(len(contexts) + 1))
+        return contexts[depth - 1]
 
     for item in flow:
+        raw_depth = item.properties.effective_table_depth
+        depth = min(raw_depth, _MAX_TABLE_DEPTH)
+        if raw_depth > _MAX_TABLE_DEPTH:
+            limited_depth_items += 1
         if isinstance(item, Paragraph):
-            if item.properties.effective_table_depth == 1:
-                cell_paragraphs.append(item)
-            else:
-                flush_table()
+            close_deeper_than(depth)
+            if depth == 0:
+                close_deeper_than(0)
                 blocks.append(item)
+            else:
+                context_at(depth).cell_blocks.append(item)
             continue
 
-        if item.properties.effective_table_depth != 1:
+        if depth == 0:
             continue
+        close_deeper_than(depth)
+        context = context_at(depth)
         if item.kind == "cell":
-            raw_cells.append(tuple(cell_paragraphs) or (Paragraph(()),))
-            cell_paragraphs.clear()
+            context.raw_cells.append(
+                tuple(context.cell_blocks) or (Paragraph(()),)
+            )
+            context.cell_blocks.clear()
         elif item.kind == "row":
-            if cell_paragraphs:
-                raw_cells.append(tuple(cell_paragraphs))
-                cell_paragraphs.clear()
-            if not raw_cells:
+            if context.cell_blocks:
+                context.raw_cells.append(tuple(context.cell_blocks))
+                context.cell_blocks.clear()
+            if not context.raw_cells:
                 malformed_groups += 1
                 continue
             row_properties = item.properties.table_row or TableRowProperties()
-            rows.append(_build_table_row(raw_cells, row_properties, report))
-            raw_cells.clear()
+            context.rows.append(
+                _build_table_row(context.raw_cells, row_properties, report)
+            )
+            context.raw_cells.clear()
 
-    flush_table()
+    close_deeper_than(0)
+    if limited_depth_items:
+        report.warning(
+            "TABLE_DEPTH_LIMITED",
+            "table nesting exceeded the safe reconstruction depth",
+            maximum_depth=_MAX_TABLE_DEPTH,
+            item_count=limited_depth_items,
+        )
     if malformed_groups:
         report.warning(
             "MALFORMED_TABLE_FLATTENED",

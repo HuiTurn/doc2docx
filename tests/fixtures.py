@@ -291,19 +291,129 @@ def build_table_word_cfb() -> bytes:
 
     border = bytes((4, 1, 0, 0))
     tdef = struct.pack("<HB3h", 8, 2, 0, 1000, 2200)
+    default_margin = struct.pack("<BBBBBH", 6, 0, 1, 0x0A, 3, 108)
+    second_cell_margin = struct.pack("<BBBBBH", 6, 1, 2, 0x05, 3, 36)
+    shading_value = 6 | (7 << 5) | (1 << 10)
+    shading = struct.pack("<BHH", 4, shading_value, 0)
     row_grpprl = b"".join(
         (
             struct.pack("<HB", 0x2416, 1),
             struct.pack("<HB", 0x2417, 1),
             struct.pack("<HB", 0xD605, 24) + border * 6,
             struct.pack("<H", 0xD608) + tdef,
+            struct.pack("<H", 0xD634) + default_margin,
+            struct.pack("<H", 0xD632) + second_cell_margin,
+            struct.pack("<H", 0xD609) + shading,
         )
     )
     row_content = struct.pack("<H", 0) + row_grpprl
-    papx_fkp[128] = 24
+    papx_fkp[128] = (len(row_content) + 1) // 2
     papx_fkp[129 : 129 + len(row_content)] = row_content
     papx_fkp[129 + len(row_content)] = 0
     papx_fkp[-1] = 5
+
+    word_document = bytearray(4096)
+    word_document[:1024] = _build_fib(
+        ccp_text=len(text),
+        clx_size=len(clx),
+        papx_plc=(papx_plc_offset, len(papx_plc)),
+        cb_mac=2560,
+    )
+    word_document[text_fc:text_fc_end] = text
+    word_document[4 * SECTOR_SIZE : 5 * SECTOR_SIZE] = papx_fkp
+    table_stream = bytearray(4096)
+    table_stream[: len(clx)] = clx
+    table_stream[papx_plc_offset : papx_plc_offset + len(papx_plc)] = papx_plc
+
+    sectors = [bytearray(SECTOR_SIZE) for _ in range(18)]
+    for index in range(8):
+        sectors[index][:] = word_document[index * 512 : (index + 1) * 512]
+        sectors[8 + index][:] = table_stream[index * 512 : (index + 1) * 512]
+    directory = bytearray(SECTOR_SIZE)
+    directory[0:128] = _directory_entry("Root Entry", 5, child=1)
+    directory[128:256] = _directory_entry(
+        "WordDocument", 2, right=2, start=0, size=4096
+    )
+    directory[256:384] = _directory_entry("1Table", 2, start=8, size=4096)
+    sectors[16][:] = directory
+    fat = [FREESECT] * 128
+    for start in (0, 8):
+        for sector_id in range(start, start + 7):
+            fat[sector_id] = sector_id + 1
+        fat[start + 7] = ENDOFCHAIN
+    fat[16] = ENDOFCHAIN
+    fat[17] = FATSECT
+    struct.pack_into("<128I", sectors[17], 0, *fat)
+    return _header(fat_sector=17, directory_sector=16) + b"".join(sectors)
+
+
+def build_nested_table_word_cfb() -> bytes:
+    """A Word 97 table containing a one-cell depth-two nested table."""
+
+    text = b"Before\rOuter\rInner\r\r\x07\x07After\r"
+    text_fc = 1024
+    text_fc_end = text_fc + len(text)
+    compressed_fc = (text_fc * 2) | 0x40000000
+    plc_pcd = struct.pack("<2I", 0, len(text))
+    plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
+    clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
+
+    papx_plc_offset = 128
+    papx_plc = struct.pack("<3I", text_fc, text_fc_end, 4)
+    papx_fkp = bytearray(SECTOR_SIZE)
+    boundaries = tuple(text_fc + value for value in (0, 7, 13, 19, 20, 21, 22, 28))
+    struct.pack_into("<8I", papx_fkp, 0, *boundaries)
+    bx_offset = 4 * len(boundaries)
+
+    outer_cell = struct.pack("<HB", 0x2416, 1)
+    inner_cell = b"".join(
+        (
+            struct.pack("<HB", 0x2416, 1),
+            struct.pack("<Hi", 0x6649, 2),
+            struct.pack("<HB", 0x244B, 1),
+        )
+    )
+    inner_tdef = struct.pack("<HB2h", 6, 1, 0, 1800)
+    inner_row = b"".join(
+        (
+            struct.pack("<HB", 0x2416, 1),
+            struct.pack("<Hi", 0x6649, 2),
+            struct.pack("<HB", 0x244C, 1),
+            struct.pack("<H", 0xD608) + inner_tdef,
+        )
+    )
+    outer_tdef = struct.pack("<HB2h", 6, 1, 0, 3000)
+    outer_row = b"".join(
+        (
+            struct.pack("<HB", 0x2416, 1),
+            struct.pack("<HB", 0x2417, 1),
+            struct.pack("<H", 0xD608) + outer_tdef,
+        )
+    )
+
+    def store_papx(offset: int, grpprl: bytes) -> int:
+        content = struct.pack("<H", 0) + grpprl
+        # A non-extended PAPX stores ``2 * cch - 1`` content bytes.
+        papx_fkp[offset] = (len(content) + 2) // 2
+        papx_fkp[offset + 1 : offset + 1 + len(content)] = content
+        return offset // 2
+
+    outer_cell_offset = store_papx(128, outer_cell)
+    inner_cell_offset = store_papx(160, inner_cell)
+    inner_row_offset = store_papx(208, inner_row)
+    outer_row_offset = store_papx(288, outer_row)
+    papx_offsets = (
+        0,
+        outer_cell_offset,
+        inner_cell_offset,
+        inner_row_offset,
+        outer_cell_offset,
+        outer_row_offset,
+        0,
+    )
+    for index, papx_offset in enumerate(papx_offsets):
+        papx_fkp[bx_offset + 13 * index] = papx_offset
+    papx_fkp[-1] = len(papx_offsets)
 
     word_document = bytearray(4096)
     word_document[:1024] = _build_fib(

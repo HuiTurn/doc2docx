@@ -6,6 +6,38 @@ from doc2docx.msdoc.sprm import apply_paragraph_modifiers, parse_grpprl
 
 
 class SprmTests(unittest.TestCase):
+    def test_cell_margins_and_word97_shading_are_parsed(self) -> None:
+        default_margin = struct.pack("<BBBBBH", 6, 0, 1, 0x0A, 3, 108)
+        cell_margin = struct.pack("<BBBBBH", 6, 1, 2, 0x05, 3, 36)
+        shading_value = 6 | (7 << 5) | (1 << 10)
+        shading = struct.pack("<BH", 2, shading_value)
+        grpprl = b"".join(
+            (
+                struct.pack("<H", 0xD634) + default_margin,
+                struct.pack("<H", 0xD632) + cell_margin,
+                struct.pack("<H", 0xD609) + shading,
+            )
+        )
+
+        modifiers = parse_grpprl(grpprl, label="cell-formatting.grpprl")
+        properties, unsupported = apply_paragraph_modifiers(
+            modifiers,
+            style_id=0,
+        )
+
+        self.assertFalse(unsupported)
+        assert properties.table_row is not None
+        row = properties.table_row
+        self.assertEqual(row.default_cell_margins.left, 108)
+        self.assertEqual(row.default_cell_margins.right, 108)
+        self.assertEqual(len(row.cell_margin_overrides), 1)
+        self.assertEqual(row.cell_margin_overrides[0].first_cell, 1)
+        self.assertEqual(row.cell_margin_overrides[0].sides, ("top", "bottom"))
+        assert row.cell_shadings[0] is not None
+        self.assertEqual(row.cell_shadings[0].pattern, "solid")
+        self.assertEqual(row.cell_shadings[0].foreground, "FF0000")
+        self.assertEqual(row.cell_shadings[0].background, "FFFF00")
+
     def test_table_markers_and_tdef_table_are_parsed(self) -> None:
         boundaries = (-108, 1000, 2100)
         tdef = struct.pack("<HB3h", 8, 2, *boundaries)

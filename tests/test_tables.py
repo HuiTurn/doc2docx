@@ -9,8 +9,11 @@ from doc2docx.model import (
     Document,
     Paragraph,
     ParagraphProperties,
+    ShadingProperties,
     Table,
     TableCellDefinition,
+    TableCellMarginOverride,
+    TableCellMargins,
     TableRowProperties,
     TextRun,
     parse_main_story,
@@ -22,6 +25,127 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class TableConversionTests(unittest.TestCase):
+    def test_cell_margins_and_shading_are_written(self) -> None:
+        row = TableRowProperties(
+            cell_boundaries_twips=(0, 1000, 2200),
+            cell_definitions=(TableCellDefinition(), TableCellDefinition()),
+            default_cell_margins=TableCellMargins(left=108, right=108),
+            cell_margin_overrides=(
+                TableCellMarginOverride(1, 2, ("top", "bottom"), 36),
+            ),
+            cell_shadings=(
+                ShadingProperties("solid", "FF0000", "FFFF00"),
+                None,
+            ),
+        )
+        cell_properties = ParagraphProperties(in_table=True)
+        row_mark = ParagraphProperties(
+            in_table=True,
+            table_terminating=True,
+            table_row=row,
+        )
+
+        def properties_at(cp: int) -> ParagraphProperties:
+            return row_mark if cp == 4 else cell_properties
+
+        document = parse_main_story(
+            "A\x07B\x07\x07",
+            ConversionReport("formatted-table.doc"),
+            paragraph_properties_at=properties_at,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "formatted-table.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        cells = root.findall(f"./{W}body/{W}tbl/{W}tr/{W}tc")
+        self.assertEqual(len(cells), 2)
+        for cell in cells:
+            left = cell.find(f"{W}tcPr/{W}tcMar/{W}left")
+            assert left is not None
+            self.assertEqual(left.get(f"{W}w"), "108")
+        top = cells[1].find(f"{W}tcPr/{W}tcMar/{W}top")
+        assert top is not None
+        self.assertEqual(top.get(f"{W}w"), "36")
+        shading = cells[0].find(f"{W}tcPr/{W}shd")
+        assert shading is not None
+        self.assertEqual(shading.get(f"{W}val"), "solid")
+        self.assertEqual(shading.get(f"{W}color"), "FF0000")
+        self.assertEqual(shading.get(f"{W}fill"), "FFFF00")
+
+    def test_nested_table_is_retained_inside_outer_cell(self) -> None:
+        outer_row = TableRowProperties(
+            cell_boundaries_twips=(0, 3000),
+            cell_definitions=(TableCellDefinition(),),
+        )
+        inner_row = TableRowProperties(
+            cell_boundaries_twips=(0, 1800),
+            cell_definitions=(TableCellDefinition(),),
+        )
+
+        def properties_at(cp: int) -> ParagraphProperties:
+            if cp == 5:
+                return ParagraphProperties(in_table=True, table_depth=1)
+            if cp == 11:
+                return ParagraphProperties(
+                    in_table=True,
+                    table_depth=2,
+                    inner_table_cell=True,
+                )
+            if cp == 12:
+                return ParagraphProperties(
+                    in_table=True,
+                    table_depth=2,
+                    inner_table_row=True,
+                    table_row=inner_row,
+                )
+            if cp == 13:
+                return ParagraphProperties(in_table=True, table_depth=1)
+            if cp == 14:
+                return ParagraphProperties(
+                    in_table=True,
+                    table_depth=1,
+                    table_terminating=True,
+                    table_row=outer_row,
+                )
+            return ParagraphProperties()
+
+        report = ConversionReport("nested-table.doc")
+        document = parse_main_story(
+            "Outer\rInner\r\r\x07\x07After\r",
+            report,
+            paragraph_properties_at=properties_at,
+        )
+
+        outer = document.body_blocks[0]
+        assert isinstance(outer, Table)
+        outer_content = outer.rows[0].cells[0].body_blocks
+        self.assertEqual(len(outer_content), 3)
+        self.assertIsInstance(outer_content[1], Table)
+        inner = outer_content[1]
+        assert isinstance(inner, Table)
+        self.assertEqual(
+            inner.rows[0].cells[0].paragraphs[0].inlines,
+            (TextRun("Inner"),),
+        )
+        self.assertFalse(report.warnings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "nested-table.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        self.assertEqual(len(root.findall(f".//{W}tbl")), 2)
+        outer_cell = root.find(f"./{W}body/{W}tbl/{W}tr/{W}tc")
+        assert outer_cell is not None
+        self.assertEqual(
+            [child.tag for child in outer_cell if child.tag != f"{W}tcPr"],
+            [f"{W}p", f"{W}tbl", f"{W}p"],
+        )
+
     def test_horizontal_and_vertical_cell_merges_are_retained(self) -> None:
         cell_properties = ParagraphProperties(in_table=True)
         row_mark = ParagraphProperties(
@@ -115,6 +239,7 @@ class TableConversionTests(unittest.TestCase):
         row = TableRowProperties(
             cell_boundaries_twips=(0, 1000, 2200),
             cell_definitions=(TableCellDefinition(), TableCellDefinition()),
+            gap_half_twips=222,
         )
         cell_properties = ParagraphProperties(in_table=True)
         row_mark = ParagraphProperties(
@@ -145,6 +270,9 @@ class TableConversionTests(unittest.TestCase):
             [column.get(f"{W}w") for column in table.findall(f"{W}tblGrid/{W}gridCol")],
             ["1000", "1200"],
         )
+        left_margin = table.find(f"{W}tblPr/{W}tblCellMar/{W}left")
+        assert left_margin is not None
+        self.assertEqual(left_margin.get(f"{W}w"), "108")
         cells = table.findall(f"{W}tr/{W}tc")
         self.assertEqual(len(cells), 2)
         self.assertEqual(["".join(cell.itertext()) for cell in cells], ["A", "B"])

@@ -8,13 +8,38 @@ from xml.etree import ElementTree as ET
 from doc2docx import convert, inspect_doc
 from doc2docx.errors import EncryptedDocumentError, UnsafeOutputPathError
 
-from .fixtures import build_formatted_word_cfb, build_table_word_cfb, build_word_cfb
+from .fixtures import (
+    build_formatted_word_cfb,
+    build_nested_table_word_cfb,
+    build_table_word_cfb,
+    build_word_cfb,
+)
 
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_nested_doc_table_is_emitted_and_counted_recursively(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "nested-table.doc"
+            destination = temporary / "nested-table.docx"
+            source.write_bytes(build_nested_table_word_cfb())
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.statistics["table_count"], 2)
+            self.assertEqual(result.report.statistics["table_row_count"], 2)
+            self.assertEqual(result.report.statistics["table_cell_count"], 2)
+            self.assertFalse(result.report.warnings)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            self.assertEqual(len(root.findall(f".//{W}tbl")), 2)
+            outer_cell = root.find(f"./{W}body/{W}tbl/{W}tr/{W}tc")
+            assert outer_cell is not None
+            self.assertIsNotNone(outer_cell.find(f"{W}tbl"))
+
     def test_table_markers_and_row_properties_emit_a_real_docx_table(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
@@ -50,6 +75,18 @@ class ConversionTests(unittest.TestCase):
                 len(table.findall(f"{W}tblPr/{W}tblBorders/*")),
                 6,
             )
+            cells = table.findall(f"{W}tr/{W}tc")
+            left_margin = cells[0].find(f"{W}tcPr/{W}tcMar/{W}left")
+            assert left_margin is not None
+            self.assertEqual(left_margin.get(f"{W}w"), "108")
+            top_margin = cells[1].find(f"{W}tcPr/{W}tcMar/{W}top")
+            assert top_margin is not None
+            self.assertEqual(top_margin.get(f"{W}w"), "36")
+            shading = cells[0].find(f"{W}tcPr/{W}shd")
+            assert shading is not None
+            self.assertEqual(shading.get(f"{W}val"), "solid")
+            self.assertEqual(shading.get(f"{W}color"), "FF0000")
+            self.assertEqual(shading.get(f"{W}fill"), "FFFF00")
 
     def test_direct_character_and_paragraph_formatting_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
