@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import struct
 
+from ..diagnostics import ConversionReport
 from ..errors import InvalidWordDocument
 from ..model import FontDefinition
 
@@ -41,7 +42,7 @@ def _decode_xsz_ffn(data: bytes, *, label: str) -> tuple[str, ...]:
     return tuple(names)
 
 
-def _parse_ffn(index: int, data: bytes) -> FontDefinition:
+def _parse_ffn(index: int, data: bytes) -> tuple[FontDefinition, bool]:
     # ffid(1), wWeight(2), chs(1), ixchSzAlt(1), PANOSE(10), FONTSIGNATURE(24)
     if len(data) < 41:
         raise InvalidWordDocument(
@@ -54,8 +55,18 @@ def _parse_ffn(index: int, data: bytes) -> FontDefinition:
     panose = data[5:15]
     signature = data[15:39]
     names = _decode_xsz_ffn(data[39:], label=f"SttbfFfn font {index}")
+    repaired_unnamed_slot = False
     if not names or not names[0]:
-        raise InvalidWordDocument(f"SttbfFfn font {index} has no primary name")
+        # LibreOffice emits a 41-byte, otherwise complete empty FFN slot in
+        # some Word 97 exports. Preserve its index so subsequent ftc values do
+        # not shift, but give the unused slot a valid OOXML-facing name.
+        if names == ("",) and len(data) == 41:
+            primary_name = f"Unnamed DOC font {index}"
+            repaired_unnamed_slot = True
+        else:
+            raise InvalidWordDocument(f"SttbfFfn font {index} has no primary name")
+    else:
+        primary_name = names[0]
 
     alternate_name: str | None = None
     if alternate_index:
@@ -77,7 +88,7 @@ def _parse_ffn(index: int, data: bytes) -> FontDefinition:
 
     return FontDefinition(
         index=index,
-        name=names[0],
+        name=primary_name,
         alternate_name=alternate_name,
         charset=charset,
         family=_FONT_FAMILIES.get((ffid >> 4) & 0x07),
@@ -85,7 +96,7 @@ def _parse_ffn(index: int, data: bytes) -> FontDefinition:
         weight=weight if weight > 0 else None,
         panose=panose,
         signature=signature,
-    )
+    ), repaired_unnamed_slot
 
 
 def read_font_table(
@@ -93,6 +104,7 @@ def read_font_table(
     *,
     offset: int,
     size: int,
+    report: ConversionReport | None = None,
 ) -> tuple[FontDefinition, ...]:
     """Parse the non-extended STTB used by SttbfFfn."""
 
@@ -114,6 +126,7 @@ def read_font_table(
         )
 
     fonts: list[FontDefinition] = []
+    repaired_indices: list[int] = []
     position = 4
     for index in range(count):
         if position >= len(data):
@@ -123,10 +136,19 @@ def read_font_table(
         end = position + byte_count
         if end > len(data):
             raise InvalidWordDocument(f"SttbfFfn font {index} exceeds the table")
-        fonts.append(_parse_ffn(index, data[position:end]))
+        font, repaired = _parse_ffn(index, data[position:end])
+        fonts.append(font)
+        if repaired:
+            repaired_indices.append(index)
         position = end
     if position != len(data) and any(data[position:]):
         raise InvalidWordDocument(
             f"SttbfFfn has {len(data) - position} unexpected trailing bytes"
+        )
+    if repaired_indices and report is not None:
+        report.warning(
+            "UNNAMED_FONT_SLOT_REPAIRED",
+            "empty LibreOffice-compatible font-table slots were preserved by index",
+            font_indices=repaired_indices,
         )
     return tuple(fonts)

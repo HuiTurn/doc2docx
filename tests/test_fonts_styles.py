@@ -152,6 +152,17 @@ def _table_style_sheet() -> bytes:
 
 
 class FontAndStyleTests(unittest.TestCase):
+    def test_repairs_empty_libreoffice_font_slot_without_shifting_index(self) -> None:
+        payload = bytes(39) + b"\0\0"
+        table = struct.pack("<HHB", 1, 0, len(payload)) + payload
+        report = ConversionReport("unnamed-font.doc")
+
+        fonts = read_font_table(table, offset=0, size=len(table), report=report)
+
+        self.assertEqual(fonts[0].index, 0)
+        self.assertEqual(fonts[0].name, "Unnamed DOC font 0")
+        self.assertEqual(report.warnings[0].code, "UNNAMED_FONT_SLOT_REPAIRED")
+
     def test_writes_paragraph_outline_and_borders(self) -> None:
         document = Document(
             (

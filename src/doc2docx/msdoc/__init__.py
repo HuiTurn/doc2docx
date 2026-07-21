@@ -14,6 +14,11 @@ from .header_textboxes import (
 )
 from .officeart import OfficeArtShapeCollection, read_officeart_shapes
 from .pieces import Piece, PieceTable, read_piece_table
+from .pictures import (
+    InlinePictureCollection,
+    parse_inline_picture,
+    read_inline_pictures,
+)
 from .sections import read_sections
 from .styles import read_style_sheet
 
@@ -29,6 +34,7 @@ __all__ = [
     "OfficeArtShapeCollection",
     "Piece",
     "PieceTable",
+    "InlinePictureCollection",
     "WordDocumentSettings",
     "read_document_settings",
     "read_comments",
@@ -41,6 +47,8 @@ __all__ = [
     "read_main_textboxes",
     "read_officeart_shapes",
     "read_piece_table",
+    "parse_inline_picture",
+    "read_inline_pictures",
     "read_sections",
     "read_style_sheet",
 ]

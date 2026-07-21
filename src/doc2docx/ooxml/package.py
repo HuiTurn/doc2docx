@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import struct
 import zipfile
@@ -25,6 +25,7 @@ from ..model import (
     FootnoteReference,
     FontDefinition,
     HeaderFooterStory,
+    InlinePicture,
     Paragraph,
     ParagraphProperties,
     SectionProperties,
@@ -98,16 +99,25 @@ ENDNOTES_REL = (
 COMMENTS_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
 )
+IMAGE_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+)
 XML_NS = "http://www.w3.org/XML/1998/namespace"
 VML_NS = "urn:schemas-microsoft-com:vml"
 OFFICE_NS = "urn:schemas-microsoft-com:office:office"
 WORD_2003_NS = "urn:schemas-microsoft-com:office:word"
+A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+PIC_NS = "http://schemas.openxmlformats.org/drawingml/2006/picture"
 
 ET.register_namespace("w", W_NS)
 ET.register_namespace("r", R_NS)
 ET.register_namespace("v", VML_NS)
 ET.register_namespace("o", OFFICE_NS)
 ET.register_namespace("w10", WORD_2003_NS)
+ET.register_namespace("a", A_NS)
+ET.register_namespace("wp", WP_NS)
+ET.register_namespace("pic", PIC_NS)
 
 
 @dataclass(slots=True, frozen=True)
@@ -136,6 +146,7 @@ def _content_types_xml(
     has_footnotes: bool,
     has_endnotes: bool,
     has_comments: bool,
+    pictures: tuple[InlinePicture, ...],
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
     # OPC consumers in the wild are more interoperable with the conventional
@@ -153,6 +164,23 @@ def _content_types_xml(
         Extension="xml",
         ContentType="application/xml",
     )
+    image_content_types: dict[str, str] = {}
+    for picture in pictures:
+        previous = image_content_types.setdefault(
+            picture.extension,
+            picture.content_type,
+        )
+        if previous != picture.content_type:
+            raise PackageWriteError(
+                f"image extension {picture.extension!r} has conflicting content types"
+            )
+    for extension, content_type in sorted(image_content_types.items()):
+        ET.SubElement(
+            root,
+            "Default",
+            Extension=extension,
+            ContentType=content_type,
+        )
     ET.SubElement(
         root,
         "Override",
@@ -233,6 +261,7 @@ def _document_relationships_xml(
     has_footnotes: bool,
     has_endnotes: bool,
     has_comments: bool,
+    pictures: tuple[InlinePicture, ...],
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
     root = ET.Element("Relationships", xmlns=REL_NS)
@@ -289,6 +318,14 @@ def _document_relationships_xml(
             Id=f"rId{relationship_id}",
             Type=COMMENTS_REL,
             Target="comments.xml",
+        )
+    for picture in pictures:
+        ET.SubElement(
+            root,
+            "Relationship",
+            Id=f"rIdImage{picture.picture_id}",
+            Type=IMAGE_REL,
+            Target=f"media/image{picture.picture_id}.{picture.extension}",
         )
     for part in header_footer_parts:
         ET.SubElement(
@@ -370,7 +407,11 @@ def _append_boolean_property(
 
 
 def _has_character_properties(properties: CharacterProperties) -> bool:
-    return properties != CharacterProperties()
+    return replace(
+        properties,
+        picture_location=None,
+        picture_is_binary=None,
+    ) != CharacterProperties()
 
 
 def _append_character_property_elements(
@@ -709,6 +750,89 @@ def _append_symbol(
     )
 
 
+def _append_inline_picture(
+    paragraph_element: ET.Element,
+    picture: InlinePicture,
+    *,
+    valid_style_ids: set[int],
+) -> None:
+    run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    _append_run_properties(
+        run,
+        picture.properties,
+        valid_style_ids=valid_style_ids,
+    )
+    drawing = ET.SubElement(run, _qn(W_NS, "drawing"))
+    inline = ET.SubElement(
+        drawing,
+        _qn(WP_NS, "inline"),
+        {"distT": "0", "distB": "0", "distL": "0", "distR": "0"},
+    )
+    ET.SubElement(
+        inline,
+        _qn(WP_NS, "extent"),
+        {"cx": str(picture.width_emu), "cy": str(picture.height_emu)},
+    )
+    ET.SubElement(
+        inline,
+        _qn(WP_NS, "effectExtent"),
+        {"l": "0", "t": "0", "r": "0", "b": "0"},
+    )
+    picture_name = picture.name or f"Picture {picture.picture_id}"
+    ET.SubElement(
+        inline,
+        _qn(WP_NS, "docPr"),
+        {"id": str(picture.picture_id), "name": picture_name},
+    )
+    frame_properties = ET.SubElement(inline, _qn(WP_NS, "cNvGraphicFramePr"))
+    ET.SubElement(
+        frame_properties,
+        _qn(A_NS, "graphicFrameLocks"),
+        {"noChangeAspect": "1"},
+    )
+    graphic = ET.SubElement(inline, _qn(A_NS, "graphic"))
+    graphic_data = ET.SubElement(
+        graphic,
+        _qn(A_NS, "graphicData"),
+        {"uri": PIC_NS},
+    )
+    picture_element = ET.SubElement(graphic_data, _qn(PIC_NS, "pic"))
+    non_visual = ET.SubElement(picture_element, _qn(PIC_NS, "nvPicPr"))
+    ET.SubElement(
+        non_visual,
+        _qn(PIC_NS, "cNvPr"),
+        {"id": str(picture.picture_id), "name": picture_name},
+    )
+    non_visual_properties = ET.SubElement(non_visual, _qn(PIC_NS, "cNvPicPr"))
+    ET.SubElement(
+        non_visual_properties,
+        _qn(A_NS, "picLocks"),
+        {"noChangeAspect": "1"},
+    )
+    blip_fill = ET.SubElement(picture_element, _qn(PIC_NS, "blipFill"))
+    ET.SubElement(
+        blip_fill,
+        _qn(A_NS, "blip"),
+        {_qn(R_NS, "embed"): f"rIdImage{picture.picture_id}"},
+    )
+    stretch = ET.SubElement(blip_fill, _qn(A_NS, "stretch"))
+    ET.SubElement(stretch, _qn(A_NS, "fillRect"))
+    shape_properties = ET.SubElement(picture_element, _qn(PIC_NS, "spPr"))
+    transform = ET.SubElement(shape_properties, _qn(A_NS, "xfrm"))
+    ET.SubElement(transform, _qn(A_NS, "off"), {"x": "0", "y": "0"})
+    ET.SubElement(
+        transform,
+        _qn(A_NS, "ext"),
+        {"cx": str(picture.width_emu), "cy": str(picture.height_emu)},
+    )
+    geometry = ET.SubElement(
+        shape_properties,
+        _qn(A_NS, "prstGeom"),
+        {"prst": "rect"},
+    )
+    ET.SubElement(geometry, _qn(A_NS, "avLst"))
+
+
 def _twips_as_points(value: int) -> str:
     points = value / 20
     return f"{points:.2f}".rstrip("0").rstrip(".")
@@ -918,6 +1042,7 @@ def _append_inline(
         | CommentRangeStart
         | CommentRangeEnd
         | CommentReference
+        | InlinePicture
         | FloatingTextBox
     ),
     *,
@@ -933,6 +1058,12 @@ def _append_inline(
         )
     elif isinstance(inline, Symbol):
         _append_symbol(
+            paragraph_element,
+            inline,
+            valid_style_ids=valid_character_style_ids,
+        )
+    elif isinstance(inline, InlinePicture):
+        _append_inline_picture(
             paragraph_element,
             inline,
             valid_style_ids=valid_character_style_ids,
@@ -1896,6 +2027,11 @@ def write_docx(document: Document, destination: str | Path) -> None:
     has_footnotes = bool(document.footnotes)
     has_endnotes = bool(document.endnotes)
     has_comments = bool(document.comments)
+    picture_ids = [picture.picture_id for picture in document.pictures]
+    if any(picture_id <= 0 for picture_id in picture_ids) or len(
+        set(picture_ids)
+    ) != len(picture_ids):
+        raise PackageWriteError("inline picture identifiers must be unique and positive")
     header_footer_parts = _build_header_footer_parts(
         document,
         has_styles=has_styles,
@@ -1917,6 +2053,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     has_footnotes=has_footnotes,
                     has_endnotes=has_endnotes,
                     has_comments=has_comments,
+                    pictures=document.pictures,
                     header_footer_parts=header_footer_parts,
                 ),
             )
@@ -1933,6 +2070,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                 or has_footnotes
                 or has_endnotes
                 or has_comments
+                or document.pictures
                 or header_footer_parts
             ):
                 _write_part(
@@ -1945,6 +2083,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                         has_footnotes=has_footnotes,
                         has_endnotes=has_endnotes,
                         has_comments=has_comments,
+                        pictures=document.pictures,
                         header_footer_parts=header_footer_parts,
                     ),
                 )
@@ -1984,6 +2123,12 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     package,
                     "word/comments.xml",
                     _comments_xml(document),
+                )
+            for picture in document.pictures:
+                _write_part(
+                    package,
+                    f"word/media/image{picture.picture_id}.{picture.extension}",
+                    picture.data,
                 )
             for part in header_footer_parts:
                 _write_part(

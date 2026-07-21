@@ -635,7 +635,11 @@ def apply_character_modifiers(
         if opcode == 0x2A33:  # sprmCPlain
             # sprmCPlain resets ordinary direct formatting but MS-DOC
             # explicitly preserves the special-character state.
-            properties = CharacterProperties(special=properties.special)
+            properties = CharacterProperties(
+                special=properties.special,
+                picture_location=properties.picture_location,
+                picture_is_binary=properties.picture_is_binary,
+            )
             style_baseline = paragraph_style_properties
         elif opcode == 0x4A30:  # sprmCIstd
             style_id = struct.unpack("<H", operand)[0]
@@ -643,6 +647,8 @@ def apply_character_modifiers(
             properties = CharacterProperties(
                 style_id=style_id,
                 special=properties.special,
+                picture_location=properties.picture_location,
+                picture_is_binary=properties.picture_is_binary,
             )
             style_baseline = paragraph_style_properties
             if style_properties_at is not None:
@@ -691,6 +697,19 @@ def apply_character_modifiers(
                     symbol_font=font_name,
                     symbol_character_code=character_code,
                 )
+        elif opcode == 0x6A03:  # sprmCPicLocation
+            properties = replace(
+                properties,
+                picture_location=struct.unpack("<i", operand)[0],
+            )
+        elif opcode == 0x0806:  # sprmCFData
+            if operand[0] in (0, 1):
+                properties = replace(
+                    properties,
+                    picture_is_binary=bool(operand[0]),
+                )
+            else:
+                unsupported.add(opcode)
         elif opcode == 0x2A3E:
             underline = _UNDERLINES.get(operand[0])
             if underline is None:

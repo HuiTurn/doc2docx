@@ -10,6 +10,21 @@ from doc2docx.msdoc.sprm import (
 
 
 class SprmTests(unittest.TestCase):
+    def test_picture_location_and_binary_flag_survive_style_resets(self) -> None:
+        properties, unsupported, _ = apply_character_modifiers(
+            parse_grpprl(
+                struct.pack("<Hi", 0x6A03, 640)
+                + struct.pack("<HB", 0x0806, 1)
+                + struct.pack("<HH", 0x4A30, 16)
+                + struct.pack("<HB", 0x2A33, 0),
+                label="picture-style-reset.grpprl",
+            )
+        )
+
+        self.assertFalse(unsupported)
+        self.assertEqual(properties.picture_location, 640)
+        self.assertTrue(properties.picture_is_binary)
+
     def test_special_character_state_survives_character_style_resets(self) -> None:
         properties, unsupported, _ = apply_character_modifiers(
             parse_grpprl(

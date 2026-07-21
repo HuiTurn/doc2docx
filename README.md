@@ -4,7 +4,7 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M7d implementation supports unencrypted CFB/OLE Word documents,
+The current M0–M8a implementation supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
 UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
 preserves a useful first set of direct character and paragraph properties. It
@@ -51,6 +51,16 @@ Main-story textboxes are likewise resolved through `PlcSpaMom`,
 `PlcftxbxTxt`, and `PlcfTxbxBkd`; their text, basic fields, position, wrapping,
 anchor flags, and OfficeArt appearance use the same validated floating-shape
 pipeline as header/footer textboxes.
+Main-story inline picture characters are resolved through `sprmCFSpec`,
+`sprmCPicLocation`, the `Data` stream, 68-byte `PICF` headers, and bounded
+OfficeArt inline-shape/FBSE records. Embedded PNG, JPEG, and DIB BLIPs are
+written as deterministic `word/media` parts with native DrawingML inline
+picture markup; DIB payloads receive a pure-Python BMP file header. Reused
+picture data receives unique drawing identifiers, malformed records and
+non-raster BLIP types remain explicit diagnostics, and display dimensions are
+preserved from `PICMID` goal sizes and scaling ratios. Empty font-table slots
+seen in LibreOffice Word 97 exports are retained by index with a repair
+diagnostic rather than shifting every subsequent font reference.
 
 ## Usage
 
@@ -72,7 +82,7 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-M7d currently preserves bold, italic, strike, double strike, capitalization,
+M8a currently preserves bold, italic, strike, double strike, capitalization,
 hidden text, underline, text color, highlight, font size, vertical alignment,
 paragraph justification, indents, spacing, line spacing, and keep/page-break
 flags, font names, paragraph/character style references, style inheritance,
@@ -88,7 +98,8 @@ with an explicit diagnostic. Conditional table styles, newer color-based table
 shading, cell spacing,
 numbering styles, multi-column layout, page-number settings, header/footer
 non-textbox shapes and advanced OfficeArt effects, other
-secondary stories, images, fields beyond the supported page-number family,
+secondary stories, floating images, vector/metafile and TIFF pictures, images
+outside the main story, fields beyond the supported page-number family,
 embedded objects, exact Word 97–2003 table-row pagination in every legacy
 compatibility case, and encrypted documents are intentionally deferred to later iterations.
 Unsupported or lossy content is reported rather than silently treated as fully
@@ -112,7 +123,8 @@ basic OfficeArt record/property validation and VML shape styling, header/footer
 OPC relationships, automatic footnote/endnote PLC validation and package
 output, legacy comment author/range PLC validation and package output, East
 Asian document grids and paragraph controls, script-specific language/font
-properties, malformed input checks, CLI
+properties, inline PNG/JPEG/DIB PICF/OfficeArt parsing and DrawingML package
+output, malformed picture and empty-font-slot handling, CLI
 coverage, symbol characters, paragraph-mark formatting, paragraph borders and
 outline levels, custom tab stops, unconditional table-style inheritance, modern
 table borders, explicit table/cell widths, per-cell border colors, and end-to-end

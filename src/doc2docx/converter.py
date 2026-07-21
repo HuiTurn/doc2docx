@@ -15,6 +15,7 @@ from .diagnostics import ConversionReport
 from .errors import (
     EncryptedDocumentError,
     InvalidWordDocument,
+    StreamNotFound,
     UnsafeOutputPathError,
 )
 from .model import Document, Paragraph, Symbol, Table, parse_main_story
@@ -30,6 +31,7 @@ from .msdoc import (
     read_header_textboxes,
     read_main_textboxes,
     read_officeart_shapes,
+    read_inline_pictures,
     read_piece_table,
     read_sections,
     read_style_sheet,
@@ -118,6 +120,7 @@ def convert(
         table_stream,
         offset=font_table.fc,
         size=font_table.lcb,
+        report=report,
     )
     style_table = fib.stshf
     style_sheet = read_style_sheet(
@@ -287,12 +290,36 @@ def convert(
         report,
         story="main",
     )
+    needs_data_stream = any(
+        unit.text == "\x01"
+        and (
+            (properties := formatting.character_properties_at(unit.cp_start)).special
+            is True
+            and properties.picture_location is not None
+            and properties.picture_is_binary is not True
+        )
+        for unit in main_characters
+    )
+    if needs_data_stream:
+        try:
+            data_stream = compound.open_stream("Data")
+        except StreamNotFound:
+            data_stream = None
+    else:
+        data_stream = None
+    inline_pictures = read_inline_pictures(
+        data_stream,
+        main_characters,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
     parsed_document = parse_main_story(
         main_characters,
         report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         floating_textbox_at=main_textboxes.textbox_at,
+        inline_picture_at=inline_pictures.picture_at,
         footnote_reference_at=footnotes.reference_at,
         endnote_reference_at=endnotes.reference_at,
         comment_reference_at=comments.reference_at,
@@ -308,6 +335,7 @@ def convert(
         footnotes=footnotes.footnotes,
         endnotes=endnotes.endnotes,
         comments=comments.comments,
+        pictures=inline_pictures.pictures,
         even_and_odd_headers=document_settings.even_and_odd_headers,
         adjust_line_height_in_table=(
             document_settings.adjust_line_height_in_table
@@ -386,6 +414,9 @@ def convert(
             "comment_count": len(comments.comments),
             "comment_reference_count": comments.reference_count,
             "comment_range_count": comments.range_count,
+            "inline_picture_count": len(inline_pictures.pictures),
+            "deferred_inline_picture_count": inline_pictures.deferred_count,
+            "inline_binary_data_count": inline_pictures.binary_data_count,
             "symbol_character_count": sum(
                 isinstance(inline, Symbol)
                 for paragraph in document.paragraphs
@@ -402,10 +433,10 @@ def convert(
             ),
         }
     )
-    if fib.base.has_pictures:
+    if fib.base.has_pictures and not inline_pictures.pictures:
         report.warning(
             "PICTURES_DEFERRED",
-            "the FIB reports pictures; picture conversion is not yet supported",
+            "the FIB reports pictures, but no supported inline raster picture was recovered",
         )
     secondary_stories = fib.secondary_story_character_counts
     secondary_stories.pop("footnotes", None)
@@ -448,7 +479,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M7d conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M8a conversion completed")
     return ConversionResult(destination_path, report, document)
 
 
