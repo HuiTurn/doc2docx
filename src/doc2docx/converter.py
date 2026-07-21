@@ -290,6 +290,12 @@ def convert(
         report,
         story="main",
     )
+    header_characters = piece_table.extract_characters(
+        fib.header_story_cp_start,
+        fib.header_story_cp_start + fib.ccp_headers,
+        report,
+        story="headers",
+    )
     needs_data_stream = any(
         unit.text == "\x01"
         and (
@@ -298,7 +304,7 @@ def convert(
             and properties.picture_location is not None
             and properties.picture_is_binary is not True
         )
-        for unit in main_characters
+        for unit in main_characters + header_characters
     )
     if needs_data_stream:
         try:
@@ -321,6 +327,16 @@ def convert(
         report=report,
         character_properties_at=formatting.character_properties_at,
     )
+    header_inline_pictures = read_inline_pictures(
+        data_stream,
+        header_characters,
+        first_picture_id=(
+            len(inline_pictures.pictures) + len(floating_pictures.pictures) + 1
+        ),
+        story_name="headers",
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
     header_shape_anchors = read_shape_anchors(
         table_stream,
         piece_table,
@@ -338,7 +354,10 @@ def convert(
         header_story_cp_start=fib.header_story_cp_start,
         excluded_shape_ids=header_textboxes.shape_ids,
         first_picture_id=(
-            len(inline_pictures.pictures) + len(floating_pictures.pictures) + 1
+            len(inline_pictures.pictures)
+            + len(floating_pictures.pictures)
+            + len(header_inline_pictures.pictures)
+            + 1
         ),
         report=report,
         character_properties_at=formatting.character_properties_at,
@@ -356,6 +375,7 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         floating_textbox_at=header_textboxes.textbox_at,
+        inline_picture_at=header_inline_pictures.picture_at,
         floating_picture_at=header_floating_pictures.picture_at,
     )
     sections = header_footers.sections
@@ -385,6 +405,7 @@ def convert(
         pictures=(
             inline_pictures.pictures
             + floating_pictures.pictures
+            + header_inline_pictures.pictures
             + header_floating_pictures.pictures
         ),
         even_and_odd_headers=document_settings.even_and_odd_headers,
@@ -465,9 +486,23 @@ def convert(
             "comment_count": len(comments.comments),
             "comment_reference_count": comments.reference_count,
             "comment_range_count": comments.range_count,
-            "inline_picture_count": len(inline_pictures.pictures),
-            "deferred_inline_picture_count": inline_pictures.deferred_count,
-            "inline_binary_data_count": inline_pictures.binary_data_count,
+            "inline_picture_count": (
+                len(inline_pictures.pictures)
+                + len(header_inline_pictures.pictures)
+            ),
+            "main_inline_picture_count": len(inline_pictures.pictures),
+            "header_inline_picture_count": len(header_inline_pictures.pictures),
+            "deferred_inline_picture_count": (
+                inline_pictures.deferred_count
+                + header_inline_pictures.deferred_count
+            ),
+            "deferred_header_inline_picture_count": (
+                header_inline_pictures.deferred_count
+            ),
+            "inline_binary_data_count": (
+                inline_pictures.binary_data_count
+                + header_inline_pictures.binary_data_count
+            ),
             "floating_picture_count": (
                 len(floating_pictures.pictures)
                 + len(header_floating_pictures.pictures)
@@ -506,6 +541,7 @@ def convert(
     if (
         fib.base.has_pictures
         and not inline_pictures.pictures
+        and not header_inline_pictures.pictures
         and not floating_pictures.pictures
         and not header_floating_pictures.pictures
     ):
@@ -554,7 +590,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M8c conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M8d conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

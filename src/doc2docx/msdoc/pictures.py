@@ -332,10 +332,15 @@ def read_inline_pictures(
     data_stream: bytes | None,
     characters: Sequence[StoryCharacter],
     *,
+    first_picture_id: int = 1,
+    story_name: str = "main",
     report: ConversionReport,
     character_properties_at: Callable[[int], CharacterProperties],
 ) -> InlinePictureCollection:
     """Resolve valid U+0001 anchors without making one bad picture fatal."""
+
+    if first_picture_id <= 0:
+        raise ValueError("first_picture_id must be positive")
 
     anchors: list[tuple[int, CharacterProperties]] = []
     missing_sprm_count = 0
@@ -356,14 +361,14 @@ def read_inline_pictures(
         report.warning(
             "INLINE_PICTURE_ANCHOR_INVALID",
             "some U+0001 picture anchors lack sprmCFSpec or sprmCPicLocation",
-            location=SourceLocation(story="main"),
+            location=SourceLocation(story=story_name),
             anchor_count=missing_sprm_count,
         )
     if binary_data_count:
         report.warning(
             "INLINE_BINARY_DATA_DEFERRED",
             "U+0001 binary-data records are not raster pictures and remain unsupported",
-            location=SourceLocation(story="main"),
+            location=SourceLocation(story=story_name),
             anchor_count=binary_data_count,
         )
     if not anchors:
@@ -375,7 +380,7 @@ def read_inline_pictures(
         report.warning(
             "INLINE_PICTURE_DATA_STREAM_MISSING",
             "picture anchors exist but the DOC Data stream is absent",
-            location=SourceLocation(story="main", stream="Data"),
+            location=SourceLocation(story=story_name, stream="Data"),
             anchor_count=len(anchors),
         )
         return InlinePictureCollection(
@@ -396,7 +401,7 @@ def read_inline_pictures(
                 picture = parse_inline_picture(
                     data_stream,
                     source_offset,
-                    picture_id=len(pictures) + 1,
+                    picture_id=first_picture_id + len(pictures),
                     properties=properties,
                 )
             except UnsupportedBlipFormat as exc:
@@ -404,7 +409,7 @@ def read_inline_pictures(
                     "INLINE_PICTURE_FORMAT_DEFERRED",
                     "an inline picture uses an unsupported OfficeArt BLIP format",
                     location=SourceLocation(
-                        story="main",
+                        story=story_name,
                         cp_start=cp,
                         cp_end=cp + 1,
                         stream="Data",
@@ -418,7 +423,7 @@ def read_inline_pictures(
                     "INLINE_PICTURE_MALFORMED",
                     str(exc),
                     location=SourceLocation(
-                        story="main",
+                        story=story_name,
                         cp_start=cp,
                         cp_end=cp + 1,
                         stream="Data",
@@ -436,7 +441,7 @@ def read_inline_pictures(
             else:
                 picture = replace(
                     cached_picture,
-                    picture_id=len(pictures) + 1,
+                    picture_id=first_picture_id + len(pictures),
                     properties=replace(
                         properties,
                         special=None,

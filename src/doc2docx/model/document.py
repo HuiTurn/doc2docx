@@ -348,7 +348,7 @@ class CommentReference:
 
 @dataclass(slots=True, frozen=True)
 class InlinePicture:
-    """One main-story raster picture recovered from the DOC Data stream."""
+    """One main/header raster picture recovered from the DOC Data stream."""
 
     picture_id: int
     source_offset: int

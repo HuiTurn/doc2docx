@@ -4,7 +4,7 @@
 97–2003 binary `.doc` files. It does not invoke Microsoft Word, LibreOffice,
 COM, Java, or an external conversion executable.
 
-The current M0–M8c implementation supports unencrypted CFB/OLE Word documents,
+The converter supports unencrypted CFB/OLE Word documents,
 the `0Table`/`1Table` selection mechanism, CLX piece tables, compressed and
 UTF-16LE text pieces, and the main document story. It reads CHPX/PAPX FKPs and
 preserves a useful first set of direct character and paragraph properties. It
@@ -51,7 +51,8 @@ Main-story textboxes are likewise resolved through `PlcSpaMom`,
 `PlcftxbxTxt`, and `PlcfTxbxBkd`; their text, basic fields, position, wrapping,
 anchor flags, and OfficeArt appearance use the same validated floating-shape
 pipeline as header/footer textboxes.
-Main-story inline picture characters are resolved through `sprmCFSpec`,
+Inline picture characters in the main and header/footer stories are resolved
+through `sprmCFSpec`,
 `sprmCPicLocation`, the `Data` stream, 68-byte `PICF` headers, and bounded
 OfficeArt inline-shape/FBSE records. Embedded PNG, JPEG, and DIB BLIPs are
 written as deterministic `word/media` parts with native DrawingML inline
@@ -93,7 +94,7 @@ result = convert("input.doc", "output.docx")
 print(result.report.to_dict())
 ```
 
-M8c currently preserves bold, italic, strike, double strike, capitalization,
+It preserves bold, italic, strike, double strike, capitalization,
 hidden text, underline, text color, highlight, font size, vertical alignment,
 paragraph justification, indents, spacing, line spacing, and keep/page-break
 flags, font names, paragraph/character style references, style inheritance,
@@ -109,8 +110,8 @@ with an explicit diagnostic. Conditional table styles, newer color-based table
 shading, cell spacing,
 numbering styles, multi-column layout, page-number settings, header/footer
 non-picture/non-textbox shapes and advanced OfficeArt effects, other
-secondary stories, vector/metafile and TIFF pictures, inline pictures outside
-the main story, non-rectangular picture wrap polygons, fields beyond the supported page-number family,
+secondary stories, vector/metafile and TIFF pictures, inline pictures in
+note/comment/textbox stories, non-rectangular picture wrap polygons, fields beyond the supported page-number family,
 embedded objects, exact Word 97–2003 table-row pagination in every legacy
 compatibility case, and encrypted documents are intentionally deferred to later iterations.
 Unsupported or lossy content is reported rather than silently treated as fully
@@ -134,7 +135,7 @@ basic OfficeArt record/property validation and VML shape styling, header/footer
 OPC relationships, automatic footnote/endnote PLC validation and package
 output, legacy comment author/range PLC validation and package output, East
 Asian document grids and paragraph controls, script-specific language/font
-properties, inline PNG/JPEG/DIB PICF/OfficeArt parsing and DrawingML package
+properties, main/header inline PNG/JPEG/DIB PICF/OfficeArt parsing and DrawingML package
 output, main/header floating-picture PlcSpa/pib/delayed-BLIP association,
 part-scoped image relationships and anchored DrawingML output, malformed
 picture and empty-font-slot handling, CLI

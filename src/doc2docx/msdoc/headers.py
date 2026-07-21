@@ -13,6 +13,7 @@ from ..model import (
     FloatingPicture,
     FloatingTextBox,
     HeaderFooterStory,
+    InlinePicture,
     ParagraphProperties,
     SectionProperties,
     StoryCharacter,
@@ -87,6 +88,7 @@ def read_header_footer_stories(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
+    inline_picture_at: Callable[[int], InlinePicture | None] | None = None,
     floating_picture_at: Callable[[int], FloatingPicture | None] | None = None,
 ) -> HeaderFooterCollection:
     """Read non-empty header/footer stories and attach them to their sections."""
@@ -170,6 +172,7 @@ def read_header_footer_stories(
                 character_properties_at=character_properties_at,
                 paragraph_properties_at=paragraph_properties_at,
                 floating_textbox_at=floating_textbox_at,
+                inline_picture_at=inline_picture_at,
                 floating_picture_at=floating_picture_at,
                 story_name=story_name,
             )

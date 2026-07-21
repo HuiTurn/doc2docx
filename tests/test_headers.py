@@ -1,3 +1,4 @@
+import struct
 import unittest
 from unittest.mock import Mock
 from pathlib import Path
@@ -10,9 +11,11 @@ from doc2docx.errors import InvalidWordDocument
 from doc2docx.model import (
     Document,
     FloatingTextBox,
+    InlinePicture,
     Paragraph,
     SectionProperties,
     ShapeStyle,
+    StoryCharacter,
     TextRun,
 )
 from doc2docx.msdoc import read_document_settings, read_header_footer_stories
@@ -24,6 +27,41 @@ V = "{urn:schemas-microsoft-com:vml}"
 
 
 class HeaderFooterParsingTests(unittest.TestCase):
+    def test_inline_picture_callback_is_used_in_header_story(self) -> None:
+        story_cps = (0,) * 8 + (3,) * 5 + (0,)
+        table_stream = struct.pack("<14I", *story_cps)
+        picture = InlinePicture(
+            1,
+            0,
+            b"png",
+            "png",
+            "image/png",
+            914400,
+            457200,
+        )
+        piece_table = Mock(cp_end=14)
+        piece_table.extract_characters.return_value = (
+            StoryCharacter("\x01", 10, 11),
+            StoryCharacter("\r", 11, 12),
+            StoryCharacter("\r", 12, 13),
+        )
+
+        collection = read_header_footer_stories(
+            table_stream,
+            piece_table,
+            (SectionProperties(0, 1),),
+            offset=0,
+            size=len(table_stream),
+            ccp_headers=4,
+            header_story_cp_start=10,
+            report=ConversionReport("header-inline-picture.doc"),
+            inline_picture_at=lambda cp: picture if cp == 10 else None,
+        )
+
+        header = collection.sections[0].default_header
+        assert header is not None
+        self.assertIs(header.paragraphs[0].inlines[0], picture)
+
     def test_basic_officeart_shape_style_is_packaged(self) -> None:
         textbox = FloatingTextBox(
             shape_id=1025,

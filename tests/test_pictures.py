@@ -166,6 +166,33 @@ class InlinePictureTests(unittest.TestCase):
         )
         self.assertIs(collection.pictures[0].data, collection.pictures[1].data)
 
+    def test_header_scan_uses_requested_picture_id_and_story_diagnostic(self) -> None:
+        properties = CharacterProperties(special=True, picture_location=0)
+        report = ConversionReport("header-picture.doc")
+        collection = read_inline_pictures(
+            None,
+            (StoryCharacter("\x01", 20, 21),),
+            first_picture_id=7,
+            story_name="headers",
+            report=report,
+            character_properties_at=lambda _cp: properties,
+        )
+
+        self.assertFalse(collection.pictures)
+        self.assertEqual(report.warnings[0].location.story, "headers")
+
+        data = _picf_with_blip(0xF01E, 0x6E0, _PNG)
+        collection = read_inline_pictures(
+            data,
+            (StoryCharacter("\x01", 20, 21),),
+            first_picture_id=7,
+            story_name="headers",
+            report=ConversionReport("header-picture.doc"),
+            character_properties_at=lambda _cp: properties,
+        )
+        self.assertEqual(collection.pictures[0].picture_id, 7)
+        self.assertIs(collection.picture_at(20), collection.pictures[0])
+
     def test_packages_inline_picture_media_relationship_and_drawing(self) -> None:
         picture = InlinePicture(
             1,
