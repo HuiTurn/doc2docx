@@ -1,4 +1,5 @@
 from .document import (
+    BorderProperties,
     Break,
     BreakType,
     CharacterProperties,
@@ -10,11 +11,18 @@ from .document import (
     StyleDefinition,
     StyleSheet,
     Tab,
+    Table,
+    TableBorders,
+    TableCell,
+    TableCellDefinition,
+    TableRow,
+    TableRowProperties,
     TextRun,
     parse_main_story,
 )
 
 __all__ = [
+    "BorderProperties",
     "Break",
     "BreakType",
     "CharacterProperties",
@@ -26,6 +34,12 @@ __all__ = [
     "StyleDefinition",
     "StyleSheet",
     "Tab",
+    "Table",
+    "TableBorders",
+    "TableCell",
+    "TableCellDefinition",
+    "TableRow",
+    "TableRowProperties",
     "TextRun",
     "parse_main_story",
 ]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from ..diagnostics import ConversionReport, SourceLocation
@@ -39,6 +39,51 @@ class CharacterProperties:
 
 
 @dataclass(slots=True, frozen=True)
+class BorderProperties:
+    style: str
+    size_eighth_points: int
+    color: str = "auto"
+    space_points: int = 0
+    shadow: bool = False
+    frame: bool = False
+
+
+@dataclass(slots=True, frozen=True)
+class TableBorders:
+    top: BorderProperties | None = None
+    left: BorderProperties | None = None
+    bottom: BorderProperties | None = None
+    right: BorderProperties | None = None
+    inside_horizontal: BorderProperties | None = None
+    inside_vertical: BorderProperties | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class TableCellDefinition:
+    preferred_width_twips: int | None = None
+    horizontal_merge: str | None = None
+    vertical_merge: str | None = None
+    vertical_alignment: str | None = None
+    fit_text: bool | None = None
+    no_wrap: bool | None = None
+    borders: TableBorders = field(default_factory=TableBorders)
+
+
+@dataclass(slots=True, frozen=True)
+class TableRowProperties:
+    cell_boundaries_twips: tuple[int, ...] = ()
+    cell_definitions: tuple[TableCellDefinition, ...] = ()
+    alignment: str | None = None
+    left_indent_twips: int | None = None
+    gap_half_twips: int | None = None
+    height_twips: int | None = None
+    height_rule: str | None = None
+    cant_split: bool | None = None
+    is_header: bool | None = None
+    borders: TableBorders = field(default_factory=TableBorders)
+
+
+@dataclass(slots=True, frozen=True)
 class ParagraphProperties:
     """Direct paragraph properties represented in WordprocessingML units."""
 
@@ -54,6 +99,18 @@ class ParagraphProperties:
     space_after_twips: int | None = None
     line_spacing_twips: int | None = None
     line_rule: str | None = None
+    in_table: bool | None = None
+    table_depth: int | None = None
+    table_terminating: bool | None = None
+    inner_table_cell: bool | None = None
+    inner_table_row: bool | None = None
+    table_row: TableRowProperties | None = None
+
+    @property
+    def effective_table_depth(self) -> int:
+        if self.table_depth is not None:
+            return max(self.table_depth, 0)
+        return 1 if self.in_table else 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -155,10 +212,186 @@ class Paragraph:
 
 
 @dataclass(slots=True, frozen=True)
+class TableCell:
+    paragraphs: tuple[Paragraph, ...]
+    width_twips: int | None = None
+    grid_span: int = 1
+    vertical_merge: str | None = None
+    vertical_alignment: str | None = None
+    fit_text: bool | None = None
+    no_wrap: bool | None = None
+    borders: TableBorders = field(default_factory=TableBorders)
+
+
+@dataclass(slots=True, frozen=True)
+class TableRow:
+    cells: tuple[TableCell, ...]
+    properties: TableRowProperties = field(default_factory=TableRowProperties)
+
+
+@dataclass(slots=True, frozen=True)
+class Table:
+    rows: tuple[TableRow, ...]
+
+
+Block = Paragraph | Table
+
+
+@dataclass(slots=True, frozen=True)
 class Document:
     paragraphs: tuple[Paragraph, ...]
     fonts: tuple[FontDefinition, ...] = ()
     styles: StyleSheet = field(default_factory=StyleSheet)
+    blocks: tuple[Block, ...] = ()
+
+    @property
+    def body_blocks(self) -> tuple[Block, ...]:
+        return self.blocks or self.paragraphs
+
+
+@dataclass(slots=True, frozen=True)
+class _TableMarker:
+    kind: str
+    properties: ParagraphProperties
+
+
+def _build_table_row(
+    raw_cells: list[tuple[Paragraph, ...]],
+    properties: TableRowProperties,
+    report: ConversionReport,
+) -> TableRow:
+    definitions = properties.cell_definitions
+    boundaries = properties.cell_boundaries_twips
+    if definitions and len(definitions) != len(raw_cells):
+        report.warning(
+            "TABLE_CELL_DEFINITION_MISMATCH",
+            "table row cell markers do not match its TDefTable definitions",
+            cell_count=len(raw_cells),
+            definition_count=len(definitions),
+        )
+    elif boundaries and len(boundaries) != len(raw_cells) + 1:
+        report.warning(
+            "TABLE_GRID_MISMATCH",
+            "table row cell markers do not match its column boundaries",
+            cell_count=len(raw_cells),
+            boundary_count=len(boundaries),
+        )
+
+    cells: list[TableCell] = []
+    for index, paragraphs in enumerate(raw_cells):
+        definition = (
+            definitions[index] if index < len(definitions) else TableCellDefinition()
+        )
+        grid_width = (
+            boundaries[index + 1] - boundaries[index]
+            if index + 1 < len(boundaries)
+            else None
+        )
+        width = definition.preferred_width_twips
+        if width is None and grid_width is not None and grid_width >= 0:
+            width = grid_width
+        cell = TableCell(
+            paragraphs=paragraphs or (Paragraph(()),),
+            width_twips=width,
+            vertical_merge=definition.vertical_merge,
+            vertical_alignment=definition.vertical_alignment,
+            fit_text=definition.fit_text,
+            no_wrap=definition.no_wrap,
+            borders=definition.borders,
+        )
+        if definition.horizontal_merge == "continue" and cells:
+            previous = cells[-1]
+            merged_width = (
+                (previous.width_twips or 0) + (cell.width_twips or 0)
+                if previous.width_twips is not None or cell.width_twips is not None
+                else None
+            )
+            cells[-1] = replace(
+                previous,
+                width_twips=merged_width,
+                grid_span=previous.grid_span + 1,
+            )
+        else:
+            cells.append(cell)
+    return TableRow(tuple(cells), properties)
+
+
+def _assemble_table_blocks(
+    flow: list[Paragraph | _TableMarker],
+    report: ConversionReport,
+) -> tuple[Block, ...]:
+    nested_count = sum(
+        1
+        for item in flow
+        if (
+            isinstance(item, _TableMarker)
+            and item.properties.effective_table_depth > 1
+        )
+        or (
+            isinstance(item, Paragraph)
+            and item.properties.effective_table_depth > 1
+        )
+    )
+    if nested_count:
+        report.warning(
+            "NESTED_TABLES_DEFERRED",
+            "nested table structure is deferred beyond M4a; its paragraphs were kept",
+            item_count=nested_count,
+        )
+        return tuple(item for item in flow if isinstance(item, Paragraph))
+
+    blocks: list[Block] = []
+    rows: list[TableRow] = []
+    raw_cells: list[tuple[Paragraph, ...]] = []
+    cell_paragraphs: list[Paragraph] = []
+    malformed_groups = 0
+
+    def flush_table() -> None:
+        nonlocal malformed_groups
+        if rows:
+            blocks.append(Table(tuple(rows)))
+            rows.clear()
+        if raw_cells or cell_paragraphs:
+            malformed_groups += 1
+            for paragraphs in raw_cells:
+                blocks.extend(paragraphs)
+            blocks.extend(cell_paragraphs)
+            raw_cells.clear()
+            cell_paragraphs.clear()
+
+    for item in flow:
+        if isinstance(item, Paragraph):
+            if item.properties.effective_table_depth == 1:
+                cell_paragraphs.append(item)
+            else:
+                flush_table()
+                blocks.append(item)
+            continue
+
+        if item.properties.effective_table_depth != 1:
+            continue
+        if item.kind == "cell":
+            raw_cells.append(tuple(cell_paragraphs) or (Paragraph(()),))
+            cell_paragraphs.clear()
+        elif item.kind == "row":
+            if cell_paragraphs:
+                raw_cells.append(tuple(cell_paragraphs))
+                cell_paragraphs.clear()
+            if not raw_cells:
+                malformed_groups += 1
+                continue
+            row_properties = item.properties.table_row or TableRowProperties()
+            rows.append(_build_table_row(raw_cells, row_properties, report))
+            raw_cells.clear()
+
+    flush_table()
+    if malformed_groups:
+        report.warning(
+            "MALFORMED_TABLE_FLATTENED",
+            "incomplete table marker sequences were preserved as paragraphs",
+            group_count=malformed_groups,
+        )
+    return tuple(blocks)
 
 
 def _is_xml_character(character: str) -> bool:
@@ -190,6 +423,7 @@ def parse_main_story(
     default_paragraph_properties = ParagraphProperties()
 
     paragraphs: list[Paragraph] = []
+    flow: list[Paragraph | _TableMarker] = []
     inlines: list[Inline] = []
     text_buffer: list[str] = []
     text_properties = default_character_properties
@@ -197,6 +431,7 @@ def parse_main_story(
     deferred_markers: dict[str, int] = {}
     flattened_fields = 0
     field_stack: list[bool] = []  # False=instruction, True=result
+    last_was_terminator = False
 
     def visible() -> bool:
         return all(field_stack)
@@ -227,7 +462,9 @@ def parse_main_story(
 
     def finish_paragraph(properties: ParagraphProperties) -> None:
         flush_text()
-        paragraphs.append(Paragraph(tuple(inlines), properties))
+        paragraph = Paragraph(tuple(inlines), properties)
+        paragraphs.append(paragraph)
+        flow.append(paragraph)
         inlines.clear()
 
     for unit in characters:
@@ -262,38 +499,73 @@ def parse_main_story(
                 if paragraph_properties_at is not None
                 else default_paragraph_properties
             )
-            finish_paragraph(paragraph_properties)
+            if paragraph_properties.inner_table_row:
+                if text_buffer or inlines:
+                    finish_paragraph(paragraph_properties)
+                flow.append(_TableMarker("row", paragraph_properties))
+            elif paragraph_properties.inner_table_cell:
+                finish_paragraph(paragraph_properties)
+                flow.append(_TableMarker("cell", paragraph_properties))
+            else:
+                finish_paragraph(paragraph_properties)
+            last_was_terminator = True
         elif character == "\t":
             flush_text()
             inlines.append(Tab(character_properties))
+            last_was_terminator = False
         elif character in ("\n", "\v"):
             flush_text()
             inlines.append(Break(BreakType.LINE, character_properties))
+            last_was_terminator = False
         elif character == "\f":
             flush_text()
             inlines.append(Break(BreakType.PAGE, character_properties))
             deferred_markers["BREAK_KIND_APPROXIMATED"] = (
                 deferred_markers.get("BREAK_KIND_APPROXIMATED", 0) + 1
             )
-        elif value in (0x01, 0x02, 0x07):
+            last_was_terminator = False
+        elif value == 0x07:
+            paragraph_properties = (
+                paragraph_properties_at(cp_offset)
+                if paragraph_properties_at is not None
+                else default_paragraph_properties
+            )
+            if paragraph_properties.effective_table_depth:
+                if paragraph_properties.table_terminating:
+                    if text_buffer or inlines:
+                        finish_paragraph(paragraph_properties)
+                    flow.append(_TableMarker("row", paragraph_properties))
+                else:
+                    finish_paragraph(paragraph_properties)
+                    flow.append(_TableMarker("cell", paragraph_properties))
+                last_was_terminator = True
+            else:
+                deferred_markers["TABLE_MARKER_DEFERRED"] = (
+                    deferred_markers.get("TABLE_MARKER_DEFERRED", 0) + 1
+                )
+                append_text("\uFFFC", character_properties)
+                last_was_terminator = False
+        elif value in (0x01, 0x02):
             marker_code = {
                 0x01: "OBJECT_ANCHOR_DEFERRED",
                 0x02: "NOTE_REFERENCE_DEFERRED",
-                0x07: "TABLE_MARKER_DEFERRED",
             }[value]
             deferred_markers[marker_code] = deferred_markers.get(marker_code, 0) + 1
             append_text("\uFFFC", character_properties)
+            last_was_terminator = False
         elif value < 0x20 or not _is_xml_character(character):
             unsupported_controls[value] = unsupported_controls.get(value, 0) + 1
             append_text("\uFFFD", character_properties)
+            last_was_terminator = False
         else:
             append_text(character, character_properties)
+            last_was_terminator = False
 
     if (
         text_buffer
         or inlines
-        or not paragraphs
-        or (characters and characters[-1].text != "\r")
+        or not flow
+        or not last_was_terminator
     ):
         paragraph_cp = characters[-1].cp_start if characters else 0
         paragraph_properties = (
@@ -350,4 +622,7 @@ def parse_main_story(
             count=count,
         )
 
-    return Document(tuple(paragraphs))
+    return Document(
+        tuple(paragraphs),
+        blocks=_assemble_table_blocks(flow, report),
+    )

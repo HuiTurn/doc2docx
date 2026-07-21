@@ -16,7 +16,7 @@ from .errors import (
     InvalidWordDocument,
     UnsafeOutputPathError,
 )
-from .model import Document, parse_main_story
+from .model import Document, Table, parse_main_story
 from .msdoc import (
     FileInformationBlock,
     read_font_table,
@@ -130,7 +130,13 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
     )
-    document = Document(parsed_document.paragraphs, fonts, style_sheet)
+    document = Document(
+        parsed_document.paragraphs,
+        fonts,
+        style_sheet,
+        parsed_document.blocks,
+    )
+    tables = [block for block in document.body_blocks if isinstance(block, Table)]
 
     report.statistics.update(
         {
@@ -152,6 +158,11 @@ def convert(
                 1 for piece in piece_table.pieces if piece.prm
             ),
             "clx_prc_count": len(piece_table.prcs),
+            "table_count": len(tables),
+            "table_row_count": sum(len(table.rows) for table in tables),
+            "table_cell_count": sum(
+                len(row.cells) for table in tables for row in table.rows
+            ),
         }
     )
     if fib.base.has_pictures:
@@ -194,7 +205,7 @@ def convert(
             except FileNotFoundError:
                 pass
 
-    report.info("CONVERSION_COMPLETE", "M0-M3b conversion completed")
+    report.info("CONVERSION_COMPLETE", "M0-M4a conversion completed")
     return ConversionResult(destination_path, report, document)
 
 

@@ -8,13 +8,49 @@ from xml.etree import ElementTree as ET
 from doc2docx import convert, inspect_doc
 from doc2docx.errors import EncryptedDocumentError, UnsafeOutputPathError
 
-from .fixtures import build_formatted_word_cfb, build_word_cfb
+from .fixtures import build_formatted_word_cfb, build_table_word_cfb, build_word_cfb
 
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_table_markers_and_row_properties_emit_a_real_docx_table(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "table.doc"
+            destination = temporary / "table.docx"
+            source.write_bytes(build_table_word_cfb())
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.statistics["table_count"], 1)
+            self.assertEqual(result.report.statistics["table_row_count"], 1)
+            self.assertEqual(result.report.statistics["table_cell_count"], 2)
+            self.assertFalse(result.report.warnings)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            body = root.find(f"{W}body")
+            assert body is not None
+            self.assertEqual(
+                [element.tag for element in body],
+                [f"{W}p", f"{W}tbl", f"{W}p"],
+            )
+            table = body.find(f"{W}tbl")
+            assert table is not None
+            self.assertEqual(
+                [column.get(f"{W}w") for column in table.findall(f"{W}tblGrid/{W}gridCol")],
+                ["1000", "1200"],
+            )
+            self.assertEqual(
+                ["".join(cell.itertext()) for cell in table.findall(f"{W}tr/{W}tc")],
+                ["A", "B"],
+            )
+            self.assertEqual(
+                len(table.findall(f"{W}tblPr/{W}tblBorders/*")),
+                6,
+            )
+
     def test_direct_character_and_paragraph_formatting_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)

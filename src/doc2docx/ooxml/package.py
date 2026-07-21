@@ -9,14 +9,19 @@ from xml.etree import ElementTree as ET
 
 from ..errors import PackageWriteError
 from ..model import (
+    BorderProperties,
     Break,
     BreakType,
     CharacterProperties,
     Document,
     FontDefinition,
+    Paragraph,
     ParagraphProperties,
     StyleSheet,
     Tab,
+    Table,
+    TableBorders,
+    TableCell,
     TextRun,
 )
 
@@ -329,6 +334,250 @@ def _append_text_run(
     text_element.text = text
 
 
+def _append_paragraph(
+    parent: ET.Element,
+    paragraph: Paragraph,
+    *,
+    valid_paragraph_style_ids: set[int],
+    valid_character_style_ids: set[int],
+) -> None:
+    paragraph_element = ET.SubElement(parent, _qn(W_NS, "p"))
+    _append_paragraph_properties(
+        paragraph_element,
+        paragraph.properties,
+        valid_style_ids=valid_paragraph_style_ids,
+    )
+    for inline in paragraph.inlines:
+        if isinstance(inline, TextRun):
+            _append_text_run(
+                paragraph_element,
+                inline.text,
+                inline.properties,
+                valid_style_ids=valid_character_style_ids,
+            )
+        elif isinstance(inline, Tab):
+            run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+            _append_run_properties(
+                run,
+                inline.properties,
+                valid_style_ids=valid_character_style_ids,
+            )
+            ET.SubElement(run, _qn(W_NS, "tab"))
+        elif isinstance(inline, Break):
+            run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+            _append_run_properties(
+                run,
+                inline.properties,
+                valid_style_ids=valid_character_style_ids,
+            )
+            attributes = (
+                {_qn(W_NS, "type"): "page"}
+                if inline.kind is BreakType.PAGE
+                else {}
+            )
+            ET.SubElement(run, _qn(W_NS, "br"), attributes)
+
+
+def _border_attributes(border: BorderProperties) -> dict[str, str]:
+    attributes = {
+        _qn(W_NS, "val"): border.style,
+        _qn(W_NS, "sz"): str(border.size_eighth_points),
+        _qn(W_NS, "color"): border.color,
+        _qn(W_NS, "space"): str(border.space_points),
+    }
+    if border.shadow:
+        attributes[_qn(W_NS, "shadow")] = "1"
+    if border.frame:
+        attributes[_qn(W_NS, "frame")] = "1"
+    return attributes
+
+
+def _append_borders(
+    parent: ET.Element,
+    container_name: str,
+    borders: TableBorders,
+    *,
+    include_inside: bool,
+) -> None:
+    values = (
+        ("top", borders.top),
+        ("left", borders.left),
+        ("bottom", borders.bottom),
+        ("right", borders.right),
+    )
+    if include_inside:
+        values += (
+            ("insideH", borders.inside_horizontal),
+            ("insideV", borders.inside_vertical),
+        )
+    if not any(border is not None for _, border in values):
+        return
+    container = ET.SubElement(parent, _qn(W_NS, container_name))
+    for name, border in values:
+        if border is not None:
+            ET.SubElement(
+                container,
+                _qn(W_NS, name),
+                _border_attributes(border),
+            )
+
+
+def _append_table_cell(
+    row_element: ET.Element,
+    cell: TableCell,
+    *,
+    valid_paragraph_style_ids: set[int],
+    valid_character_style_ids: set[int],
+) -> None:
+    cell_element = ET.SubElement(row_element, _qn(W_NS, "tc"))
+    has_properties = (
+        cell.width_twips is not None
+        or cell.grid_span > 1
+        or cell.vertical_merge is not None
+        or cell.vertical_alignment is not None
+        or cell.fit_text is not None
+        or cell.no_wrap is not None
+        or cell.borders != TableBorders()
+    )
+    if has_properties:
+        properties = ET.SubElement(cell_element, _qn(W_NS, "tcPr"))
+        if cell.width_twips is not None:
+            ET.SubElement(
+                properties,
+                _qn(W_NS, "tcW"),
+                {
+                    _qn(W_NS, "w"): str(cell.width_twips),
+                    _qn(W_NS, "type"): "dxa",
+                },
+            )
+        if cell.grid_span > 1:
+            ET.SubElement(
+                properties,
+                _qn(W_NS, "gridSpan"),
+                {_qn(W_NS, "val"): str(cell.grid_span)},
+            )
+        if cell.vertical_merge is not None:
+            ET.SubElement(
+                properties,
+                _qn(W_NS, "vMerge"),
+                {_qn(W_NS, "val"): cell.vertical_merge},
+            )
+        _append_borders(
+            properties,
+            "tcBorders",
+            cell.borders,
+            include_inside=False,
+        )
+        _append_boolean_property(properties, "noWrap", cell.no_wrap)
+        _append_boolean_property(properties, "tcFitText", cell.fit_text)
+        if cell.vertical_alignment is not None:
+            ET.SubElement(
+                properties,
+                _qn(W_NS, "vAlign"),
+                {_qn(W_NS, "val"): cell.vertical_alignment},
+            )
+    for paragraph in cell.paragraphs or (Paragraph(()),):
+        _append_paragraph(
+            cell_element,
+            paragraph,
+            valid_paragraph_style_ids=valid_paragraph_style_ids,
+            valid_character_style_ids=valid_character_style_ids,
+        )
+
+
+def _append_table(
+    body: ET.Element,
+    table: Table,
+    *,
+    valid_paragraph_style_ids: set[int],
+    valid_character_style_ids: set[int],
+) -> None:
+    table_element = ET.SubElement(body, _qn(W_NS, "tbl"))
+    first_properties = table.rows[0].properties if table.rows else None
+    if first_properties is not None:
+        table_properties = ET.SubElement(table_element, _qn(W_NS, "tblPr"))
+        ET.SubElement(
+            table_properties,
+            _qn(W_NS, "tblW"),
+            {_qn(W_NS, "w"): "0", _qn(W_NS, "type"): "auto"},
+        )
+        if first_properties.alignment is not None:
+            ET.SubElement(
+                table_properties,
+                _qn(W_NS, "jc"),
+                {_qn(W_NS, "val"): first_properties.alignment},
+            )
+        indent = first_properties.left_indent_twips
+        if indent is None and first_properties.gap_half_twips is not None:
+            # WordprocessingML's tblInd is measured from the text margin;
+            # unlike DOC's table origin it must not subtract dxaGapHalf again.
+            indent = 0
+        if indent is not None:
+            ET.SubElement(
+                table_properties,
+                _qn(W_NS, "tblInd"),
+                {
+                    _qn(W_NS, "w"): str(indent),
+                    _qn(W_NS, "type"): "dxa",
+                },
+            )
+        _append_borders(
+            table_properties,
+            "tblBorders",
+            first_properties.borders,
+            include_inside=True,
+        )
+        if first_properties.gap_half_twips is not None:
+            margins = ET.SubElement(table_properties, _qn(W_NS, "tblCellMar"))
+            for side in ("left", "right"):
+                ET.SubElement(
+                    margins,
+                    _qn(W_NS, side),
+                    {
+                        _qn(W_NS, "w"): str(first_properties.gap_half_twips),
+                        _qn(W_NS, "type"): "dxa",
+                    },
+                )
+
+    grid = ET.SubElement(table_element, _qn(W_NS, "tblGrid"))
+    boundaries = (
+        first_properties.cell_boundaries_twips if first_properties is not None else ()
+    )
+    if len(boundaries) >= 2:
+        for left, right in zip(boundaries, boundaries[1:]):
+            ET.SubElement(
+                grid,
+                _qn(W_NS, "gridCol"),
+                {_qn(W_NS, "w"): str(max(right - left, 0))},
+            )
+
+    for row in table.rows:
+        row_element = ET.SubElement(table_element, _qn(W_NS, "tr"))
+        properties = row.properties
+        if (
+            properties.height_twips is not None
+            or properties.cant_split
+            or properties.is_header
+        ):
+            row_properties = ET.SubElement(row_element, _qn(W_NS, "trPr"))
+            if properties.cant_split:
+                ET.SubElement(row_properties, _qn(W_NS, "cantSplit"))
+            if properties.height_twips is not None:
+                attributes = {_qn(W_NS, "val"): str(properties.height_twips)}
+                if properties.height_rule is not None:
+                    attributes[_qn(W_NS, "hRule")] = properties.height_rule
+                ET.SubElement(row_properties, _qn(W_NS, "trHeight"), attributes)
+            if properties.is_header:
+                ET.SubElement(row_properties, _qn(W_NS, "tblHeader"))
+        for cell in row.cells:
+            _append_table_cell(
+                row_element,
+                cell,
+                valid_paragraph_style_ids=valid_paragraph_style_ids,
+                valid_character_style_ids=valid_character_style_ids,
+            )
+
+
 def _document_xml(document: Document) -> bytes:
     valid_paragraph_style_ids = {
         style.index
@@ -342,42 +591,21 @@ def _document_xml(document: Document) -> bytes:
     }
     root = ET.Element(_qn(W_NS, "document"))
     body = ET.SubElement(root, _qn(W_NS, "body"))
-    for paragraph in document.paragraphs:
-        paragraph_element = ET.SubElement(body, _qn(W_NS, "p"))
-        _append_paragraph_properties(
-            paragraph_element,
-            paragraph.properties,
-            valid_style_ids=valid_paragraph_style_ids,
-        )
-        for inline in paragraph.inlines:
-            if isinstance(inline, TextRun):
-                _append_text_run(
-                    paragraph_element,
-                    inline.text,
-                    inline.properties,
-                    valid_style_ids=valid_character_style_ids,
-                )
-            elif isinstance(inline, Tab):
-                run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
-                _append_run_properties(
-                    run,
-                    inline.properties,
-                    valid_style_ids=valid_character_style_ids,
-                )
-                ET.SubElement(run, _qn(W_NS, "tab"))
-            elif isinstance(inline, Break):
-                run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
-                _append_run_properties(
-                    run,
-                    inline.properties,
-                    valid_style_ids=valid_character_style_ids,
-                )
-                attributes = (
-                    {_qn(W_NS, "type"): "page"}
-                    if inline.kind is BreakType.PAGE
-                    else {}
-                )
-                ET.SubElement(run, _qn(W_NS, "br"), attributes)
+    for block in document.body_blocks:
+        if isinstance(block, Paragraph):
+            _append_paragraph(
+                body,
+                block,
+                valid_paragraph_style_ids=valid_paragraph_style_ids,
+                valid_character_style_ids=valid_character_style_ids,
+            )
+        elif isinstance(block, Table):
+            _append_table(
+                body,
+                block,
+                valid_paragraph_style_ids=valid_paragraph_style_ids,
+                valid_character_style_ids=valid_character_style_ids,
+            )
     return _xml_bytes(root)
 
 

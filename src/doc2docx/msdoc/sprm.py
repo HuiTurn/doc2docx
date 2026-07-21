@@ -1,4 +1,4 @@
-"""Bounded parsing and M3a application of MS-DOC property modifiers."""
+"""Bounded parsing and application of supported MS-DOC property modifiers."""
 
 from __future__ import annotations
 
@@ -7,7 +7,14 @@ import struct
 from typing import Callable
 
 from ..errors import InvalidWordDocument
-from ..model import CharacterProperties, ParagraphProperties
+from ..model import (
+    BorderProperties,
+    CharacterProperties,
+    ParagraphProperties,
+    TableBorders,
+    TableCellDefinition,
+    TableRowProperties,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -44,15 +51,25 @@ def parse_grpprl(
                 raise InvalidWordDocument(
                     f"{label} Sprm 0x{opcode:04X} has no variable-length prefix"
                 )
-            byte_count = data[position]
-            # sprmPChgTabs permits 0xFF with an implicit size. M3a does not
+            if opcode == 0xD608:
+                if position > len(data) - 2:
+                    raise InvalidWordDocument(
+                        f"{label} sprmTDefTable has no 16-bit length prefix"
+                    )
+                byte_count = struct.unpack_from("<H", data, position)[0]
+                # TDefTableOperand.cb counts the remainder incremented by one;
+                # including the two-byte cb itself gives cb+1 operand bytes.
+                operand_length = byte_count + 1
+            else:
+                byte_count = data[position]
+                operand_length = 1 + byte_count
+            # sprmPChgTabs permits 0xFF with an implicit size. We do not yet
             # consume tab-stop operands, so retaining the remainder as one
             # opaque operand is safer than guessing boundaries.
             if opcode == 0xC615 and byte_count == 0xFF:
                 modifiers.append(PropertyModifier(opcode, data[position:]))
                 position = len(data)
                 continue
-            operand_length = 1 + byte_count
         else:
             operand_length = _FIXED_OPERAND_LENGTHS.get(spra)
             if operand_length is None:
@@ -138,6 +155,129 @@ _ICO_HIGHLIGHT = {
     0x0F: "darkGray",
     0x10: "lightGray",
 }
+
+_BORDER_STYLES = {
+    0x00: "none",
+    0x01: "single",
+    0x03: "double",
+    0x05: "single",
+    0x06: "dotted",
+    0x07: "dashed",
+    0x08: "dotDash",
+    0x09: "dotDotDash",
+    0x0A: "triple",
+    0x0B: "thinThickSmallGap",
+    0x0C: "thickThinSmallGap",
+    0x0D: "thinThickThinSmallGap",
+    0x0E: "thinThickMediumGap",
+    0x0F: "thickThinMediumGap",
+    0x10: "thinThickThinMediumGap",
+    0x11: "thinThickLargeGap",
+    0x12: "thickThinLargeGap",
+    0x13: "thinThickThinLargeGap",
+    0x14: "wave",
+    0x15: "doubleWave",
+    0x16: "dashSmallGap",
+    0x17: "dashDotStroked",
+    0x18: "threeDEmboss",
+    0x19: "threeDEngrave",
+    0x1A: "outset",
+    0x1B: "inset",
+}
+
+
+def _parse_brc80(data: bytes) -> BorderProperties | None:
+    if len(data) != 4:
+        raise InvalidWordDocument("Brc80 must contain exactly four bytes")
+    if data == b"\xFF\xFF\xFF\xFF" or data[1] in (0x00, 0xFF):
+        return None
+    style = _BORDER_STYLES.get(data[1])
+    if style is None:
+        return None
+    color = "auto" if data[2] == 0 else _ICO_RGB.get(data[2], "auto")
+    return BorderProperties(
+        style=style,
+        size_eighth_points=max(data[0], 2),
+        color=color,
+        space_points=data[3] & 0x1F,
+        shadow=bool(data[3] & 0x20),
+        frame=bool(data[3] & 0x40),
+    )
+
+
+def _parse_table_borders80(operand: bytes) -> TableBorders:
+    if len(operand) != 25 or operand[0] != 0x18:
+        raise InvalidWordDocument("sprmTTableBorders80 operand must contain 24 bytes")
+    values = [
+        _parse_brc80(operand[1 + index * 4 : 5 + index * 4])
+        for index in range(6)
+    ]
+    return TableBorders(*values)
+
+
+def _parse_tdef_table(operand: bytes) -> TableRowProperties:
+    if len(operand) < 3:
+        raise InvalidWordDocument("sprmTDefTable operand is truncated")
+    byte_count = struct.unpack_from("<H", operand)[0]
+    if len(operand) != byte_count + 1:
+        raise InvalidWordDocument(
+            f"sprmTDefTable cb {byte_count} does not match {len(operand)} bytes"
+        )
+    column_count = operand[2]
+    if column_count > 63:
+        raise InvalidWordDocument(
+            f"sprmTDefTable has invalid column count {column_count}"
+        )
+    boundaries_end = 3 + 2 * (column_count + 1)
+    if boundaries_end > len(operand):
+        raise InvalidWordDocument("sprmTDefTable column boundaries are truncated")
+    boundaries = struct.unpack_from(f"<{column_count + 1}h", operand, 3)
+    if any(current < previous for previous, current in zip(boundaries, boundaries[1:])):
+        raise InvalidWordDocument("sprmTDefTable column boundaries are decreasing")
+
+    descriptor_data = operand[boundaries_end:]
+    if len(descriptor_data) % 20:
+        raise InvalidWordDocument("sprmTDefTable TC80 array is truncated")
+    descriptor_count = min(len(descriptor_data) // 20, column_count)
+    definitions: list[TableCellDefinition] = []
+    for index in range(descriptor_count):
+        start = index * 20
+        tcgrf, preferred_width = struct.unpack_from("<HH", descriptor_data, start)
+        horizontal_value = tcgrf & 0x03
+        vertical_value = (tcgrf >> 5) & 0x03
+        alignment_value = (tcgrf >> 7) & 0x03
+        width_type = (tcgrf >> 9) & 0x07
+        definitions.append(
+            TableCellDefinition(
+                preferred_width_twips=(
+                    preferred_width if width_type == 3 else None
+                ),
+                horizontal_merge=(
+                    "continue"
+                    if horizontal_value == 1
+                    else "restart" if horizontal_value in (2, 3) else None
+                ),
+                vertical_merge={1: "continue", 3: "restart"}.get(vertical_value),
+                vertical_alignment={1: "center", 2: "bottom"}.get(
+                    alignment_value
+                ),
+                fit_text=True if tcgrf & 0x1000 else None,
+                no_wrap=True if tcgrf & 0x2000 else None,
+                borders=TableBorders(
+                    top=_parse_brc80(descriptor_data[start + 4 : start + 8]),
+                    left=_parse_brc80(descriptor_data[start + 8 : start + 12]),
+                    bottom=_parse_brc80(descriptor_data[start + 12 : start + 16]),
+                    right=_parse_brc80(descriptor_data[start + 16 : start + 20]),
+                ),
+            )
+        )
+    definitions.extend(
+        TableCellDefinition() for _ in range(column_count - len(definitions))
+    )
+    return TableRowProperties(
+        cell_boundaries_twips=tuple(boundaries),
+        cell_definitions=tuple(definitions),
+    )
 
 
 def apply_character_modifiers(
@@ -276,6 +416,98 @@ def apply_paragraph_modifiers(
             properties = replace(
                 properties,
                 style_id=struct.unpack("<H", operand)[0],
+            )
+        elif opcode == 0x2416:
+            properties = replace(properties, in_table=bool(operand[0]))
+        elif opcode == 0x2417:
+            properties = replace(properties, table_terminating=bool(operand[0]))
+        elif opcode == 0x6649:
+            depth = struct.unpack("<i", operand)[0]
+            if depth < 0:
+                unsupported.add(opcode)
+            else:
+                properties = replace(properties, table_depth=depth)
+        elif opcode == 0x664A:
+            delta = struct.unpack("<i", operand)[0]
+            depth = properties.effective_table_depth + delta
+            if depth < 0:
+                unsupported.add(opcode)
+            else:
+                properties = replace(properties, table_depth=depth)
+        elif opcode == 0x244B:
+            properties = replace(properties, inner_table_cell=bool(operand[0]))
+        elif opcode == 0x244C:
+            properties = replace(properties, inner_table_row=bool(operand[0]))
+        elif opcode == 0x5400:
+            alignment = {0: "left", 1: "center", 2: "right"}.get(
+                struct.unpack("<H", operand)[0]
+            )
+            if alignment is None:
+                unsupported.add(opcode)
+            else:
+                row = properties.table_row or TableRowProperties()
+                properties = replace(
+                    properties,
+                    table_row=replace(row, alignment=alignment),
+                )
+        elif opcode == 0x9601:
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    left_indent_twips=struct.unpack("<h", operand)[0],
+                ),
+            )
+        elif opcode == 0x9602:
+            gap = struct.unpack("<h", operand)[0]
+            if gap < 0:
+                unsupported.add(opcode)
+            else:
+                row = properties.table_row or TableRowProperties()
+                properties = replace(
+                    properties,
+                    table_row=replace(row, gap_half_twips=gap),
+                )
+        elif opcode in (0x3403, 0x3466):
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(row, cant_split=bool(operand[0])),
+            )
+        elif opcode == 0x3404:
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(row, is_header=bool(operand[0])),
+            )
+        elif opcode == 0x9407:
+            height = struct.unpack("<h", operand)[0]
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    height_twips=abs(height) if height else None,
+                    height_rule="exact" if height < 0 else "atLeast",
+                ),
+            )
+        elif opcode == 0xD605:
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(row, borders=_parse_table_borders80(operand)),
+            )
+        elif opcode == 0xD608:
+            definition = _parse_tdef_table(operand)
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    cell_boundaries_twips=definition.cell_boundaries_twips,
+                    cell_definitions=definition.cell_definitions,
+                ),
             )
         elif opcode in (0x2403, 0x2461):
             justification = _JUSTIFICATION.get(operand[0])

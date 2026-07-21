@@ -255,6 +255,91 @@ def build_formatted_word_cfb() -> bytes:
     return _header(fat_sector=17, directory_sector=16) + b"".join(sectors)
 
 
+def build_table_word_cfb() -> bytes:
+    """A one-row, two-cell Word 97 table with a TDefTable grid and borders."""
+
+    text = b"Before\rA\x07B\x07\x07After\r"
+    text_fc = 1024
+    text_fc_end = text_fc + len(text)
+    compressed_fc = (text_fc * 2) | 0x40000000
+    plc_pcd = struct.pack("<2I", 0, len(text))
+    plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
+    clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
+
+    papx_plc_offset = 128
+    papx_plc = struct.pack("<3I", text_fc, text_fc_end, 4)
+    papx_fkp = bytearray(SECTOR_SIZE)
+    boundaries = (
+        text_fc,
+        text_fc + 7,
+        text_fc + 9,
+        text_fc + 11,
+        text_fc + 12,
+        text_fc_end,
+    )
+    struct.pack_into("<6I", papx_fkp, 0, *boundaries)
+    bx_offset = 4 * len(boundaries)
+    papx_fkp[bx_offset] = 0
+    papx_fkp[bx_offset + 13] = 40
+    papx_fkp[bx_offset + 26] = 40
+    papx_fkp[bx_offset + 39] = 64
+    papx_fkp[bx_offset + 52] = 0
+
+    cell_content = struct.pack("<H", 0) + struct.pack("<HB", 0x2416, 1)
+    papx_fkp[80] = 3
+    papx_fkp[81 : 81 + len(cell_content)] = cell_content
+
+    border = bytes((4, 1, 0, 0))
+    tdef = struct.pack("<HB3h", 8, 2, 0, 1000, 2200)
+    row_grpprl = b"".join(
+        (
+            struct.pack("<HB", 0x2416, 1),
+            struct.pack("<HB", 0x2417, 1),
+            struct.pack("<HB", 0xD605, 24) + border * 6,
+            struct.pack("<H", 0xD608) + tdef,
+        )
+    )
+    row_content = struct.pack("<H", 0) + row_grpprl
+    papx_fkp[128] = 24
+    papx_fkp[129 : 129 + len(row_content)] = row_content
+    papx_fkp[129 + len(row_content)] = 0
+    papx_fkp[-1] = 5
+
+    word_document = bytearray(4096)
+    word_document[:1024] = _build_fib(
+        ccp_text=len(text),
+        clx_size=len(clx),
+        papx_plc=(papx_plc_offset, len(papx_plc)),
+        cb_mac=2560,
+    )
+    word_document[text_fc:text_fc_end] = text
+    word_document[4 * SECTOR_SIZE : 5 * SECTOR_SIZE] = papx_fkp
+    table_stream = bytearray(4096)
+    table_stream[: len(clx)] = clx
+    table_stream[papx_plc_offset : papx_plc_offset + len(papx_plc)] = papx_plc
+
+    sectors = [bytearray(SECTOR_SIZE) for _ in range(18)]
+    for index in range(8):
+        sectors[index][:] = word_document[index * 512 : (index + 1) * 512]
+        sectors[8 + index][:] = table_stream[index * 512 : (index + 1) * 512]
+    directory = bytearray(SECTOR_SIZE)
+    directory[0:128] = _directory_entry("Root Entry", 5, child=1)
+    directory[128:256] = _directory_entry(
+        "WordDocument", 2, right=2, start=0, size=4096
+    )
+    directory[256:384] = _directory_entry("1Table", 2, start=8, size=4096)
+    sectors[16][:] = directory
+    fat = [FREESECT] * 128
+    for start in (0, 8):
+        for sector_id in range(start, start + 7):
+            fat[sector_id] = sector_id + 1
+        fat[start + 7] = ENDOFCHAIN
+    fat[16] = ENDOFCHAIN
+    fat[17] = FATSECT
+    struct.pack_into("<128I", sectors[17], 0, *fat)
+    return _header(fat_sector=17, directory_sector=16) + b"".join(sectors)
+
+
 def build_mini_stream_cfb(payload: bytes = b"mini stream") -> bytes:
     if len(payload) > 64:
         raise ValueError("fixture payload must fit one mini sector")
