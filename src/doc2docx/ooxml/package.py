@@ -1768,11 +1768,21 @@ def _append_section_properties(
         column_attributes[_qn(W_NS, "equalWidth")] = (
             "1" if section.columns_evenly_spaced else "0"
         )
+    if section.column_separator is not None:
+        column_attributes[_qn(W_NS, "sep")] = (
+            "1" if section.column_separator else "0"
+        )
     if column_attributes:
         ET.SubElement(
             section_properties,
             _qn(W_NS, "cols"),
             column_attributes,
+        )
+    if section.vertical_alignment is not None:
+        ET.SubElement(
+            section_properties,
+            _qn(W_NS, "vAlign"),
+            {_qn(W_NS, "val"): section.vertical_alignment},
         )
     if section.suppress_endnotes:
         ET.SubElement(section_properties, _qn(W_NS, "noEndnote"))

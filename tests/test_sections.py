@@ -74,6 +74,8 @@ class SectionParsingTests(unittest.TestCase):
                 struct.pack("<HH", 0x5033, 1),
                 struct.pack("<HH", 0x500B, 2),
                 struct.pack("<HH", 0x900C, 720),
+                struct.pack("<HB", 0x3019, 1),
+                struct.pack("<HB", 0x301A, 2),
                 struct.pack("<HH", 0x5040, 4),
                 struct.pack("<HH", 0x5042, 1),
                 struct.pack("<HI", 0x703A, 0x12345678),
@@ -112,6 +114,8 @@ class SectionParsingTests(unittest.TestCase):
         self.assertEqual(section.column_count, 3)
         self.assertEqual(section.column_spacing_twips, 720)
         self.assertTrue(section.columns_evenly_spaced)
+        self.assertTrue(section.column_separator)
+        self.assertEqual(section.vertical_alignment, "both")
         self.assertEqual(section.revision_save_id, 0x12345678)
         self.assertEqual(section.footnote_number_format, "lowerLetter")
         self.assertEqual(section.footnote_number_restart, "eachSect")
@@ -146,6 +150,7 @@ class SectionParsingTests(unittest.TestCase):
                 f"{W}pgNumType",
                 f"{W}lnNumType",
                 f"{W}cols",
+                f"{W}vAlign",
                 f"{W}noEndnote",
                 f"{W}textDirection",
                 f"{W}bidi",
@@ -194,8 +199,83 @@ class SectionParsingTests(unittest.TestCase):
         self.assertEqual(columns.get(f"{W}num"), "3")
         self.assertEqual(columns.get(f"{W}space"), "720")
         self.assertEqual(columns.get(f"{W}equalWidth"), "1")
+        self.assertEqual(columns.get(f"{W}sep"), "1")
+        self.assertEqual(
+            section_element.find(f"{W}vAlign").get(f"{W}val"),  # type: ignore[union-attr]
+            "both",
+        )
         self.assertEqual(section_element.get(f"{W}rsidSect"), "12345678")
         self.assertIsNotNone(section_element.find(f"{W}bidi"))
+
+    def test_equivalent_duplicate_section_cps_are_repaired(self) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<HB", 0x301A, 1),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(128)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<3I", 0, 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0) * 2
+        report = ConversionReport("duplicate-section.doc")
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=report,
+        )
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual((sections[0].cp_start, sections[0].cp_end), (0, 5))
+        self.assertEqual(sections[0].vertical_alignment, "center")
+        self.assertEqual(
+            [warning.code for warning in report.warnings],
+            ["SECTION_DUPLICATE_CP_REPAIRED"],
+        )
+
+    def test_different_duplicate_section_cps_are_rejected(self) -> None:
+        first = b"".join(
+            (
+                struct.pack("<HB", 0x301A, 1),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        second = first.replace(
+            struct.pack("<HB", 0x301A, 1),
+            struct.pack("<HB", 0x301A, 3),
+            1,
+        )
+        word_document = bytearray(192)
+        struct.pack_into("<h", word_document, 32, len(first))
+        word_document[34 : 34 + len(first)] = first
+        struct.pack_into("<h", word_document, 96, len(second))
+        word_document[98 : 98 + len(second)] = second
+        plcf_sed = struct.pack("<3I", 0, 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+        plcf_sed += struct.pack("<HiHI", 0, 96, 0, 0)
+
+        with self.assertRaises(InvalidWordDocument):
+            read_sections(
+                plcf_sed,
+                bytes(word_document),
+                offset=0,
+                size=len(plcf_sed),
+                main_story_cp_count=5,
+                document_lid=1033,
+                report=ConversionReport("different-duplicate-section.doc"),
+            )
 
     def test_continuous_note_number_offsets_are_preserved(self) -> None:
         grpprl = b"".join(

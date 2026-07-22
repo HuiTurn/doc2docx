@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import struct
 
 from ..diagnostics import ConversionReport, SourceLocation
@@ -42,6 +42,13 @@ _LINE_NUMBER_RESTARTS = {
     0x00: "newPage",
     0x01: "newSection",
     0x02: "continuous",
+}
+
+_VERTICAL_ALIGNMENTS = {
+    0x00: "top",
+    0x01: "center",
+    0x02: "both",
+    0x03: "bottom",
 }
 
 # MSOTXFL values 0, 1, 3, and 5 have direct section-level equivalents.
@@ -90,6 +97,15 @@ _REQUIRED_MARGIN_SPRMS = {
     0x9023: "top",
     0x9024: "bottom",
 }
+
+
+@dataclass(slots=True, frozen=True)
+class _SectionRecord:
+    cp_start: int
+    record_offset: int
+    fc_sepx: int
+    modifiers: tuple[PropertyModifier, ...]
+    sed_signature: bytes
 
 
 def _default_header_distance(lid: int) -> int:
@@ -177,6 +193,23 @@ def _apply_section_modifiers(
             )
         elif opcode == 0x900C:  # sprmSDxaColumns
             section = replace(section, column_spacing_twips=_u16(operand))
+        elif opcode == 0x3019:  # sprmSLBetween
+            if operand[0] not in (0x00, 0x01):
+                unsupported.add(opcode)
+            else:
+                section = replace(
+                    section,
+                    column_separator=bool(operand[0]),
+                )
+        elif opcode == 0x301A:  # sprmSVjc
+            vertical_alignment = _VERTICAL_ALIGNMENTS.get(operand[0])
+            if vertical_alignment is None:
+                unsupported.add(opcode)
+            else:
+                section = replace(
+                    section,
+                    vertical_alignment=vertical_alignment,
+                )
         elif opcode == 0x300E:  # sprmSNfcPgn
             number_format = _number_format(operand)
             if number_format in (None, "bullet", "none"):
@@ -455,8 +488,8 @@ def read_sections(
     if cps[0] != 0:
         raise InvalidWordDocument(f"PlcfSed starts at CP {cps[0]}, expected 0")
     for previous, current in zip(cps, cps[1:]):
-        if current <= previous:
-            raise InvalidWordDocument("PlcfSed CP values are not increasing")
+        if current < previous:
+            raise InvalidWordDocument("PlcfSed CP values are decreasing")
     if cps[-1] < main_story_cp_count:
         raise InvalidWordDocument(
             f"PlcfSed ends at CP {cps[-1]} before main story CP {main_story_cp_count}"
@@ -465,20 +498,67 @@ def read_sections(
         raise InvalidWordDocument("PlcfSed has an internal boundary beyond the main story")
 
     sed_offset = 4 * (section_count + 1)
+    raw_records: list[_SectionRecord] = []
+    for index in range(section_count):
+        record_offset = sed_offset + index * 12
+        record = data[record_offset : record_offset + 12]
+        fc_sepx = struct.unpack_from("<i", record, 2)[0]
+        raw_records.append(
+            _SectionRecord(
+                cp_start=cps[index],
+                record_offset=record_offset,
+                fc_sepx=fc_sepx,
+                modifiers=_read_sepx(
+                    word_document,
+                    fc_sepx,
+                    section_index=index,
+                ),
+                sed_signature=record[:2] + record[6:],
+            )
+        )
+
+    records: list[_SectionRecord] = []
+    repaired_duplicate_cps: list[int] = []
+    for record in raw_records:
+        if records and record.cp_start == records[-1].cp_start:
+            previous = records[-1]
+            if (
+                record.sed_signature != previous.sed_signature
+                or record.modifiers != previous.modifiers
+            ):
+                raise InvalidWordDocument(
+                    "PlcfSed contains duplicate CPs with different section properties"
+                )
+            records[-1] = record
+            repaired_duplicate_cps.append(record.cp_start)
+        else:
+            records.append(record)
+    if not records or cps[-1] <= records[-1].cp_start:
+        raise InvalidWordDocument("PlcfSed ends with an empty section range")
+    if repaired_duplicate_cps:
+        report.warning(
+            "SECTION_DUPLICATE_CP_REPAIRED",
+            "equivalent empty sections at duplicate PlcfSed CPs were omitted",
+            location=SourceLocation(story="main", stream="Table"),
+            duplicate_count=len(repaired_duplicate_cps),
+            cps=repaired_duplicate_cps,
+        )
+
     default_header_distance = _default_header_distance(document_lid)
     sections: list[SectionProperties] = []
     unsupported: set[int] = set()
-    for index in range(section_count):
-        record_offset = sed_offset + index * 12
-        fc_sepx = struct.unpack_from("<i", data, record_offset + 2)[0]
-        modifiers = _read_sepx(
-            word_document,
-            fc_sepx,
-            section_index=index,
+    for index, record in enumerate(records):
+        record_offset = record.record_offset
+        fc_sepx = record.fc_sepx
+        modifiers = record.modifiers
+        cp_end = (
+            records[index + 1].cp_start
+            if index + 1 < len(records)
+            else cps[-1]
         )
         section = SectionProperties(
-            cp_start=cps[index],
-            cp_end=min(cps[index + 1], main_story_cp_count),
+            cp_start=record.cp_start,
+            cp_end=min(cp_end, main_story_cp_count),
             header_distance_twips=default_header_distance,
             footer_distance_twips=default_header_distance,
             footnote_position=default_footnote_position,

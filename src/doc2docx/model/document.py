@@ -715,6 +715,8 @@ class SectionProperties:
     column_count: int | None = None
     column_spacing_twips: int | None = None
     columns_evenly_spaced: bool | None = None
+    column_separator: bool | None = None
+    vertical_alignment: str | None = None
     page_number_format: str | None = None
     page_number_start: int | None = None
     line_number_count_by: int | None = None

@@ -699,6 +699,13 @@ def convert(
             "line_numbered_section_count": sum(
                 section.line_number_count_by is not None for section in sections
             ),
+            "column_separator_section_count": sum(
+                section.column_separator is True for section in sections
+            ),
+            "vertically_aligned_section_count": sum(
+                section.vertical_alignment not in (None, "top")
+                for section in sections
+            ),
             "section_note_numbering_override_count": sum(
                 any(
                     value is not None

@@ -17,6 +17,19 @@ current capabilities without release-by-release notes.
   rendered REF and hyperlink results remain intact, and all 36 in-scope files
   in the 38-file regression batch continue to convert.
 
+### M18b
+
+- Preserve section column separators and top/center/justified/bottom vertical
+  alignment as native `w:cols w:sep` and `w:vAlign` properties.
+- Repair duplicate `PlcfSed` CPs only when their adjacent Sed metadata and
+  parsed Sepx property lists are identical; continue rejecting duplicates that
+  could change section semantics.
+- Validate with 178 focused tests and a real LibreOffice-authored Word 97 DOC:
+  its equivalent empty section is collapsed with a targeted warning, the
+  two-column separator renders, and vertical alignment survives structurally.
+  The 38-file regression batch remains unchanged with all 36 in-scope files
+  converting and no unsupported-property warnings.
+
 ## 0.33.0 - 2026-07-22 (M17a-M17c)
 
 ### M17a
