@@ -285,6 +285,78 @@ class HeaderFooterParsingTests(unittest.TestCase):
         self.assertIsNone(newer.footnote_position)
         self.assertEqual(newer.endnote_position, "docEnd")
 
+    def test_dop_note_numbering_and_newer_fallback_are_read(self) -> None:
+        dop = bytearray(500)
+        struct.pack_into("<H", dop, 2, (7 << 2) | 0x01)
+        struct.pack_into("<H", dop, 52, (9 << 2) | 0x02)
+        struct.pack_into("<H", dop, 492, 0x04)
+        struct.pack_into("<H", dop, 494, 0x01)
+
+        settings = read_document_settings(
+            dop,
+            offset=0,
+            size=len(dop),
+            n_fib=0x00D9,
+        )
+
+        self.assertEqual(settings.footnote_number_format, "lowerLetter")
+        self.assertEqual(settings.footnote_number_start, 7)
+        self.assertEqual(settings.footnote_number_restart, "eachSect")
+        self.assertEqual(settings.endnote_number_format, "upperRoman")
+        self.assertEqual(settings.endnote_number_start, 9)
+        self.assertEqual(settings.endnote_number_restart, "eachPage")
+
+        newer = read_document_settings(
+            dop,
+            offset=0,
+            size=len(dop),
+            n_fib=0x0101,
+        )
+        self.assertEqual(newer.footnote_number_format, "lowerLetter")
+        self.assertEqual(newer.footnote_number_start, 7)
+        self.assertIsNone(newer.footnote_number_restart)
+        self.assertEqual(newer.endnote_number_format, "upperRoman")
+        self.assertEqual(newer.endnote_number_start, 9)
+        self.assertIsNone(newer.endnote_number_restart)
+
+    def test_invalid_legacy_dop_note_restarts_are_rejected(self) -> None:
+        invalid_footnote = bytearray(84)
+        struct.pack_into("<H", invalid_footnote, 2, 0x0003)
+        with self.assertRaises(InvalidWordDocument):
+            read_document_settings(
+                invalid_footnote,
+                offset=0,
+                size=len(invalid_footnote),
+            )
+
+        invalid_endnote = bytearray(84)
+        struct.pack_into("<H", invalid_endnote, 52, 0x0003)
+        with self.assertRaises(InvalidWordDocument):
+            read_document_settings(
+                invalid_endnote,
+                offset=0,
+                size=len(invalid_endnote),
+            )
+
+    def test_invalid_legacy_dop_note_formats_are_rejected(self) -> None:
+        invalid_footnote = bytearray(500)
+        struct.pack_into("<H", invalid_footnote, 492, 0x00FE)
+        with self.assertRaises(InvalidWordDocument):
+            read_document_settings(
+                invalid_footnote,
+                offset=0,
+                size=len(invalid_footnote),
+            )
+
+        invalid_endnote = bytearray(500)
+        struct.pack_into("<H", invalid_endnote, 494, 0x00FE)
+        with self.assertRaises(InvalidWordDocument):
+            read_document_settings(
+                invalid_endnote,
+                offset=0,
+                size=len(invalid_endnote),
+            )
+
     def test_invalid_dop_note_positions_are_rejected(self) -> None:
         invalid_footnote = bytearray(84)
         struct.pack_into("<H", invalid_footnote, 0, 0x0060)

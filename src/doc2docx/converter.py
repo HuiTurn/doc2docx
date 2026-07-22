@@ -148,7 +148,17 @@ def convert(
         document_lid=fib.base.lid,
         report=report,
         default_footnote_position=document_settings.footnote_position,
+        default_footnote_number_format=(
+            document_settings.footnote_number_format
+        ),
+        default_footnote_number_start=document_settings.footnote_number_start,
+        default_footnote_number_restart=(
+            document_settings.footnote_number_restart
+        ),
         default_endnote_position=document_settings.endnote_position,
+        default_endnote_number_format=document_settings.endnote_number_format,
+        default_endnote_number_start=document_settings.endnote_number_start,
+        default_endnote_number_restart=document_settings.endnote_number_restart,
     )
     font_table = fib.sttbf_ffn
     fonts = read_font_table(
@@ -679,11 +689,18 @@ def convert(
                     value is not None
                     for value in (
                         section.footnote_number_format,
+                        section.footnote_number_start,
                         section.footnote_number_restart,
                         section.endnote_number_format,
+                        section.endnote_number_start,
                         section.endnote_number_restart,
                     )
                 )
+                for section in sections
+            ),
+            "section_note_number_start_count": sum(
+                section.footnote_number_start is not None
+                or section.endnote_number_start is not None
                 for section in sections
             ),
             "section_note_placement_count": sum(

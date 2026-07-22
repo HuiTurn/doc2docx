@@ -1625,6 +1625,7 @@ def _append_section_properties(
     if (
         section.footnote_position is not None
         or section.footnote_number_format is not None
+        or section.footnote_number_start is not None
         or section.footnote_number_restart is not None
     ):
         footnote_properties = ET.SubElement(
@@ -1643,6 +1644,12 @@ def _append_section_properties(
                 _qn(W_NS, "numFmt"),
                 {_qn(W_NS, "val"): section.footnote_number_format},
             )
+        if section.footnote_number_start is not None:
+            ET.SubElement(
+                footnote_properties,
+                _qn(W_NS, "numStart"),
+                {_qn(W_NS, "val"): str(section.footnote_number_start)},
+            )
         if section.footnote_number_restart is not None:
             ET.SubElement(
                 footnote_properties,
@@ -1652,6 +1659,7 @@ def _append_section_properties(
     if (
         section.endnote_position is not None
         or section.endnote_number_format is not None
+        or section.endnote_number_start is not None
         or section.endnote_number_restart is not None
     ):
         endnote_properties = ET.SubElement(
@@ -1669,6 +1677,12 @@ def _append_section_properties(
                 endnote_properties,
                 _qn(W_NS, "numFmt"),
                 {_qn(W_NS, "val"): section.endnote_number_format},
+            )
+        if section.endnote_number_start is not None:
+            ET.SubElement(
+                endnote_properties,
+                _qn(W_NS, "numStart"),
+                {_qn(W_NS, "val"): str(section.endnote_number_start)},
             )
         if section.endnote_number_restart is not None:
             ET.SubElement(

@@ -16,7 +16,8 @@ faithful conversion.
 - Preserves text, common character and paragraph formatting, fonts, styles,
   native numbered and bulleted lists, tables, page layout, sections, headers,
   and footers.
-- Converts footnotes, endnotes, comments, named bookmarks, safe document-local
+- Converts footnotes and endnotes—including custom separators, placement, and
+  numbering controls—plus comments, named bookmarks, safe document-local
   reference fields, common date/metadata/page/statistic fields, and positioned
   textboxes to native WordprocessingML structures.
 - Preserves core document metadata such as title, author, subject, keywords,

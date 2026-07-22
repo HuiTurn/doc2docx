@@ -5,6 +5,23 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.32.0 - 2026-07-22 (M16a-M16c)
+
+### M16c
+
+- Preserve Word 97 DOP footnote/endnote number formats, starting numbers, and
+  restart policies, plus Word 2000+ section-level `sprmSNFtn`/`sprmSNEdn`
+  continuous-numbering offsets, as native `w:numFmt`, `w:numStart`, and
+  `w:numRestart` properties.
+- Enforce the MS-DOC 14-bit numbering range and ignore section offsets when the
+  corresponding numbering mode restarts, as required by the binary format.
+- Retain DOP starting values as an interoperability fallback for newer DOC
+  versions whose writers omit the equivalent section offset SPRM.
+- Validate with 169 focused tests and the content-deduplicated 38-file real-DOC
+  batch: all 36 in-scope files convert without unsupported-property warnings.
+  A non-default lower-letter footnote starting at 7 survives a
+  DOCX-to-DOC-to-DOCX round trip and renders with the expected `g` reference.
+
 ### M16b
 
 - Preserve legacy DOP footnote placement for Word 97 documents, section-level

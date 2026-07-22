@@ -718,9 +718,11 @@ class SectionProperties:
     page_number_format: str | None = None
     footnote_position: str | None = None
     footnote_number_format: str | None = None
+    footnote_number_start: int | None = None
     footnote_number_restart: str | None = None
     endnote_position: str | None = None
     endnote_number_format: str | None = None
+    endnote_number_start: int | None = None
     endnote_number_restart: str | None = None
     suppress_endnotes: bool | None = None
     text_direction: str | None = None

@@ -174,6 +174,94 @@ class SectionParsingTests(unittest.TestCase):
         self.assertEqual(section_element.get(f"{W}rsidSect"), "12345678")
         self.assertIsNotNone(section_element.find(f"{W}bidi"))
 
+    def test_continuous_note_number_offsets_are_preserved(self) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<HB", 0x303C, 0),
+                struct.pack("<HH", 0x503F, 6),
+                struct.pack("<HB", 0x303E, 0),
+                struct.pack("<HH", 0x5041, 9),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(128)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+        report = ConversionReport("note-starts.doc")
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=report,
+        )
+
+        section = sections[0]
+        self.assertEqual(section.footnote_number_start, 6)
+        self.assertEqual(section.endnote_number_start, 9)
+        self.assertFalse(report.warnings)
+
+        document = Document(
+            paragraphs=(Paragraph((TextRun("Body"),)),),
+            sections=sections,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "note-starts.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        section_element = root.find(f"./{W}body/{W}sectPr")
+        assert section_element is not None
+        self.assertEqual(
+            section_element.find(f"{W}footnotePr/{W}numStart").get(f"{W}val"),  # type: ignore[union-attr]
+            "6",
+        )
+        self.assertEqual(
+            section_element.find(f"{W}endnotePr/{W}numStart").get(f"{W}val"),  # type: ignore[union-attr]
+            "9",
+        )
+
+    def test_note_offsets_are_ignored_when_numbering_restarts(self) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<HB", 0x303C, 1),
+                struct.pack("<HH", 0x503F, 6),
+                struct.pack("<HB", 0x303E, 1),
+                struct.pack("<HH", 0x5041, 9),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(128)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=ConversionReport("ignored-note-starts.doc"),
+        )
+
+        self.assertIsNone(sections[0].footnote_number_start)
+        self.assertIsNone(sections[0].endnote_number_start)
+
     def test_incomplete_document_grid_is_reported_and_omitted(self) -> None:
         grpprl = b"".join(
             (

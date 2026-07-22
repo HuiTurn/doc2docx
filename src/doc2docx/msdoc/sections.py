@@ -121,6 +121,8 @@ def _apply_section_modifiers(
 ) -> tuple[SectionProperties, set[int], set[int]]:
     unsupported: set[int] = set()
     seen: set[int] = set()
+    footnote_number_start: int | None = None
+    endnote_number_start: int | None = None
     for modifier in modifiers:
         opcode = modifier.opcode
         operand = modifier.operand
@@ -187,6 +189,18 @@ def _apply_section_modifiers(
                 unsupported.add(opcode)
             else:
                 section = replace(section, endnote_number_restart=restart)
+        elif opcode == 0x503F:  # sprmSNFtn
+            value = _u16(operand)
+            if value > 16383:
+                unsupported.add(opcode)
+            else:
+                footnote_number_start = value
+        elif opcode == 0x5041:  # sprmSNEdn
+            value = _u16(operand)
+            if value > 16383:
+                unsupported.add(opcode)
+            else:
+                endnote_number_start = value
         elif opcode == 0xB017:  # sprmSDyaHdrTop
             section = replace(section, header_distance_twips=_u16(operand))
         elif opcode == 0xB018:  # sprmSDyaHdrBottom
@@ -293,6 +307,22 @@ def _apply_section_modifiers(
             section = replace(section, revision_save_id=_u32(operand))
         else:
             unsupported.add(opcode)
+    if (
+        footnote_number_start is not None
+        and section.footnote_number_restart in (None, "continuous")
+    ):
+        section = replace(
+            section,
+            footnote_number_start=footnote_number_start,
+        )
+    if (
+        endnote_number_start is not None
+        and section.endnote_number_restart in (None, "continuous")
+    ):
+        section = replace(
+            section,
+            endnote_number_start=endnote_number_start,
+        )
     return section, unsupported, seen
 
 
@@ -334,7 +364,13 @@ def read_sections(
     document_lid: int,
     report: ConversionReport,
     default_footnote_position: str | None = None,
+    default_footnote_number_format: str | None = None,
+    default_footnote_number_start: int | None = None,
+    default_footnote_number_restart: str | None = None,
     default_endnote_position: str | None = None,
+    default_endnote_number_format: str | None = None,
+    default_endnote_number_start: int | None = None,
+    default_endnote_number_restart: str | None = None,
 ) -> tuple[SectionProperties, ...]:
     """Resolve the main-story section PLC into page-layout properties."""
 
@@ -381,7 +417,13 @@ def read_sections(
             header_distance_twips=default_header_distance,
             footer_distance_twips=default_header_distance,
             footnote_position=default_footnote_position,
+            footnote_number_format=default_footnote_number_format,
+            footnote_number_start=default_footnote_number_start,
+            footnote_number_restart=default_footnote_number_restart,
             endnote_position=default_endnote_position,
+            endnote_number_format=default_endnote_number_format,
+            endnote_number_start=default_endnote_number_start,
+            endnote_number_restart=default_endnote_number_restart,
         )
         section, section_unsupported, seen = _apply_section_modifiers(
             section,

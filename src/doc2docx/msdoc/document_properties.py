@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import struct
 
 from ..errors import InvalidWordDocument
+from .number_formats import NUMBER_FORMATS
 
 
 @dataclass(slots=True, frozen=True)
@@ -13,7 +14,20 @@ class WordDocumentSettings:
     even_and_odd_headers: bool = False
     adjust_line_height_in_table: bool | None = None
     footnote_position: str | None = None
+    footnote_number_format: str | None = None
+    footnote_number_start: int | None = None
+    footnote_number_restart: str | None = None
     endnote_position: str | None = None
+    endnote_number_format: str | None = None
+    endnote_number_start: int | None = None
+    endnote_number_restart: str | None = None
+
+
+_NUMBER_RESTARTS = {
+    0x00: "continuous",
+    0x01: "eachSect",
+    0x02: "eachPage",
+}
 
 
 def read_document_settings(
@@ -33,6 +47,20 @@ def read_document_settings(
         raise InvalidWordDocument("DOP is truncated before DopBase flags")
     flags = struct.unpack_from("<H", table_stream, offset)[0]
     footnote_position: str | None = None
+    footnote_number_format: str | None = None
+    footnote_number_start: int | None = None
+    footnote_number_restart: str | None = None
+    if size >= 4:
+        footnote_numbering = struct.unpack_from(
+            "<H",
+            table_stream,
+            offset + 2,
+        )[0]
+        # Word-compatible writers retain the document-wide starting value in
+        # DopBase even for newer nFib versions, while moving restart behavior
+        # to section SPRMs. Reading the high 14 bits is therefore a safe
+        # interoperability fallback; the low restart bits remain legacy-only.
+        footnote_number_start = footnote_numbering >> 2
     if n_fib <= 0x00D9:
         fpc = (flags >> 5) & 0x03
         footnote_position = {
@@ -42,7 +70,53 @@ def read_document_settings(
         }.get(fpc)
         if footnote_position is None:
             raise InvalidWordDocument(f"DopBase has invalid fpc value {fpc}")
+        if size >= 4:
+            footnote_number_restart = _NUMBER_RESTARTS.get(
+                footnote_numbering & 0x03
+            )
+            if footnote_number_restart is None:
+                raise InvalidWordDocument(
+                    "DopBase has invalid rncFtn value "
+                    f"{footnote_numbering & 0x03}"
+                )
     endnote_position: str | None = None
+    endnote_number_format: str | None = None
+    endnote_number_start: int | None = None
+    endnote_number_restart: str | None = None
+    if size >= 54:
+        endnote_numbering = struct.unpack_from(
+            "<H",
+            table_stream,
+            offset + 52,
+        )[0]
+        endnote_number_start = endnote_numbering >> 2
+        if n_fib <= 0x00D9:
+            endnote_number_restart = _NUMBER_RESTARTS.get(
+                endnote_numbering & 0x03
+            )
+            if endnote_number_restart is None:
+                raise InvalidWordDocument(
+                    "DopBase has invalid rncEdn value "
+                    f"{endnote_numbering & 0x03}"
+                )
+    if size >= 496:
+        footnote_format_value, endnote_format_value = struct.unpack_from(
+            "<HH",
+            table_stream,
+            offset + 492,
+        )
+        footnote_number_format = NUMBER_FORMATS.get(footnote_format_value)
+        endnote_number_format = NUMBER_FORMATS.get(endnote_format_value)
+        if footnote_number_format is None and n_fib <= 0x00D9:
+            raise InvalidWordDocument(
+                "Dop97 has invalid nfcFtnRef value "
+                f"0x{footnote_format_value:04X}"
+            )
+        if endnote_number_format is None and n_fib <= 0x00D9:
+            raise InvalidWordDocument(
+                "Dop97 has invalid nfcEdnRef value "
+                f"0x{endnote_format_value:04X}"
+            )
     if size >= 56:
         epc = struct.unpack_from("<H", table_stream, offset + 54)[0] & 0x03
         endnote_position = {0x00: "sectEnd", 0x03: "docEnd"}.get(epc)
@@ -56,5 +130,11 @@ def read_document_settings(
         even_and_odd_headers=bool(flags & 0x0001),
         adjust_line_height_in_table=adjust_line_height_in_table,
         footnote_position=footnote_position,
+        footnote_number_format=footnote_number_format,
+        footnote_number_start=footnote_number_start,
+        footnote_number_restart=footnote_number_restart,
         endnote_position=endnote_position,
+        endnote_number_format=endnote_number_format,
+        endnote_number_start=endnote_number_start,
+        endnote_number_restart=endnote_number_restart,
     )
