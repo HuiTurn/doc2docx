@@ -25,6 +25,19 @@ current capabilities without release-by-release notes.
   field renders as `VII` from an upper-Roman start value of 7, and the unchanged
   38-file regression batch with all 36 in-scope files converting.
 
+### M17c
+
+- Preserve enabled section line numbering, including display interval, starting
+  number, text distance, and page/section/continuous restart modes, as native
+  `w:lnNumType` properties in schema order.
+- Ignore dormant line-number settings when numbering is disabled and enforce
+  the MS-DOC interval and distance bounds.
+- Preserve the stored zero-based line-number start directly so WordprocessingML
+  consumers display the same one-based number as the binary source.
+- Validate with 174 focused tests, a real DOC round trip that renders line
+  numbers 5, 6, and 7 while retaining the live page field, and the unchanged
+  38-file regression batch with all 36 in-scope files converting.
+
 ## 0.32.0 - 2026-07-22 (M16a-M16c)
 
 ### M16c

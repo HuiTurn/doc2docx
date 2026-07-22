@@ -1736,6 +1736,27 @@ def _append_section_properties(
             _qn(W_NS, "pgNumType"),
             page_number_attributes,
         )
+    if section.line_number_count_by is not None:
+        line_number_attributes = {
+            _qn(W_NS, "countBy"): str(section.line_number_count_by),
+        }
+        if section.line_number_start is not None:
+            line_number_attributes[_qn(W_NS, "start")] = str(
+                section.line_number_start
+            )
+        if section.line_number_distance_twips is not None:
+            line_number_attributes[_qn(W_NS, "distance")] = str(
+                section.line_number_distance_twips
+            )
+        if section.line_number_restart is not None:
+            line_number_attributes[_qn(W_NS, "restart")] = (
+                section.line_number_restart
+            )
+        ET.SubElement(
+            section_properties,
+            _qn(W_NS, "lnNumType"),
+            line_number_attributes,
+        )
     column_attributes: dict[str, str] = {}
     if section.column_count is not None:
         column_attributes[_qn(W_NS, "num")] = str(section.column_count)

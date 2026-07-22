@@ -38,6 +38,12 @@ _FOOTNOTE_POSITIONS = {
     0x02: "beneathText",
 }
 
+_LINE_NUMBER_RESTARTS = {
+    0x00: "newPage",
+    0x01: "newSection",
+    0x02: "continuous",
+}
+
 # MSOTXFL values 0, 1, 3, and 5 have direct section-level equivalents.
 # Values 2 and 4 require glyph rotation/flow behavior that w:sectPr cannot
 # preserve faithfully, so they remain diagnosed instead of being mislabeled.
@@ -123,6 +129,10 @@ def _apply_section_modifiers(
     seen: set[int] = set()
     page_number_restart: bool | None = None
     page_number_start: int | None = None
+    line_number_count_by: int | None = None
+    line_number_start = 0
+    line_number_distance_twips = 0
+    line_number_restart = "newPage"
     footnote_number_start: int | None = None
     endnote_number_start: int | None = None
     for modifier in modifiers:
@@ -187,6 +197,30 @@ def _apply_section_modifiers(
                     f"section page-number start {value} exceeds 2147483646"
                 )
             page_number_start = value
+        elif opcode == 0x3013:  # sprmSLnc
+            restart = _LINE_NUMBER_RESTARTS.get(operand[0])
+            if restart is None:
+                unsupported.add(opcode)
+            else:
+                line_number_restart = restart
+        elif opcode == 0x5015:  # sprmSNLnnMod
+            value = _u16(operand)
+            if value > 100:
+                raise InvalidWordDocument(
+                    f"section line-number interval {value} exceeds 100"
+                )
+            line_number_count_by = value
+        elif opcode == 0x9016:  # sprmSDxaLnn
+            value = _u16(operand)
+            if value > 31680:
+                raise InvalidWordDocument(
+                    f"section line-number distance {value} exceeds 31680 twips"
+                )
+            line_number_distance_twips = value
+        elif opcode == 0x501B:  # sprmSLnnMin
+            # SLnnMin and interoperable w:lnNumType writers both use the
+            # zero-based value immediately preceding the displayed start.
+            line_number_start = _u16(operand)
         elif opcode == 0x303C:  # sprmSRncFtn
             restart = _NUMBER_RESTARTS.get(operand[0])
             if restart is None:
@@ -329,6 +363,14 @@ def _apply_section_modifiers(
             page_number_start=(
                 0 if page_number_start is None else page_number_start
             ),
+        )
+    if line_number_count_by not in (None, 0):
+        section = replace(
+            section,
+            line_number_count_by=line_number_count_by,
+            line_number_start=line_number_start,
+            line_number_distance_twips=line_number_distance_twips,
+            line_number_restart=line_number_restart,
         )
     if (
         footnote_number_start is not None

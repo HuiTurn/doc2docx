@@ -717,6 +717,10 @@ class SectionProperties:
     columns_evenly_spaced: bool | None = None
     page_number_format: str | None = None
     page_number_start: int | None = None
+    line_number_count_by: int | None = None
+    line_number_start: int | None = None
+    line_number_distance_twips: int | None = None
+    line_number_restart: str | None = None
     footnote_position: str | None = None
     footnote_number_format: str | None = None
     footnote_number_start: int | None = None

@@ -61,6 +61,10 @@ class SectionParsingTests(unittest.TestCase):
                 struct.pack("<HB", 0x3011, 1),
                 struct.pack("<HH", 0x501C, 7),
                 struct.pack("<HI", 0x7044, 123456),
+                struct.pack("<HB", 0x3013, 2),
+                struct.pack("<HH", 0x5015, 3),
+                struct.pack("<HH", 0x9016, 720),
+                struct.pack("<HH", 0x501B, 4),
                 struct.pack("<HB", 0x3005, 1),
                 struct.pack("<HB", 0x303C, 1),
                 struct.pack("<HB", 0x303E, 1),
@@ -101,6 +105,10 @@ class SectionParsingTests(unittest.TestCase):
         section = sections[0]
         self.assertEqual(section.page_number_format, "upperRoman")
         self.assertEqual(section.page_number_start, 123456)
+        self.assertEqual(section.line_number_count_by, 3)
+        self.assertEqual(section.line_number_start, 4)
+        self.assertEqual(section.line_number_distance_twips, 720)
+        self.assertEqual(section.line_number_restart, "continuous")
         self.assertEqual(section.column_count, 3)
         self.assertEqual(section.column_spacing_twips, 720)
         self.assertTrue(section.columns_evenly_spaced)
@@ -136,6 +144,7 @@ class SectionParsingTests(unittest.TestCase):
                 f"{W}pgSz",
                 f"{W}pgMar",
                 f"{W}pgNumType",
+                f"{W}lnNumType",
                 f"{W}cols",
                 f"{W}noEndnote",
                 f"{W}textDirection",
@@ -170,6 +179,12 @@ class SectionParsingTests(unittest.TestCase):
             section_element.find(f"{W}pgNumType").get(f"{W}start"),  # type: ignore[union-attr]
             "123456",
         )
+        line_numbers = section_element.find(f"{W}lnNumType")
+        assert line_numbers is not None
+        self.assertEqual(line_numbers.get(f"{W}countBy"), "3")
+        self.assertEqual(line_numbers.get(f"{W}start"), "4")
+        self.assertEqual(line_numbers.get(f"{W}distance"), "720")
+        self.assertEqual(line_numbers.get(f"{W}restart"), "continuous")
         self.assertEqual(
             section_element.find(f"{W}textDirection").get(f"{W}val"),  # type: ignore[union-attr]
             "tbRl",
@@ -322,6 +337,62 @@ class SectionParsingTests(unittest.TestCase):
                 document_lid=1033,
                 report=ConversionReport("invalid-page-number.doc"),
             )
+
+    def test_line_number_properties_are_ignored_when_disabled(self) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<HB", 0x3013, 1),
+                struct.pack("<HH", 0x5015, 0),
+                struct.pack("<HH", 0x9016, 720),
+                struct.pack("<HH", 0x501B, 4),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(128)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=ConversionReport("line-numbers-disabled.doc"),
+        )
+
+        self.assertIsNone(sections[0].line_number_count_by)
+        self.assertIsNone(sections[0].line_number_start)
+        self.assertIsNone(sections[0].line_number_distance_twips)
+        self.assertIsNone(sections[0].line_number_restart)
+
+    def test_out_of_range_line_number_values_are_rejected(self) -> None:
+        for grpprl in (
+            struct.pack("<HH", 0x5015, 101),
+            struct.pack("<HH", 0x9016, 31681),
+        ):
+            word_document = bytearray(64)
+            struct.pack_into("<h", word_document, 32, len(grpprl))
+            word_document[34 : 34 + len(grpprl)] = grpprl
+            plcf_sed = struct.pack("<2I", 0, 5)
+            plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+
+            with self.assertRaises(InvalidWordDocument):
+                read_sections(
+                    plcf_sed,
+                    bytes(word_document),
+                    offset=0,
+                    size=len(plcf_sed),
+                    main_story_cp_count=5,
+                    document_lid=1033,
+                    report=ConversionReport("invalid-line-number.doc"),
+                )
 
     def test_incomplete_document_grid_is_reported_and_omitted(self) -> None:
         grpprl = b"".join(
