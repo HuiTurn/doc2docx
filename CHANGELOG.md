@@ -5,6 +5,8 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.34.0 - 2026-07-22 (M18a-M18c)
+
 ### M18a
 
 - Parse bounded `NilPICFAndBinData` records attached to `REF`, `PAGEREF`,
