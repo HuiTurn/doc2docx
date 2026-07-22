@@ -5,6 +5,16 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+### M20a
+
+- Preserve DopBase mirrored-margin and top-gutter flags as native
+  `w:mirrorMargins` and `w:gutterAtTop` document settings, so facing-page
+  margins and non-side gutter placement remain active after conversion.
+- Validate with 188 focused tests and a real Word 97 DOC whose mirrored margins
+  and 720-twip top gutter survive structurally and render equivalently. The
+  38-file regression batch remains at 36 in-scope successes with no unsupported
+  warnings.
+
 ## 0.35.0 - 2026-07-22 (M19a-M19c)
 
 ### M19a

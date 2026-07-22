@@ -916,6 +916,8 @@ class Document:
     numbering: NumberingDefinitions = field(default_factory=NumberingDefinitions)
     pictures: tuple[InlinePicture | FloatingPicture, ...] = ()
     even_and_odd_headers: bool = False
+    mirror_margins: bool = False
+    gutter_at_top: bool = False
     adjust_line_height_in_table: bool | None = None
 
     @property

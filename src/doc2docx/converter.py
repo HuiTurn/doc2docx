@@ -590,6 +590,8 @@ def convert(
             + header_floating_pictures.pictures
         ),
         even_and_odd_headers=document_settings.even_and_odd_headers,
+        mirror_margins=document_settings.mirror_margins,
+        gutter_at_top=document_settings.gutter_at_top,
         adjust_line_height_in_table=(
             document_settings.adjust_line_height_in_table
         ),
@@ -759,6 +761,8 @@ def convert(
                 section.text_direction not in (None, "lrTb")
                 for section in sections
             ),
+            "mirror_margins": document.mirror_margins,
+            "gutter_at_top": document.gutter_at_top,
             "adjust_line_height_in_table": (
                 document.adjust_line_height_in_table is True
             ),

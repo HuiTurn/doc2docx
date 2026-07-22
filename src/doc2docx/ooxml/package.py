@@ -2599,9 +2599,15 @@ def _comments_xml(document: Document) -> bytes:
 def _settings_xml(
     *,
     even_and_odd_headers: bool,
+    mirror_margins: bool,
+    gutter_at_top: bool,
     adjust_line_height_in_table: bool | None,
 ) -> bytes:
     root = ET.Element(_qn(W_NS, "settings"))
+    if mirror_margins:
+        ET.SubElement(root, _qn(W_NS, "mirrorMargins"))
+    if gutter_at_top:
+        ET.SubElement(root, _qn(W_NS, "gutterAtTop"))
     if even_and_odd_headers:
         ET.SubElement(root, _qn(W_NS, "evenAndOddHeaders"))
     if adjust_line_height_in_table:
@@ -2984,6 +2990,8 @@ def write_docx(document: Document, destination: str | Path) -> None:
     has_fonts = bool(document.fonts)
     has_settings = (
         document.even_and_odd_headers
+        or document.mirror_margins
+        or document.gutter_at_top
         or document.adjust_line_height_in_table is True
     )
     has_footnotes = bool(
@@ -3111,6 +3119,8 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     "word/settings.xml",
                     _settings_xml(
                         even_and_odd_headers=document.even_and_odd_headers,
+                        mirror_margins=document.mirror_margins,
+                        gutter_at_top=document.gutter_at_top,
                         adjust_line_height_in_table=(
                             document.adjust_line_height_in_table
                         ),

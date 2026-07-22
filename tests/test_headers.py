@@ -385,6 +385,38 @@ class HeaderFooterParsingTests(unittest.TestCase):
         settings = read_document_settings(dop, offset=0, size=len(dop))
         self.assertFalse(settings.adjust_line_height_in_table)
 
+    def test_dop_mirrored_margins_and_top_gutter_are_read(self) -> None:
+        dop = bytearray(84)
+        struct.pack_into("<I", dop, 4, 1 << 21)
+        struct.pack_into("<H", dop, 82, 1 << 15)
+
+        settings = read_document_settings(dop, offset=0, size=len(dop))
+
+        self.assertTrue(settings.mirror_margins)
+        self.assertTrue(settings.gutter_at_top)
+
+    def test_mirrored_margins_and_top_gutter_are_packaged(self) -> None:
+        document = Document(
+            (Paragraph((TextRun("Mirrored"),)),),
+            even_and_odd_headers=True,
+            mirror_margins=True,
+            gutter_at_top=True,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "mirrored.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                settings = ET.fromstring(package.read("word/settings.xml"))
+
+        self.assertEqual(
+            [child.tag for child in settings],
+            [
+                f"{W}mirrorMargins",
+                f"{W}gutterAtTop",
+                f"{W}evenAndOddHeaders",
+            ],
+        )
+
     def test_table_grid_line_height_compatibility_is_packaged(self) -> None:
         document = Document(
             (Paragraph((TextRun("Grid"),)),),

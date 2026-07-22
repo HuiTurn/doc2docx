@@ -12,6 +12,8 @@ from .number_formats import NUMBER_FORMATS
 @dataclass(slots=True, frozen=True)
 class WordDocumentSettings:
     even_and_odd_headers: bool = False
+    mirror_margins: bool = False
+    gutter_at_top: bool = False
     adjust_line_height_in_table: bool | None = None
     footnote_position: str | None = None
     footnote_number_format: str | None = None
@@ -46,6 +48,16 @@ def read_document_settings(
     if size < 2:
         raise InvalidWordDocument("DOP is truncated before DopBase flags")
     flags = struct.unpack_from("<H", table_stream, offset)[0]
+    extended_flags = (
+        struct.unpack_from("<I", table_stream, offset + 4)[0]
+        if size >= 8
+        else 0
+    )
+    view_flags = (
+        struct.unpack_from("<H", table_stream, offset + 82)[0]
+        if size >= 84
+        else 0
+    )
     footnote_position: str | None = None
     footnote_number_format: str | None = None
     footnote_number_start: int | None = None
@@ -128,6 +140,8 @@ def read_document_settings(
         adjust_line_height_in_table = not bool(copts80 & 0x00000008)
     return WordDocumentSettings(
         even_and_odd_headers=bool(flags & 0x0001),
+        mirror_margins=bool(extended_flags & (1 << 21)),
+        gutter_at_top=bool(view_flags & (1 << 15)),
         adjust_line_height_in_table=adjust_line_height_in_table,
         footnote_position=footnote_position,
         footnote_number_format=footnote_number_format,
