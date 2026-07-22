@@ -5,6 +5,8 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.35.0 - 2026-07-22 (M19a-M19c)
+
 ### M19a
 
 - Preserve section chapter-based page numbering, including heading levels 1–9
