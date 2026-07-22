@@ -592,6 +592,13 @@ def convert(
         even_and_odd_headers=document_settings.even_and_odd_headers,
         mirror_margins=document_settings.mirror_margins,
         gutter_at_top=document_settings.gutter_at_top,
+        default_tab_stop_twips=document_settings.default_tab_stop_twips,
+        auto_hyphenation=document_settings.auto_hyphenation,
+        do_not_hyphenate_caps=document_settings.do_not_hyphenate_caps,
+        hyphenation_zone_twips=document_settings.hyphenation_zone_twips,
+        consecutive_hyphen_limit=(
+            document_settings.consecutive_hyphen_limit
+        ),
         adjust_line_height_in_table=(
             document_settings.adjust_line_height_in_table
         ),
@@ -763,6 +770,15 @@ def convert(
             ),
             "mirror_margins": document.mirror_margins,
             "gutter_at_top": document.gutter_at_top,
+            "default_tab_stop_twips": document.default_tab_stop_twips or 0,
+            "auto_hyphenation": document.auto_hyphenation is True,
+            "do_not_hyphenate_caps": (
+                document.do_not_hyphenate_caps is True
+            ),
+            "hyphenation_zone_twips": document.hyphenation_zone_twips or 0,
+            "consecutive_hyphen_limit": (
+                document.consecutive_hyphen_limit or 0
+            ),
             "adjust_line_height_in_table": (
                 document.adjust_line_height_in_table is True
             ),

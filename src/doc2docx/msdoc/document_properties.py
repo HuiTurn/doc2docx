@@ -14,6 +14,11 @@ class WordDocumentSettings:
     even_and_odd_headers: bool = False
     mirror_margins: bool = False
     gutter_at_top: bool = False
+    default_tab_stop_twips: int | None = None
+    auto_hyphenation: bool | None = None
+    do_not_hyphenate_caps: bool | None = None
+    hyphenation_zone_twips: int | None = None
+    consecutive_hyphen_limit: int | None = None
     adjust_line_height_in_table: bool | None = None
     footnote_position: str | None = None
     footnote_number_format: str | None = None
@@ -57,6 +62,27 @@ def read_document_settings(
         struct.unpack_from("<H", table_stream, offset + 82)[0]
         if size >= 84
         else 0
+    )
+    default_tab_stop_twips: int | None = None
+    if size >= 12:
+        default_tab_stop_twips = struct.unpack_from(
+            "<H",
+            table_stream,
+            offset + 10,
+        )[0]
+        if default_tab_stop_twips > 32767:
+            raise InvalidWordDocument(
+                "DopBase default tab stop exceeds the OOXML signed-short range"
+            )
+    hyphenation_zone_twips = (
+        struct.unpack_from("<H", table_stream, offset + 14)[0]
+        if size >= 16
+        else None
+    )
+    consecutive_hyphen_limit = (
+        struct.unpack_from("<H", table_stream, offset + 16)[0]
+        if size >= 18
+        else None
     )
     footnote_position: str | None = None
     footnote_number_format: str | None = None
@@ -142,6 +168,15 @@ def read_document_settings(
         even_and_odd_headers=bool(flags & 0x0001),
         mirror_margins=bool(extended_flags & (1 << 21)),
         gutter_at_top=bool(view_flags & (1 << 15)),
+        default_tab_stop_twips=default_tab_stop_twips,
+        auto_hyphenation=(
+            bool(extended_flags & (1 << 12)) if size >= 8 else None
+        ),
+        do_not_hyphenate_caps=(
+            not bool(extended_flags & (1 << 11)) if size >= 8 else None
+        ),
+        hyphenation_zone_twips=hyphenation_zone_twips,
+        consecutive_hyphen_limit=consecutive_hyphen_limit,
         adjust_line_height_in_table=adjust_line_height_in_table,
         footnote_position=footnote_position,
         footnote_number_format=footnote_number_format,

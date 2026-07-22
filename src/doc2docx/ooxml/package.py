@@ -2601,6 +2601,11 @@ def _settings_xml(
     even_and_odd_headers: bool,
     mirror_margins: bool,
     gutter_at_top: bool,
+    default_tab_stop_twips: int | None,
+    auto_hyphenation: bool | None,
+    do_not_hyphenate_caps: bool | None,
+    hyphenation_zone_twips: int | None,
+    consecutive_hyphen_limit: int | None,
     adjust_line_height_in_table: bool | None,
 ) -> bytes:
     root = ET.Element(_qn(W_NS, "settings"))
@@ -2608,6 +2613,30 @@ def _settings_xml(
         ET.SubElement(root, _qn(W_NS, "mirrorMargins"))
     if gutter_at_top:
         ET.SubElement(root, _qn(W_NS, "gutterAtTop"))
+    if default_tab_stop_twips is not None:
+        ET.SubElement(
+            root,
+            _qn(W_NS, "defaultTabStop"),
+            {_qn(W_NS, "val"): str(default_tab_stop_twips)},
+        )
+    _append_boolean_property(root, "autoHyphenation", auto_hyphenation)
+    if consecutive_hyphen_limit is not None:
+        ET.SubElement(
+            root,
+            _qn(W_NS, "consecutiveHyphenLimit"),
+            {_qn(W_NS, "val"): str(consecutive_hyphen_limit)},
+        )
+    if hyphenation_zone_twips is not None:
+        ET.SubElement(
+            root,
+            _qn(W_NS, "hyphenationZone"),
+            {_qn(W_NS, "val"): str(hyphenation_zone_twips)},
+        )
+    _append_boolean_property(
+        root,
+        "doNotHyphenateCaps",
+        do_not_hyphenate_caps,
+    )
     if even_and_odd_headers:
         ET.SubElement(root, _qn(W_NS, "evenAndOddHeaders"))
     if adjust_line_height_in_table:
@@ -2992,6 +3021,11 @@ def write_docx(document: Document, destination: str | Path) -> None:
         document.even_and_odd_headers
         or document.mirror_margins
         or document.gutter_at_top
+        or document.default_tab_stop_twips is not None
+        or document.auto_hyphenation is not None
+        or document.do_not_hyphenate_caps is not None
+        or document.hyphenation_zone_twips is not None
+        or document.consecutive_hyphen_limit is not None
         or document.adjust_line_height_in_table is True
     )
     has_footnotes = bool(
@@ -3121,6 +3155,19 @@ def write_docx(document: Document, destination: str | Path) -> None:
                         even_and_odd_headers=document.even_and_odd_headers,
                         mirror_margins=document.mirror_margins,
                         gutter_at_top=document.gutter_at_top,
+                        default_tab_stop_twips=(
+                            document.default_tab_stop_twips
+                        ),
+                        auto_hyphenation=document.auto_hyphenation,
+                        do_not_hyphenate_caps=(
+                            document.do_not_hyphenate_caps
+                        ),
+                        hyphenation_zone_twips=(
+                            document.hyphenation_zone_twips
+                        ),
+                        consecutive_hyphen_limit=(
+                            document.consecutive_hyphen_limit
+                        ),
                         adjust_line_height_in_table=(
                             document.adjust_line_height_in_table
                         ),

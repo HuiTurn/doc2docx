@@ -918,6 +918,11 @@ class Document:
     even_and_odd_headers: bool = False
     mirror_margins: bool = False
     gutter_at_top: bool = False
+    default_tab_stop_twips: int | None = None
+    auto_hyphenation: bool | None = None
+    do_not_hyphenate_caps: bool | None = None
+    hyphenation_zone_twips: int | None = None
+    consecutive_hyphen_limit: int | None = None
     adjust_line_height_in_table: bool | None = None
 
     @property

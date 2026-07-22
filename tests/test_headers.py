@@ -417,6 +417,66 @@ class HeaderFooterParsingTests(unittest.TestCase):
             ],
         )
 
+    def test_dop_tab_stop_and_hyphenation_settings_are_read(self) -> None:
+        dop = bytearray(84)
+        struct.pack_into("<I", dop, 4, 1 << 12)
+        struct.pack_into("<H", dop, 10, 360)
+        struct.pack_into("<H", dop, 14, 720)
+        struct.pack_into("<H", dop, 16, 2)
+
+        settings = read_document_settings(dop, offset=0, size=len(dop))
+
+        self.assertEqual(settings.default_tab_stop_twips, 360)
+        self.assertTrue(settings.auto_hyphenation)
+        self.assertTrue(settings.do_not_hyphenate_caps)
+        self.assertEqual(settings.hyphenation_zone_twips, 720)
+        self.assertEqual(settings.consecutive_hyphen_limit, 2)
+
+    def test_tab_stop_and_hyphenation_settings_are_packaged(self) -> None:
+        document = Document(
+            (Paragraph((TextRun("Hyphenation"),)),),
+            default_tab_stop_twips=360,
+            auto_hyphenation=True,
+            do_not_hyphenate_caps=True,
+            hyphenation_zone_twips=720,
+            consecutive_hyphen_limit=2,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "hyphenation.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                settings = ET.fromstring(package.read("word/settings.xml"))
+
+        self.assertEqual(
+            [child.tag for child in settings],
+            [
+                f"{W}defaultTabStop",
+                f"{W}autoHyphenation",
+                f"{W}consecutiveHyphenLimit",
+                f"{W}hyphenationZone",
+                f"{W}doNotHyphenateCaps",
+            ],
+        )
+        self.assertEqual(
+            settings.find(f"{W}defaultTabStop").get(f"{W}val"),  # type: ignore[union-attr]
+            "360",
+        )
+        self.assertEqual(
+            settings.find(f"{W}consecutiveHyphenLimit").get(f"{W}val"),  # type: ignore[union-attr]
+            "2",
+        )
+        self.assertEqual(
+            settings.find(f"{W}hyphenationZone").get(f"{W}val"),  # type: ignore[union-attr]
+            "720",
+        )
+
+    def test_dop_default_tab_stop_must_fit_ooxml_range(self) -> None:
+        dop = bytearray(84)
+        struct.pack_into("<H", dop, 10, 32768)
+
+        with self.assertRaises(InvalidWordDocument):
+            read_document_settings(dop, offset=0, size=len(dop))
+
     def test_table_grid_line_height_compatibility_is_packaged(self) -> None:
         document = Document(
             (Paragraph((TextRun("Grid"),)),),

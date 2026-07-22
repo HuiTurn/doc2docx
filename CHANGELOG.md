@@ -15,6 +15,21 @@ current capabilities without release-by-release notes.
   38-file regression batch remains at 36 in-scope successes with no unsupported
   warnings.
 
+### M20b
+
+- Preserve DopBase automatic tab spacing and document hyphenation controls,
+  including automatic hyphenation, capital-word behavior, hyphenation zone,
+  and the maximum number of consecutive hyphenated lines.
+- Emit the corresponding native WordprocessingML settings in schema order and
+  reject tab intervals that cannot be represented by `w:defaultTabStop`.
+- Validate with 191 focused tests and a real Word 97 DOC that retains the
+  360-twip tab interval and automatic-hyphenation switch. LibreOffice
+  normalizes the hyphenation zone, consecutive-line limit, and capital-word
+  behavior on both DOCX- and RTF-to-DOC export, so those values are
+  structurally validated without overstating real-file coverage. The 38-file
+  regression batch remains at 36 in-scope successes with no unsupported
+  warnings.
+
 ## 0.35.0 - 2026-07-22 (M19a-M19c)
 
 ### M19a
