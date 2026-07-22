@@ -245,6 +245,20 @@ def _apply_section_modifiers(
                 columns_evenly_spaced = bool(operand[0])
             else:
                 unsupported.add(opcode)
+        elif opcode == 0x3006:  # sprmSFProtected
+            if operand[0] not in (0x00, 0x01):
+                unsupported.add(opcode)
+            else:
+                # The binary flag is named from the opposite perspective:
+                # one means this section is exempt from form protection.
+                section = replace(
+                    section,
+                    form_protected=not bool(operand[0]),
+                )
+        elif opcode == 0x5007:  # sprmSDmBinFirst
+            section = replace(section, paper_source_first=_u16(operand))
+        elif opcode == 0x5008:  # sprmSDmBinOther
+            section = replace(section, paper_source_other=_u16(operand))
         elif opcode == 0xF203:  # sprmSDxaColWidth
             column_index = operand[0]
             width = _u16(operand[1:])
@@ -379,6 +393,11 @@ def _apply_section_modifiers(
                 unsupported.add(opcode)
             else:
                 section = replace(section, bidirectional=bool(operand[0]))
+        elif opcode == 0x322A:  # sprmSFRTLGutter
+            if operand[0] not in (0x00, 0x01):
+                unsupported.add(opcode)
+            else:
+                section = replace(section, rtl_gutter=bool(operand[0]))
         elif opcode in _PAGE_BORDER_SIDES:
             side, modern = _PAGE_BORDER_SIDES[opcode]
             page_borders[side] = (

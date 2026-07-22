@@ -703,6 +703,17 @@ def convert(
             "page_bordered_section_count": sum(
                 section.page_borders is not None for section in sections
             ),
+            "paper_source_section_count": sum(
+                section.paper_source_first is not None
+                or section.paper_source_other is not None
+                for section in sections
+            ),
+            "form_protected_section_count": sum(
+                section.form_protected is True for section in sections
+            ),
+            "rtl_gutter_section_count": sum(
+                section.rtl_gutter is True for section in sections
+            ),
             "line_numbered_section_count": sum(
                 section.line_number_count_by is not None for section in sections
             ),

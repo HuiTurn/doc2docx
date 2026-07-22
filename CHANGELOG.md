@@ -28,6 +28,20 @@ current capabilities without release-by-release notes.
   survive exactly and render identically. The 38-file regression batch remains
   at 36 in-scope successes with no unsupported warnings.
 
+### M19c
+
+- Preserve first-page and subsequent-page printer paper source identifiers as
+  native `w:paperSrc` attributes, including the full unsigned 16-bit range.
+- Map the inverse `sprmSFProtected` meaning to explicit section `w:formProt`
+  values and preserve right-to-left gutter placement as `w:rtlGutter`, while
+  retaining explicit false values and deferring invalid Bool8 operands.
+- Validate with 186 focused tests and a real Word 97 DOC whose 720-twip
+  right-side gutter survives and renders equivalently. LibreOffice discards
+  paper-source and section-protection data on both DOCX- and RTF-to-DOC export,
+  so those properties are structurally validated without a false real-file
+  round-trip claim. The 38-file regression batch remains unchanged with all 36
+  in-scope files converting and no unsupported-property warnings.
+
 ## 0.34.0 - 2026-07-22 (M18a-M18c)
 
 ### M18a

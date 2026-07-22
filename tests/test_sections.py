@@ -68,11 +68,15 @@ class SectionParsingTests(unittest.TestCase):
                 struct.pack("<HH", 0x9016, 720),
                 struct.pack("<HH", 0x501B, 4),
                 struct.pack("<HB", 0x3005, 1),
+                struct.pack("<HB", 0x3006, 0),
+                struct.pack("<HH", 0x5007, 2),
+                struct.pack("<HH", 0x5008, 7),
                 struct.pack("<HB", 0x303C, 1),
                 struct.pack("<HB", 0x303E, 1),
                 struct.pack("<HB", 0x303B, 2),
                 struct.pack("<HB", 0x3012, 0),
                 struct.pack("<HB", 0x3228, 1),
+                struct.pack("<HB", 0x322A, 1),
                 struct.pack("<HH", 0x5033, 1),
                 struct.pack("<HH", 0x500B, 2),
                 struct.pack("<HH", 0x900C, 720),
@@ -119,6 +123,9 @@ class SectionParsingTests(unittest.TestCase):
         self.assertEqual(section.column_spacing_twips, 720)
         self.assertTrue(section.columns_evenly_spaced)
         self.assertTrue(section.column_separator)
+        self.assertEqual(section.paper_source_first, 2)
+        self.assertEqual(section.paper_source_other, 7)
+        self.assertTrue(section.form_protected)
         self.assertEqual(section.vertical_alignment, "both")
         self.assertEqual(section.revision_save_id, 0x12345678)
         self.assertEqual(section.footnote_number_format, "lowerLetter")
@@ -130,6 +137,7 @@ class SectionParsingTests(unittest.TestCase):
         self.assertTrue(section.suppress_endnotes)
         self.assertEqual(section.text_direction, "tbRl")
         self.assertTrue(section.bidirectional)
+        self.assertTrue(section.rtl_gutter)
         self.assertFalse(report.warnings)
 
         document = Document(
@@ -151,13 +159,16 @@ class SectionParsingTests(unittest.TestCase):
                 f"{W}endnotePr",
                 f"{W}pgSz",
                 f"{W}pgMar",
+                f"{W}paperSrc",
                 f"{W}pgNumType",
                 f"{W}lnNumType",
                 f"{W}cols",
+                f"{W}formProt",
                 f"{W}vAlign",
                 f"{W}noEndnote",
                 f"{W}textDirection",
                 f"{W}bidi",
+                f"{W}rtlGutter",
             ],
         )
         self.assertEqual(
@@ -184,6 +195,10 @@ class SectionParsingTests(unittest.TestCase):
             section_element.find(f"{W}pgNumType").get(f"{W}fmt"),  # type: ignore[union-attr]
             "upperRoman",
         )
+        paper_source = section_element.find(f"{W}paperSrc")
+        assert paper_source is not None
+        self.assertEqual(paper_source.get(f"{W}first"), "2")
+        self.assertEqual(paper_source.get(f"{W}other"), "7")
         self.assertEqual(
             section_element.find(f"{W}pgNumType").get(f"{W}start"),  # type: ignore[union-attr]
             "123456",
@@ -217,7 +232,99 @@ class SectionParsingTests(unittest.TestCase):
             "both",
         )
         self.assertEqual(section_element.get(f"{W}rsidSect"), "12345678")
+        self.assertIsNotNone(section_element.find(f"{W}formProt"))
         self.assertIsNotNone(section_element.find(f"{W}bidi"))
+        self.assertIsNotNone(section_element.find(f"{W}rtlGutter"))
+
+    def test_unprotected_form_section_and_disabled_rtl_gutter_are_explicit(self) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<HB", 0x3006, 1),
+                struct.pack("<HB", 0x322A, 0),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(96)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=ConversionReport("section-flags.doc"),
+        )
+
+        self.assertFalse(sections[0].form_protected)
+        self.assertFalse(sections[0].rtl_gutter)
+
+        document = Document(
+            paragraphs=(Paragraph((TextRun("Body"),)),),
+            sections=sections,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "section-flags.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        section_element = root.find(f"./{W}body/{W}sectPr")
+        assert section_element is not None
+        self.assertEqual(
+            section_element.find(f"{W}formProt").get(f"{W}val"),  # type: ignore[union-attr]
+            "0",
+        )
+        self.assertEqual(
+            section_element.find(f"{W}rtlGutter").get(f"{W}val"),  # type: ignore[union-attr]
+            "0",
+        )
+
+    def test_invalid_protection_and_rtl_gutter_flags_remain_deferred(self) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<HB", 0x3006, 2),
+                struct.pack("<HB", 0x322A, 3),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(96)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+        report = ConversionReport("invalid-section-flags.doc")
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=report,
+        )
+
+        self.assertIsNone(sections[0].form_protected)
+        self.assertIsNone(sections[0].rtl_gutter)
+        self.assertEqual(
+            [warning.code for warning in report.warnings],
+            ["UNSUPPORTED_SECTION_SPRMS"],
+        )
+        self.assertEqual(
+            report.warnings[0].details["opcodes"],
+            ["0x3006", "0x322A"],
+        )
 
     def test_equivalent_duplicate_section_cps_are_repaired(self) -> None:
         grpprl = b"".join(

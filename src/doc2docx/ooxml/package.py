@@ -1718,6 +1718,24 @@ def _append_section_properties(
             _qn(W_NS, "gutter"): str(section.gutter_twips),
         },
     )
+    if (
+        section.paper_source_first is not None
+        or section.paper_source_other is not None
+    ):
+        paper_source_attributes = {}
+        if section.paper_source_first is not None:
+            paper_source_attributes[_qn(W_NS, "first")] = str(
+                section.paper_source_first
+            )
+        if section.paper_source_other is not None:
+            paper_source_attributes[_qn(W_NS, "other")] = str(
+                section.paper_source_other
+            )
+        ET.SubElement(
+            section_properties,
+            _qn(W_NS, "paperSrc"),
+            paper_source_attributes,
+        )
     if section.page_borders is not None:
         page_border_attributes = {}
         if section.page_border_display is not None:
@@ -1826,6 +1844,11 @@ def _append_section_properties(
             if index < len(spacings):
                 attributes[_qn(W_NS, "space")] = str(spacings[index])
             ET.SubElement(columns_element, _qn(W_NS, "col"), attributes)
+    _append_boolean_property(
+        section_properties,
+        "formProt",
+        section.form_protected,
+    )
     if section.vertical_alignment is not None:
         ET.SubElement(
             section_properties,
@@ -1846,6 +1869,11 @@ def _append_section_properties(
         section_properties,
         "bidi",
         section.bidirectional,
+    )
+    _append_boolean_property(
+        section_properties,
+        "rtlGutter",
+        section.rtl_gutter,
     )
     if (
         section.document_grid_type is not None

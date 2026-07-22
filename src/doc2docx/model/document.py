@@ -710,6 +710,8 @@ class SectionProperties:
     header_distance_twips: int = 720
     footer_distance_twips: int = 720
     gutter_twips: int = 0
+    paper_source_first: int | None = None
+    paper_source_other: int | None = None
     page_borders: TableBorders | None = None
     page_border_display: str | None = None
     page_border_offset_from: str | None = None
@@ -722,6 +724,7 @@ class SectionProperties:
     column_widths_twips: tuple[int, ...] | None = None
     column_spacings_twips: tuple[int, ...] | None = None
     column_separator: bool | None = None
+    form_protected: bool | None = None
     vertical_alignment: str | None = None
     page_number_format: str | None = None
     page_number_start: int | None = None
@@ -742,6 +745,7 @@ class SectionProperties:
     suppress_endnotes: bool | None = None
     text_direction: str | None = None
     bidirectional: bool | None = None
+    rtl_gutter: bool | None = None
     document_grid_type: str | None = None
     document_grid_line_pitch_twips: int | None = None
     document_grid_character_space: int | None = None
