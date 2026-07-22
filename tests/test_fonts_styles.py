@@ -151,7 +151,74 @@ def _table_style_sheet() -> bytes:
     )
 
 
+def _numbering_style_sheet() -> bytes:
+    normal = _paragraph_std(
+        "Normal",
+        index=0,
+        based_on=None,
+        character_grpprl=b"",
+    )
+    numbering_index = 1
+    numbering_base = struct.pack(
+        "<5H",
+        0,
+        (0x0FFF << 4) | 4,
+        (numbering_index << 4) | 1,
+        0,
+        0,
+    )
+    numbering = (
+        numbering_base
+        + _xstz("No List")
+        + _lpupx(struct.pack("<H", numbering_index))
+    )
+    stshif = struct.pack("<6H3h", 2, 10, 0, 2, 0, 0, 0, 0, 0)
+    return b"".join(
+        (
+            struct.pack("<H", len(stshif)),
+            stshif,
+            struct.pack("<H", len(normal)),
+            normal,
+            struct.pack("<H", len(numbering)),
+            numbering,
+        )
+    )
+
+
 class FontAndStyleTests(unittest.TestCase):
+    def test_parses_and_writes_numbering_style(self) -> None:
+        style_bytes = _numbering_style_sheet()
+        report = ConversionReport("numbering-style.doc")
+
+        styles = read_style_sheet(
+            style_bytes,
+            offset=0,
+            size=len(style_bytes),
+            fonts=(),
+            report=report,
+        )
+
+        numbering_style = styles.styles[1]
+        assert numbering_style is not None
+        self.assertEqual(numbering_style.kind, "numbering")
+        self.assertEqual(numbering_style.name, "No List")
+        self.assertFalse(report.warnings)
+
+        document = Document(
+            (Paragraph((TextRun("Body"),)),),
+            styles=styles,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "numbering-style.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/styles.xml"))
+
+        style = root.find(f"{W}style[@{W}styleId='DocStyle1']")
+        assert style is not None
+        self.assertEqual(style.get(f"{W}type"), "numbering")
+        self.assertEqual(style.find(f"{W}name").get(f"{W}val"), "No List")  # type: ignore[union-attr]
+
     def test_repairs_unassigned_style_language_lid(self) -> None:
         normal = _paragraph_std(
             "Normal",

@@ -5,6 +5,16 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+### M17a
+
+- Parse `StkListGRLPUPX` numbering-style paragraph properties and emit MS-DOC
+  `stkList` definitions as native `w:style type="numbering"` entries.
+- Keep unknown style kinds diagnosed while removing the stale deferred warning
+  for specification-defined numbering styles.
+- Validate with 170 focused tests and the 38-file content-deduplicated real-DOC
+  batch: all seven numbering-style documents emit native styles, the deferred
+  style-kind diagnostic is eliminated, and all 36 in-scope files still convert.
+
 ## 0.32.0 - 2026-07-22 (M16a-M16c)
 
 ### M16c

@@ -653,6 +653,11 @@ def convert(
                 for style in style_sheet.styles
                 if style is not None and style.kind == "table"
             ),
+            "numbering_style_count": sum(
+                1
+                for style in style_sheet.styles
+                if style is not None and style.kind == "numbering"
+            ),
             "piece_prm_count": sum(
                 1 for piece in piece_table.pieces if piece.prm
             ),

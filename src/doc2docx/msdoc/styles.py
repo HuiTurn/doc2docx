@@ -156,6 +156,21 @@ def _parse_std(
                 label=f"{label}.UpxChpx.grpprl",
                 allow_trailing_zero_padding=True,
             )
+    elif kind == "numbering" and upx_values:
+        # StkListGRLPUPX contains one optional UpxPapx. Its leading istd
+        # identifies the numbering style itself; the remaining grpprl can
+        # contain only sprmPIlfo according to MS-DOC.
+        if len(upx_values[0]) < 2:
+            raise InvalidWordDocument(f"{label} UpxPapx has no istd")
+        paragraph_modifiers = parse_grpprl(
+            upx_values[0][2:],
+            label=f"{label}.UpxPapx.grpprl",
+            allow_trailing_zero_padding=True,
+        )
+        if any(modifier.opcode != 0x460B for modifier in paragraph_modifiers):
+            raise InvalidWordDocument(
+                f"{label} numbering UpxPapx contains a non-list SPRM"
+            )
 
     return _RawStyle(
         index=index,
@@ -331,12 +346,12 @@ def read_style_sheet(
         )
     deferred_kinds = sorted(
         {raw.kind for raw in raw_styles if raw is not None}
-        - {"paragraph", "character", "table"}
+        - {"paragraph", "character", "table", "numbering"}
     )
     if deferred_kinds:
         report.warning(
             "STYLE_KINDS_DEFERRED",
-            "table, numbering, or unknown style kinds were parsed but not emitted",
+            "unknown style kinds were parsed but not emitted",
             kinds=deferred_kinds,
         )
 

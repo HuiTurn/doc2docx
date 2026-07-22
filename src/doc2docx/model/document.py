@@ -405,7 +405,7 @@ class FontDefinition:
 
 @dataclass(slots=True, frozen=True)
 class StyleDefinition:
-    """A paragraph or character style, retaining its DOC style-table index."""
+    """A DOC style definition, retaining its style-table index and type."""
 
     index: int
     name: str

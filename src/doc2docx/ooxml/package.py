@@ -2567,10 +2567,16 @@ def _styles_xml(style_sheet: StyleSheet) -> bytes:
     emitted_by_id = {
         style.index: style
         for style in style_sheet.styles
-        if style is not None and style.kind in ("paragraph", "character", "table")
+        if style is not None
+        and style.kind in ("paragraph", "character", "table", "numbering")
     }
     for style in style_sheet.styles:
-        if style is None or style.kind not in ("paragraph", "character", "table"):
+        if style is None or style.kind not in (
+            "paragraph",
+            "character",
+            "table",
+            "numbering",
+        ):
             continue
         attributes = {
             _qn(W_NS, "type"): style.kind,
