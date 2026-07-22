@@ -21,6 +21,7 @@ from ..model import (
     parse_main_story,
 )
 from .fields import read_field_table
+from .officeart import OfficeArtChildAnchor
 from .pieces import PieceTable
 
 
@@ -39,18 +40,28 @@ _WRAP_SIDE = {0: "both", 1: "left", 2: "right", 3: "largest"}
 
 @dataclass(slots=True, frozen=True)
 class TextBoxCollection:
-    by_anchor_cp: Mapping[int, FloatingTextBox]
+    by_anchor_cp: Mapping[int, tuple[FloatingTextBox, ...]]
     textbox_count: int = 0
     field_count: int = 0
     field_character_count: int = 0
     styled_textbox_count: int = 0
+    deferred_grouped_textbox_count: int = 0
+    reconstructed_grouped_textbox_count: int = 0
 
     def textbox_at(self, cp: int) -> FloatingTextBox | None:
-        return self.by_anchor_cp.get(cp)
+        textboxes = self.by_anchor_cp.get(cp, ())
+        return textboxes[0] if textboxes else None
+
+    def textboxes_at(self, cp: int) -> tuple[FloatingTextBox, ...]:
+        return self.by_anchor_cp.get(cp, ())
 
     @property
     def shape_ids(self) -> frozenset[int]:
-        return frozenset(textbox.shape_id for textbox in self.by_anchor_cp.values())
+        return frozenset(
+            textbox.shape_id
+            for textboxes in self.by_anchor_cp.values()
+            for textbox in textboxes
+        )
 
 
 # Preserve the public M5c name while exposing the shared collection to M7d.
@@ -375,6 +386,9 @@ def _read_textboxes(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
+    shape_child_anchor_at: (
+        Callable[[int], OfficeArtChildAnchor | None] | None
+    ) = None,
     shape_rotation_at: Callable[[int], float] | None = None,
     shape_horizontally_flipped_at: Callable[[int], bool] | None = None,
     shape_vertically_flipped_at: Callable[[int], bool] | None = None,
@@ -464,27 +478,92 @@ def _read_textboxes(
         ccp_textboxes=ccp_textboxes,
         break_structure=break_structure,
     )
-    by_anchor_cp: dict[int, FloatingTextBox] = {}
+    by_anchor_cp_lists: dict[int, list[FloatingTextBox]] = {}
     linked_count = 0
     approximated_style_count = 0
+    deferred_grouped_shape_ids: list[int] = []
+    reconstructed_grouped_shape_ids: list[int] = []
+
+    def resolve_anchor(
+        shape_id: int,
+        seen: frozenset[int] = frozenset(),
+    ) -> ShapeAnchor | None:
+        direct = spas.get(shape_id)
+        if direct is not None:
+            return direct
+        if shape_child_anchor_at is None or shape_id in seen:
+            return None
+        child = shape_child_anchor_at(shape_id)
+        if child is None:
+            return None
+        parent = resolve_anchor(child.parent_shape_id, seen | {shape_id})
+        if parent is None:
+            return None
+        group_width = child.group_right - child.group_left
+        group_height = child.group_bottom - child.group_top
+        if group_width == 0 or group_height == 0:
+            return None
+        parent_width = parent.right - parent.left
+        parent_height = parent.bottom - parent.top
+
+        def scale_x(value: int) -> int:
+            return parent.left + round(
+                (value - child.group_left) * parent_width / group_width
+            )
+
+        def scale_y(value: int) -> int:
+            return parent.top + round(
+                (value - child.group_top) * parent_height / group_height
+            )
+
+        left, right = sorted((scale_x(child.left), scale_x(child.right)))
+        top, bottom = sorted((scale_y(child.top), scale_y(child.bottom)))
+        return ShapeAnchor(
+            anchor_cp=parent.anchor_cp,
+            shape_id=shape_id,
+            left=left,
+            top=top,
+            right=right,
+            bottom=bottom,
+            horizontal_relative=parent.horizontal_relative,
+            vertical_relative=parent.vertical_relative,
+            wrap_type=parent.wrap_type,
+            wrap_side=parent.wrap_side,
+            behind_text=parent.behind_text,
+            anchor_locked=parent.anchor_locked,
+        )
+
     for entry in entries:
-        spa = spas.get(entry.shape_id)
+        direct_spa = spas.get(entry.shape_id)
+        spa = resolve_anchor(entry.shape_id)
         if spa is None:
+            # Grouped OfficeArt child shapes do not have their own PlcSpa anchor.
+            # Their geometry is relative to the group container and cannot be
+            # represented by treating them as independent floating shapes.  Keep
+            # strict validation for genuinely dangling textbox records, but defer
+            # confirmed OfficeArt children so one diagram does not abort the
+            # conversion of the entire document.
+            shape_style = (
+                shape_style_at(entry.shape_id)
+                if shape_style_at is not None
+                else None
+            )
+            if shape_style is not None:
+                deferred_grouped_shape_ids.append(entry.shape_id)
+                continue
             raise InvalidWordDocument(
                 f"{context_name} {entry.index} has no {spa_structure} shape "
                 f"{entry.shape_id}"
             )
+        if direct_spa is None:
+            reconstructed_grouped_shape_ids.append(entry.shape_id)
         absolute_anchor_cp = anchor_story_cp_start + spa.anchor_cp
-        if absolute_anchor_cp in by_anchor_cp:
-            raise InvalidWordDocument(
-                f"multiple {context_name}s use anchor CP {spa.anchor_cp}"
-            )
         shape_style = (
             shape_style_at(entry.shape_id) if shape_style_at is not None else None
         )
         if shape_style is None or shape_style.approximated:
             approximated_style_count += 1
-        by_anchor_cp[absolute_anchor_cp] = FloatingTextBox(
+        by_anchor_cp_lists.setdefault(absolute_anchor_cp, []).append(FloatingTextBox(
             shape_id=entry.shape_id,
             anchor_cp=absolute_anchor_cp,
             left_twips=spa.left,
@@ -515,7 +594,7 @@ def _read_textboxes(
                 if shape_rotation_at is not None
                 else 0.0
             ),
-        )
+        ))
         if entry.chain_length > 1:
             linked_count += 1
     if linked_count:
@@ -529,6 +608,35 @@ def _read_textboxes(
             location=SourceLocation(story=textbox_location_story),
             textbox_count=linked_count,
         )
+    if deferred_grouped_shape_ids:
+        report.warning(
+            (
+                "GROUPED_HEADER_TEXTBOXES_DEFERRED"
+                if is_header
+                else "GROUPED_MAIN_TEXTBOXES_DEFERRED"
+            ),
+            (
+                f"{len(deferred_grouped_shape_ids)} grouped {context_name}"
+                " contents could not be positioned independently and were deferred"
+            ),
+            location=SourceLocation(story=textbox_location_story),
+            textbox_count=len(deferred_grouped_shape_ids),
+            shape_ids=deferred_grouped_shape_ids,
+        )
+    if reconstructed_grouped_shape_ids:
+        report.warning(
+            (
+                "GROUPED_HEADER_TEXTBOXES_UNGROUPED"
+                if is_header
+                else "GROUPED_MAIN_TEXTBOXES_UNGROUPED"
+            ),
+            (
+                f"{len(reconstructed_grouped_shape_ids)} grouped {context_name}"
+                " contents were positioned as independent shapes"
+            ),
+            location=SourceLocation(story=textbox_location_story),
+            textbox_count=len(reconstructed_grouped_shape_ids),
+        )
     if approximated_style_count:
         report.warning(
             (
@@ -541,11 +649,20 @@ def _read_textboxes(
             textbox_count=approximated_style_count,
         )
     return TextBoxCollection(
-        by_anchor_cp=by_anchor_cp,
+        by_anchor_cp={
+            cp: tuple(textboxes) for cp, textboxes in by_anchor_cp_lists.items()
+        },
         textbox_count=len(entries),
         field_count=fields.field_count,
         field_character_count=fields.character_count,
-        styled_textbox_count=len(entries) - approximated_style_count,
+        styled_textbox_count=(
+            sum(len(textboxes) for textboxes in by_anchor_cp_lists.values())
+            - approximated_style_count
+        ),
+        deferred_grouped_textbox_count=len(deferred_grouped_shape_ids),
+        reconstructed_grouped_textbox_count=(
+            len(reconstructed_grouped_shape_ids)
+        ),
     )
 
 
@@ -569,6 +686,9 @@ def read_header_textboxes(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
+    shape_child_anchor_at: (
+        Callable[[int], OfficeArtChildAnchor | None] | None
+    ) = None,
     shape_rotation_at: Callable[[int], float] | None = None,
     shape_horizontally_flipped_at: Callable[[int], bool] | None = None,
     shape_vertically_flipped_at: Callable[[int], bool] | None = None,
@@ -600,6 +720,7 @@ def read_header_textboxes(
         character_properties_at=character_properties_at,
         paragraph_properties_at=paragraph_properties_at,
         shape_style_at=shape_style_at,
+        shape_child_anchor_at=shape_child_anchor_at,
         shape_rotation_at=shape_rotation_at,
         shape_horizontally_flipped_at=shape_horizontally_flipped_at,
         shape_vertically_flipped_at=shape_vertically_flipped_at,
@@ -630,6 +751,9 @@ def read_main_textboxes(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
+    shape_child_anchor_at: (
+        Callable[[int], OfficeArtChildAnchor | None] | None
+    ) = None,
     shape_rotation_at: Callable[[int], float] | None = None,
     shape_horizontally_flipped_at: Callable[[int], bool] | None = None,
     shape_vertically_flipped_at: Callable[[int], bool] | None = None,
@@ -661,6 +785,7 @@ def read_main_textboxes(
         character_properties_at=character_properties_at,
         paragraph_properties_at=paragraph_properties_at,
         shape_style_at=shape_style_at,
+        shape_child_anchor_at=shape_child_anchor_at,
         shape_rotation_at=shape_rotation_at,
         shape_horizontally_flipped_at=shape_horizontally_flipped_at,
         shape_vertically_flipped_at=shape_vertically_flipped_at,

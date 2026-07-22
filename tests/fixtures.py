@@ -685,6 +685,7 @@ def build_main_textbox_word_cfb(
     missing_break_table: bool = False,
     officeart_style: bool = False,
     page_field: bool = False,
+    grouped_child: bool = False,
 ) -> bytes:
     """A DOC whose main story contains one floating text box."""
 
@@ -703,11 +704,12 @@ def build_main_textbox_word_cfb(
     plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
     clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
 
-    shape_id = 1025
+    anchor_shape_id = 1025
+    shape_id = 1026 if grouped_child else anchor_shape_id
     plcf_spa = struct.pack("<2I", anchor_cp, len(main_text))
     plcf_spa += struct.pack(
         "<I4iHI",
-        shape_id,
+        anchor_shape_id,
         720,
         360,
         3600,

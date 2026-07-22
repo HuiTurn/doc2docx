@@ -69,6 +69,61 @@ def _floating_picture_officeart(*, complex_pib: bool = False, pib_index: int = 1
 
 
 class OfficeArtParsingTests(unittest.TestCase):
+    def test_reads_group_child_coordinate_mapping(self) -> None:
+        group_shape = _record(
+            0xF004,
+            _record(
+                0xF00A,
+                struct.pack("<II", 2000, 0x00000001),
+                version=2,
+                instance=0,
+            )
+            + _record(
+                0xF009,
+                struct.pack("<4i", 0, 0, 1000, 1000),
+                version=1,
+            ),
+            version=0xF,
+        )
+        child_shape = _record(
+            0xF004,
+            _record(
+                0xF00A,
+                struct.pack("<II", 2001, 0),
+                version=2,
+                instance=202,
+            )
+            + _record(
+                0xF00F,
+                struct.pack("<4i", 100, 200, 600, 800),
+                version=0,
+            ),
+            version=0xF,
+        )
+        data = (
+            _record(0xF000, b"", version=0xF)
+            + b"\0"
+            + _record(
+                0xF002,
+                _record(
+                    0xF003,
+                    group_shape + child_shape,
+                    version=0xF,
+                ),
+                version=0xF,
+            )
+        )
+
+        shapes = read_officeart_shapes(data, offset=0, size=len(data))
+
+        anchor = shapes.child_anchor_at(2001)
+        assert anchor is not None
+        self.assertEqual(anchor.parent_shape_id, 2000)
+        self.assertEqual(
+            (anchor.left, anchor.top, anchor.right, anchor.bottom),
+            (100, 200, 600, 800),
+        )
+
     def test_resolves_delayed_bstore_blip_through_shape_pib(self) -> None:
         data, delay_stream = _floating_picture_officeart()
 

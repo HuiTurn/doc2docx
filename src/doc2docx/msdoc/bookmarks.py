@@ -255,6 +255,7 @@ def read_bookmarks(
     ends_size: int,
     main_story_length: int,
     total_story_length: int,
+    maximum_bookmark_cp: int | None = None,
     report: ConversionReport,
     supported_story_ranges: Sequence[tuple[str, int, int]] | None = None,
 ) -> BookmarkCollection:
@@ -269,6 +270,15 @@ def read_bookmarks(
         )
     if main_story_length < 0 or total_story_length < main_story_length:
         raise InvalidWordDocument("FIB contains inconsistent document story lengths")
+    bookmark_cp_limit = (
+        total_story_length
+        if maximum_bookmark_cp is None
+        else maximum_bookmark_cp
+    )
+    if bookmark_cp_limit < total_story_length:
+        raise InvalidWordDocument(
+            "bookmark CP limit precedes the end of the document stories"
+        )
 
     names = _read_names(
         table_stream,
@@ -280,20 +290,20 @@ def read_bookmarks(
         offset=starts_offset,
         size=starts_size,
         expected_count=len(names),
-        maximum_cp=total_story_length,
+        maximum_cp=bookmark_cp_limit,
     )
     end_cps, end_terminal_cp = _read_end_cps(
         table_stream,
         offset=ends_offset,
         size=ends_size,
         expected_count=len(names),
-        maximum_cp=total_story_length,
+        maximum_cp=bookmark_cp_limit,
     )
     if start_terminal_cp != end_terminal_cp:
         raise InvalidWordDocument(
             "Plcfbkf and Plcfbkl use different terminal CP values"
         )
-    if start_terminal_cp == total_story_length:
+    if start_terminal_cp == bookmark_cp_limit:
         report.warning(
             "BOOKMARK_TERMINAL_CP_COMPATIBILITY",
             "bookmark PLC terminal CP uses the document end instead of one past it",

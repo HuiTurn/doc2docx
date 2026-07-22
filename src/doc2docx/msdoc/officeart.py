@@ -14,9 +14,12 @@ from .pictures import UnsupportedBlipFormat, decode_officeart_blip
 _DGG_CONTAINER = 0xF000
 _BSTORE_CONTAINER = 0xF001
 _DG_CONTAINER = 0xF002
+_SPGR_CONTAINER = 0xF003
 _SP_CONTAINER = 0xF004
 _FBSE = 0xF007
 _FSP = 0xF00A
+_FSPGR = 0xF009
+_CHILD_ANCHOR = 0xF00F
 _OPTION_RECORDS = (0xF00B, 0xF121, 0xF122)
 _MAX_RECORD_DEPTH = 32
 
@@ -52,6 +55,21 @@ class OfficeArtImage:
     blip_index: int | None = None
 
 
+@dataclass(slots=True, frozen=True)
+class OfficeArtChildAnchor:
+    """A grouped child rectangle in its parent group's coordinate space."""
+
+    parent_shape_id: int
+    group_left: int
+    group_top: int
+    group_right: int
+    group_bottom: int
+    left: int
+    top: int
+    right: int
+    bottom: int
+
+
 # Backwards-compatible name retained for callers of the M8a-M8d API.
 OfficeArtRasterImage = OfficeArtImage
 
@@ -72,6 +90,9 @@ class OfficeArtShapeCollection:
     horizontally_flipped_shape_ids: frozenset[int] = frozenset()
     vertically_flipped_shape_ids: frozenset[int] = frozenset()
     rotations_by_shape_id: Mapping[int, float] = field(default_factory=dict)
+    child_anchors_by_shape_id: Mapping[int, OfficeArtChildAnchor] = field(
+        default_factory=dict
+    )
 
     def style_at(self, shape_id: int) -> ShapeStyle | None:
         return self.by_shape_id.get(shape_id)
@@ -96,6 +117,9 @@ class OfficeArtShapeCollection:
 
     def wrap_polygon_at(self, shape_id: int) -> tuple[tuple[int, int], ...]:
         return self.wrap_polygons_by_shape_id.get(shape_id, ())
+
+    def child_anchor_at(self, shape_id: int) -> OfficeArtChildAnchor | None:
+        return self.child_anchors_by_shape_id.get(shape_id)
 
 
 @dataclass(slots=True, frozen=True)
@@ -450,6 +474,104 @@ def _shape_containers(record: _Record):
         yield from _shape_containers(child)
 
 
+def _single_shape_id(data: memoryview, container: _Record) -> int:
+    shape_records = [
+        child for child in container.children if child.record_type == _FSP
+    ]
+    if len(shape_records) != 1:
+        raise InvalidWordDocument(
+            "OfficeArtSpContainer must contain one OfficeArtFSP"
+        )
+    shape_record = shape_records[0]
+    if (
+        shape_record.version != 0x2
+        or shape_record.payload_end - shape_record.payload_start != 8
+    ):
+        raise InvalidWordDocument("OfficeArtFSP has an invalid header or size")
+    return struct.unpack_from("<I", data, shape_record.payload_start)[0]
+
+
+def _rectangle_record(
+    data: memoryview,
+    container: _Record,
+    record_type: int,
+) -> tuple[int, int, int, int] | None:
+    records = [
+        child for child in container.children if child.record_type == record_type
+    ]
+    if not records:
+        return None
+    if len(records) != 1 or records[0].payload_end - records[0].payload_start != 16:
+        raise InvalidWordDocument(
+            f"OfficeArt record 0x{record_type:04X} has an invalid rectangle"
+        )
+    return struct.unpack_from("<4i", data, records[0].payload_start)
+
+
+def _collect_group_child_anchors(
+    data: memoryview,
+    record: _Record,
+    result: dict[int, OfficeArtChildAnchor],
+) -> None:
+    if record.record_type == _SPGR_CONTAINER:
+        group_shape_container = next(
+            (
+                child
+                for child in record.children
+                if child.record_type == _SP_CONTAINER
+                and _rectangle_record(data, child, _FSPGR) is not None
+            ),
+            None,
+        )
+        if group_shape_container is not None:
+            group_shape_id = _single_shape_id(data, group_shape_container)
+            group_rectangle = _rectangle_record(
+                data, group_shape_container, _FSPGR
+            )
+            assert group_rectangle is not None
+            group_left, group_top, group_right, group_bottom = group_rectangle
+            if group_left != group_right and group_top != group_bottom:
+                for child in record.children:
+                    child_shape_container = child
+                    if child.record_type == _SPGR_CONTAINER:
+                        child_shape_container = next(
+                            (
+                                nested
+                                for nested in child.children
+                                if nested.record_type == _SP_CONTAINER
+                                and _rectangle_record(data, nested, _FSPGR)
+                                is not None
+                            ),
+                            child,
+                        )
+                    if child_shape_container.record_type != _SP_CONTAINER:
+                        continue
+                    child_rectangle = _rectangle_record(
+                        data, child_shape_container, _CHILD_ANCHOR
+                    )
+                    if child_rectangle is None:
+                        continue
+                    child_shape_id = _single_shape_id(data, child_shape_container)
+                    if child_shape_id in result:
+                        raise InvalidWordDocument(
+                            "OfficeArt drawing repeats a grouped child anchor for "
+                            f"shape id {child_shape_id}"
+                        )
+                    result[child_shape_id] = OfficeArtChildAnchor(
+                        parent_shape_id=group_shape_id,
+                        group_left=group_left,
+                        group_top=group_top,
+                        group_right=group_right,
+                        group_bottom=group_bottom,
+                        left=child_rectangle[0],
+                        top=child_rectangle[1],
+                        right=child_rectangle[2],
+                        bottom=child_rectangle[3],
+                    )
+    for child in record.children:
+        _collect_group_child_anchors(data, child, result)
+
+
 def _decode_blip_entry(
     source: bytes | memoryview,
     offset: int,
@@ -656,7 +778,13 @@ def read_officeart_shapes(
     images_by_shape_id: dict[int, OfficeArtImage] = {}
     unsupported_image_types_by_shape_id: dict[int, int] = {}
     wrap_polygons_by_shape_id: dict[int, tuple[tuple[int, int], ...]] = {}
+    child_anchors_by_shape_id: dict[int, OfficeArtChildAnchor] = {}
     for drawing_label, drawing in drawings:
+        _collect_group_child_anchors(
+            data,
+            drawing,
+            child_anchors_by_shape_id,
+        )
         for container in _shape_containers(drawing):
             shape_records = [
                 child for child in container.children if child.record_type == _FSP
@@ -717,4 +845,5 @@ def read_officeart_shapes(
             unsupported_image_types_by_shape_id
         ),
         wrap_polygons_by_shape_id=wrap_polygons_by_shape_id,
+        child_anchors_by_shape_id=child_anchors_by_shape_id,
     )

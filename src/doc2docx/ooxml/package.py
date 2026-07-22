@@ -890,7 +890,7 @@ def _append_paragraph_properties(
         or properties.text_alignment is not None
         or properties.mirror_indents is not None
         or properties.textbox_tight_wrap is not None
-        or properties.frame is not None
+        or (properties.frame is not None and not properties.in_table)
         or properties.borders is not None
         or properties.shading is not None
         or properties.tab_stops is not None
@@ -938,7 +938,7 @@ def _append_paragraph_properties(
         "pageBreakBefore",
         properties.page_break_before,
     )
-    if properties.frame is not None:
+    if properties.frame is not None and not properties.in_table:
         frame_attributes: dict[str, str] = {}
         if properties.frame.drop_cap is not None:
             frame_attributes[_qn(W_NS, "dropCap")] = properties.frame.drop_cap
@@ -2789,6 +2789,47 @@ def _append_table_cell(
         )
 
 
+def _normalized_floating_table_properties(
+    properties: TableRowProperties,
+) -> TableRowProperties:
+    """Stabilize a floating DOC table with an explicit grid in OOXML.
+
+    Legacy producers can store a percentage preferred width alongside an
+    authoritative absolute TDefTable grid.  Carrying both into an autofit
+    floating WordprocessingML table lets consumers rescale and shift the grid.
+    Prefer the concrete grid for this combination, matching Word's normalized
+    representation of the same binary table.
+    """
+
+    boundaries = properties.cell_boundaries_twips
+    is_floating = (
+        properties.horizontal_anchor is not None
+        or properties.vertical_anchor is not None
+    )
+    if (
+        not is_floating
+        or properties.preferred_width_type != "pct"
+        or len(boundaries) < 2
+    ):
+        return properties
+    grid_width = max(boundaries) - min(boundaries)
+    if grid_width <= 0:
+        return properties
+    return replace(
+        properties,
+        preferred_width=grid_width,
+        preferred_width_type="dxa",
+        auto_fit=False,
+        left_indent_twips=max(-min(boundaries), 0),
+        horizontal_position_twips=(
+            0
+            if properties.horizontal_position_twips is None
+            and properties.horizontal_alignment is None
+            else properties.horizontal_position_twips
+        ),
+    )
+
+
 def _append_table(
     body: ET.Element,
     table: Table,
@@ -2800,6 +2841,7 @@ def _append_table(
     table_element = ET.SubElement(body, _qn(W_NS, "tbl"))
     first_properties = table.rows[0].properties if table.rows else None
     if first_properties is not None:
+        first_properties = _normalized_floating_table_properties(first_properties)
         table_properties = ET.SubElement(table_element, _qn(W_NS, "tblPr"))
         if (
             first_properties.table_style_id is not None

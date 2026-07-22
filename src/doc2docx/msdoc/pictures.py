@@ -317,8 +317,16 @@ def _decode_blip(
         if not image_data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise InvalidWordDocument("OfficeArt PNG BLIP has no PNG signature")
     elif record.record_type in _BLIP_JPEG_TYPES:
-        if not image_data.startswith(b"\xFF\xD8") or not image_data.endswith(b"\xFF\xD9"):
+        eoi = image_data.rfind(b"\xFF\xD9")
+        if (
+            not image_data.startswith(b"\xFF\xD8")
+            or eoi < 2
+            or any(image_data[eoi + 2 :])
+        ):
             raise InvalidWordDocument("OfficeArt JPEG BLIP has invalid SOI/EOI markers")
+        # Some Word writers align the following OfficeArt record by including
+        # zero padding after the JPEG EOI marker in the BLIP record length.
+        image_data = image_data[: eoi + 2]
     elif record.record_type == _BLIP_DIB:
         image_data = _dib_to_bmp(image_data)
     elif not image_data.startswith((b"II*\0", b"MM\0*")):

@@ -304,6 +304,7 @@ def convert(
         ends_size=bookmark_ends.lcb,
         main_story_length=fib.ccp_text,
         total_story_length=fib.total_story_cp_count,
+        maximum_bookmark_cp=piece_table.cp_end,
         report=report,
         supported_story_ranges=tuple(
             (name, start, start + length)
@@ -503,6 +504,7 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         shape_style_at=officeart_shapes.style_at,
+        shape_child_anchor_at=officeart_shapes.child_anchor_at,
         shape_rotation_at=officeart_shapes.rotation_at,
         shape_horizontally_flipped_at=officeart_shapes.is_horizontally_flipped,
         shape_vertically_flipped_at=officeart_shapes.is_vertically_flipped,
@@ -533,6 +535,7 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         shape_style_at=officeart_shapes.style_at,
+        shape_child_anchor_at=officeart_shapes.child_anchor_at,
         shape_rotation_at=officeart_shapes.rotation_at,
         shape_horizontally_flipped_at=officeart_shapes.is_horizontally_flipped,
         shape_vertically_flipped_at=officeart_shapes.is_vertically_flipped,
@@ -635,7 +638,7 @@ def convert(
         report=report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
-        floating_textbox_at=header_textboxes.textbox_at,
+        floating_textbox_at=header_textboxes.textboxes_at,
         inline_picture_at=header_inline_pictures.picture_at,
         floating_picture_at=header_floating_pictures.picture_at,
         floating_shape_at=header_floating_shapes.shape_at,
@@ -654,7 +657,7 @@ def convert(
         report,
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
-        floating_textbox_at=main_textboxes.textbox_at,
+        floating_textbox_at=main_textboxes.textboxes_at,
         inline_picture_at=inline_pictures.picture_at,
         embedded_object_at=embedded_objects.object_at,
         floating_picture_at=floating_pictures.picture_at,
@@ -914,11 +917,23 @@ def convert(
                 header_footers.note_separator_story_count
             ),
             "header_textbox_count": header_textboxes.textbox_count,
+            "deferred_grouped_header_textbox_count": (
+                header_textboxes.deferred_grouped_textbox_count
+            ),
+            "reconstructed_grouped_header_textbox_count": (
+                header_textboxes.reconstructed_grouped_textbox_count
+            ),
             "header_textbox_field_count": header_textboxes.field_count,
             "styled_header_textbox_count": (
                 header_textboxes.styled_textbox_count
             ),
             "main_textbox_count": main_textboxes.textbox_count,
+            "deferred_grouped_main_textbox_count": (
+                main_textboxes.deferred_grouped_textbox_count
+            ),
+            "reconstructed_grouped_main_textbox_count": (
+                main_textboxes.reconstructed_grouped_textbox_count
+            ),
             "main_textbox_field_count": main_textboxes.field_count,
             "styled_main_textbox_count": main_textboxes.styled_textbox_count,
             "footnote_count": len(footnotes.footnotes),

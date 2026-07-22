@@ -511,6 +511,10 @@ def _apply_section_modifiers(
                 section = replace(section, endnote_number_format=number_format)
         elif opcode == 0x703A:  # sprmSRsid
             section = replace(section, revision_save_id=_u32(operand))
+        elif opcode == 0xD1FF and operand == b"\x02\x03\x00":
+            # WPS Writer private compatibility marker. The section's concrete
+            # page and margin SPRMs remain authoritative.
+            continue
         else:
             unsupported.add(opcode)
     if page_number_restart is True:

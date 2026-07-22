@@ -9,6 +9,7 @@ from doc2docx.model import (
     BorderProperties,
     Document,
     Paragraph,
+    ParagraphFrameProperties,
     ParagraphProperties,
     ShadingProperties,
     Table,
@@ -30,6 +31,61 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class TableConversionTests(unittest.TestCase):
+    def test_floating_percentage_table_uses_its_absolute_grid(self) -> None:
+        paragraph = Paragraph(
+            (TextRun("Cell"),),
+            ParagraphProperties(
+                in_table=True,
+                frame=ParagraphFrameProperties(
+                    horizontal_anchor="margin",
+                    vertical_anchor="page",
+                    vertical_position_twips=3610,
+                ),
+            ),
+        )
+        properties = TableRowProperties(
+            preferred_width=5137,
+            preferred_width_type="pct",
+            cell_boundaries_twips=(-108, 506, 2262),
+            cell_definitions=(TableCellDefinition(), TableCellDefinition()),
+            horizontal_anchor="margin",
+            vertical_anchor="page",
+            vertical_position_twips=3610,
+            left_indent_twips=-108,
+            auto_fit=True,
+        )
+        row = TableRow(
+            (
+                TableCell((paragraph,), width_twips=614),
+                TableCell((paragraph,), width_twips=1756),
+            ),
+            properties,
+        )
+        document = Document((paragraph,), blocks=(Table((row,)),))
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "floating-grid.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        table_properties = root.find(f"./{W}body/{W}tbl/{W}tblPr")
+        assert table_properties is not None
+        table_width = table_properties.find(f"{W}tblW")
+        table_indent = table_properties.find(f"{W}tblInd")
+        table_layout = table_properties.find(f"{W}tblLayout")
+        positioning = table_properties.find(f"{W}tblpPr")
+        assert table_width is not None
+        assert table_indent is not None
+        assert table_layout is not None
+        assert positioning is not None
+        self.assertEqual(table_width.get(f"{W}w"), "2370")
+        self.assertEqual(table_width.get(f"{W}type"), "dxa")
+        self.assertEqual(table_indent.get(f"{W}w"), "108")
+        self.assertEqual(table_layout.get(f"{W}type"), "fixed")
+        self.assertEqual(positioning.get(f"{W}tblpX"), "0")
+        self.assertIsNone(root.find(f".//{W}tc/{W}p/{W}pPr/{W}framePr"))
+
     def test_grid_before_and_after_are_reconstructed(self) -> None:
         paragraph = Paragraph((TextRun("Cell"),))
         row = TableRow(

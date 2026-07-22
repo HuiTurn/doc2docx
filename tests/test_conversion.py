@@ -115,6 +115,30 @@ class ConversionTests(unittest.TestCase):
                     with self.assertRaises(InvalidWordDocument):
                         convert(source)
 
+    def test_grouped_officeart_child_textbox_is_deferred(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "grouped-main-textbox.doc"
+            destination = temporary / "grouped-main-textbox.docx"
+            source.write_bytes(
+                build_main_textbox_word_cfb(
+                    officeart_style=True,
+                    grouped_child=True,
+                )
+            )
+
+            result = convert(source, destination)
+
+            self.assertTrue(destination.is_file())
+            self.assertEqual(
+                result.report.statistics["deferred_grouped_main_textbox_count"],
+                1,
+            )
+            self.assertIn(
+                "GROUPED_MAIN_TEXTBOXES_DEFERRED",
+                [warning.code for warning in result.report.warnings],
+            )
+
     def test_main_story_textbox_page_field_remains_live(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)

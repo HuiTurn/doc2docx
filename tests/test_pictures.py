@@ -203,6 +203,19 @@ class InlinePictureTests(unittest.TestCase):
                 self.assertEqual(picture.width_emu, 2160 * 635)
                 self.assertEqual(picture.height_emu, 1080 * 635)
 
+        padded_jpeg = parse_inline_picture(
+            _picf_with_blip(0xF01D, 0x46A, jpeg + b"\0\0"),
+            0,
+            picture_id=4,
+        )
+        self.assertEqual(padded_jpeg.data, jpeg)
+        with self.assertRaises(InvalidWordDocument):
+            parse_inline_picture(
+                _picf_with_blip(0xF01D, 0x46A, jpeg + b"\0\x01"),
+                0,
+                picture_id=5,
+            )
+
     def test_malformed_picf_is_rejected_and_collection_reports_unknown_blip(self) -> None:
         malformed = bytearray(_picf_with_blip(0xF01E, 0x6E0, _PNG))
         struct.pack_into("<i", malformed, 0, len(malformed) + 1)

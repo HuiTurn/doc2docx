@@ -254,6 +254,39 @@ class SprmTests(unittest.TestCase):
         self.assertEqual(row.cell_width_overrides[0].width_twips, 1200)
         self.assertEqual(row.cell_top_border_colors, ("FF0000", "auto"))
 
+    def test_wps_redundant_table_modifiers_use_the_absolute_grid(self) -> None:
+        remainder = bytes((2,)) + struct.pack("<3h", -108, 506, 2262)
+        tdef_operand = struct.pack("<H", len(remainder) + 1) + remainder
+        nil_shading = b"\x00" * 10
+        percentage_width = struct.pack("<BBBBH", 5, 0, 2, 2, 361)
+        grpprl = b"".join(
+            (
+                struct.pack("<H", 0xD608) + tdef_operand,
+                struct.pack("<HB", 0xD612, 20) + nil_shading * 2,
+                struct.pack("<H", 0xD635) + percentage_width,
+                struct.pack("<H", 0xD5FF) + b"\x04\x01\x00\x05\x00",
+            )
+        )
+
+        properties, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(grpprl, label="wps-table.grpprl"),
+            style_id=0,
+        )
+
+        self.assertFalse(unsupported)
+        assert properties.table_row is not None
+        self.assertEqual(
+            properties.table_row.cell_boundaries_twips,
+            (-108, 506, 2262),
+        )
+        self.assertEqual(properties.table_row.cell_width_overrides, ())
+        self.assertTrue(
+            all(
+                definition.text_direction is None
+                for definition in properties.table_row.cell_definitions
+            )
+        )
+
     def test_paragraph_outline_and_borders_are_parsed(self) -> None:
         modern_border = bytes((8, 0, 0, 0, 0xFF, 4, 1, 0, 0))
         red = bytes((0xFF, 0, 0, 0))

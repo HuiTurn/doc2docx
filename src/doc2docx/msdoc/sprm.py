@@ -1281,8 +1281,16 @@ def _parse_tdef_table(operand: bytes) -> TableRowProperties:
         vertical_value = (tcgrf >> 5) & 0x03
         alignment_value = (tcgrf >> 7) & 0x03
         width_type = (tcgrf >> 9) & 0x07
-        text_direction = _TABLE_TEXT_DIRECTIONS.get(text_flow_value)
-        if text_direction is None:
+        # TC80's zero value is the ordinary inherited horizontal flow.  Do not
+        # materialize it as an explicit OOXML cell direction: some consumers
+        # apply the legacy value inconsistently, and Word itself omits it when
+        # normalizing these tables.
+        text_direction = (
+            None
+            if text_flow_value == 0
+            else _TABLE_TEXT_DIRECTIONS.get(text_flow_value)
+        )
+        if text_flow_value != 0 and text_direction is None:
             raise InvalidWordDocument(
                 f"sprmTDefTable has invalid text flow {text_flow_value}"
             )
@@ -2090,6 +2098,7 @@ def apply_paragraph_modifiers(
                 ),
             )
         elif opcode in (
+            0xD612,  # sprmTDefTableShd (legacy/default segment)
             0xD60C,  # sprmTDefTableShd3rd
             0xD616,  # sprmTDefTableShd2nd
             0xD670,  # sprmTDefTableShdRaw
@@ -2101,7 +2110,7 @@ def apply_paragraph_modifiers(
                 raise InvalidWordDocument(
                     "third table-shading segment has more than 19 cells"
                 )
-            if opcode == 0xD670:
+            if opcode in (0xD612, 0xD670):
                 first_cell = 0
             elif opcode in (0xD616, 0xD671):
                 first_cell = 22
@@ -2267,7 +2276,13 @@ def apply_paragraph_modifiers(
         elif opcode == 0xD635:
             override = _parse_cell_width(operand)
             if override is None:
-                unsupported.add(opcode)
+                # A percentage TCellWidth is relative to the whole table. If
+                # TDefTable already supplies the absolute grid, retaining that
+                # grid is the more stable and lossless OOXML representation.
+                row = properties.table_row or TableRowProperties()
+                width_type = operand[3]
+                if width_type != 2 or len(row.cell_boundaries_twips) < 2:
+                    unsupported.add(opcode)
             else:
                 row = properties.table_row or TableRowProperties()
                 properties = replace(
@@ -2280,6 +2295,10 @@ def apply_paragraph_modifiers(
                         ),
                     ),
                 )
+        elif opcode == 0xD5FF and operand == b"\x04\x01\x00\x05\x00":
+            # WPS Writer emits this private, redundant table compatibility
+            # marker on otherwise fully described rows.
+            continue
         elif opcode in (0xD61A, 0xD61B, 0xD61C, 0xD61D):
             row = properties.table_row or TableRowProperties()
             attribute = {

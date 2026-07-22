@@ -55,6 +55,7 @@ def _read(
     *,
     main_story_length: int,
     total_story_length: int,
+    maximum_bookmark_cp: int | None = None,
     report: ConversionReport | None = None,
     supported_story_ranges: tuple[tuple[str, int, int], ...] | None = None,
 ):
@@ -70,6 +71,7 @@ def _read(
         ends_size=len(ends),
         main_story_length=main_story_length,
         total_story_length=total_story_length,
+        maximum_bookmark_cp=maximum_bookmark_cp,
         report=report or ConversionReport("bookmarks.doc"),
         supported_story_ranges=supported_story_ranges,
     )
@@ -324,6 +326,25 @@ class BookmarkTests(unittest.TestCase):
             [warning.code for warning in report.warnings],
             ["BOOKMARK_TERMINAL_CP_COMPATIBILITY"],
         )
+
+    def test_accepts_a_piece_table_terminator_after_document_stories(self) -> None:
+        names = _name_table(("Compatible",))
+        starts = struct.pack("<2IHH", 0, 5, 0, 0)
+        ends = struct.pack("<2I", 2, 5)
+        report = ConversionReport("piece-terminator.doc")
+
+        bookmarks = _read(
+            names,
+            starts,
+            ends,
+            main_story_length=3,
+            total_story_length=3,
+            maximum_bookmark_cp=4,
+            report=report,
+        )
+
+        self.assertEqual(bookmarks.preserved_count, 1)
+        self.assertFalse(report.warnings)
 
     def test_rejects_inconsistent_or_malformed_bookmark_tables(self) -> None:
         names = _name_table(("One", "Two"))

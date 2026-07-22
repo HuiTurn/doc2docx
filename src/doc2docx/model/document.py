@@ -1412,7 +1412,13 @@ def parse_main_story(
     *,
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
-    floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
+    floating_textbox_at: (
+        Callable[
+            [int],
+            FloatingTextBox | Sequence[FloatingTextBox] | None,
+        ]
+        | None
+    ) = None,
     inline_picture_at: Callable[[int], InlinePicture | None] | None = None,
     embedded_object_at: Callable[[int], EmbeddedObject | None] | None = None,
     floating_picture_at: Callable[[int], FloatingPicture | None] | None = None,
@@ -1994,14 +2000,20 @@ def parse_main_story(
                 append_text("\uFFFC", character_properties)
                 last_was_terminator = False
         elif value in (0x01, 0x02, 0x08):
-            textbox = (
+            textbox_result = (
                 floating_textbox_at(cp_offset)
                 if value == 0x08 and floating_textbox_at is not None
                 else None
             )
-            if textbox is not None:
+            if isinstance(textbox_result, FloatingTextBox):
+                textboxes = (textbox_result,)
+            elif textbox_result is None:
+                textboxes = ()
+            else:
+                textboxes = tuple(textbox_result)
+            if textboxes:
                 flush_text()
-                current_inlines().append(textbox)
+                current_inlines().extend(textboxes)
                 last_was_terminator = False
                 continue
             shape = (

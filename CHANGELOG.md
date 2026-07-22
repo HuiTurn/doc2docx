@@ -5,6 +5,24 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.36.1 - 2026-07-22
+
+- Accept bookmark PLC terminal CPs bounded by the Piece Table rather than only
+  the summed FIB stories, and accept zero-aligned JPEG BLIP padding without
+  weakening image validation.
+- Reconstruct grouped OfficeArt child-textbox geometry relative to its anchored
+  parent, preserve multiple textboxes at one drawing anchor, and defer only
+  confirmed children whose group geometry is unavailable.
+- Normalize floating WPS Writer tables to their authoritative absolute grid,
+  fixed layout, stable indent, and explicit position. Parse redundant legacy
+  shading and percentage-width records and safely ignore the exact WPS private
+  compatibility markers found alongside complete table and section properties.
+- Omit inherited horizontal cell direction and paragraph-frame properties that
+  belong to floating table positioning, preventing Word/WPS from rotating or
+  flipping individual cell text.
+- Validate with 252 passing standard-library regression tests and two real DOC
+  files covering the bookmark/JPEG/grouped-diagram and floating-table cases.
+
 ## 0.36.0 - 2026-07-22 (M20a-M20g)
 
 ### M20a

@@ -16,6 +16,31 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class SectionParsingTests(unittest.TestCase):
+    def test_wps_private_section_marker_is_ignored(self) -> None:
+        grpprl = struct.pack("<H", 0xD1FF) + b"\x02\x03\x00"
+        word_document = bytearray(64)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+        report = ConversionReport("wps-section.doc")
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=2052,
+            report=report,
+        )
+
+        self.assertEqual(len(sections), 1)
+        self.assertNotIn(
+            "UNSUPPORTED_SECTION_SPRMS",
+            [warning.code for warning in report.warnings],
+        )
+
     def test_later_section_sprm_wins(self) -> None:
         grpprl = b"".join(
             (
