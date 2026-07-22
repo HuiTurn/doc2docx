@@ -14,8 +14,8 @@ faithful conversion.
 
 - Reads CFB/OLE Word documents with deterministic, bounded parsers.
 - Preserves text, common character and paragraph formatting, fonts, styles,
-  native numbered and bulleted lists, tables, page layout, sections, headers,
-  and footers.
+  native numbered and bulleted lists, tables, page layout, section page and
+  line numbering, headers, and footers.
 - Converts footnotes and endnotes—including custom separators, placement, and
   numbering controls—plus comments, named bookmarks, safe document-local
   reference fields, common date/metadata/page/statistic fields, and positioned

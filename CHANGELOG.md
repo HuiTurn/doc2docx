@@ -5,6 +5,8 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.33.0 - 2026-07-22 (M17a-M17c)
+
 ### M17a
 
 - Parse `StkListGRLPUPX` numbering-style paragraph properties and emit MS-DOC
