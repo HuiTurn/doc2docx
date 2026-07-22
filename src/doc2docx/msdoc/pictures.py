@@ -36,9 +36,16 @@ class InlinePictureCollection:
     by_cp: Mapping[int, InlinePicture] | None = None
     deferred_count: int = 0
     binary_data_count: int = 0
+    consumed_binary_data_cps: frozenset[int] = frozenset()
 
     def picture_at(self, cp: int) -> InlinePicture | None:
         return (self.by_cp or {}).get(cp)
+
+
+@dataclass(slots=True)
+class _FieldScanContext:
+    instruction: list[str]
+    has_separator: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -459,6 +466,80 @@ def parse_inline_picture(
     raise InvalidWordDocument("inline OfficeArt container contains no BLIP")
 
 
+_HYPERLINK_BINARY_FIELD_TYPES = frozenset(
+    ("HYPERLINK", "NOTEREF", "PAGEREF", "REF")
+)
+
+
+def _binary_field_types(
+    characters: Sequence[StoryCharacter],
+) -> dict[int, str]:
+    """Associate binary U+0001 characters with their containing field type."""
+
+    result: dict[int, str] = {}
+    stack: list[_FieldScanContext] = []
+    for unit in characters:
+        value = ord(unit.text)
+        if value == 0x13:
+            stack.append(_FieldScanContext([]))
+            continue
+        if value == 0x14 and stack:
+            stack[-1].has_separator = True
+            continue
+        if value == 0x15 and stack:
+            stack.pop()
+            continue
+        if not stack:
+            continue
+        context = stack[-1]
+        if value == 0x01:
+            tokens = "".join(context.instruction).lstrip().split(maxsplit=1)
+            result[unit.cp_start] = tokens[0].upper() if tokens else "UNKNOWN"
+        elif not context.has_separator and value >= 0x20:
+            context.instruction.append(unit.text)
+    return result
+
+
+def _read_nil_picf_binary_data(data_stream: bytes, offset: int) -> memoryview:
+    """Read the bounded binData payload from a NilPICFAndBinData record."""
+
+    header_size = 0x44
+    if offset < 0 or offset > len(data_stream) - header_size:
+        raise InvalidWordDocument(
+            "NilPICFAndBinData header exceeds the Data stream"
+        )
+    record_size, stored_header_size = struct.unpack_from(
+        "<iH", data_stream, offset
+    )
+    if record_size < header_size:
+        raise InvalidWordDocument(
+            f"NilPICFAndBinData size {record_size} is smaller than 68 bytes"
+        )
+    record_end = offset + record_size
+    if record_end > len(data_stream):
+        raise InvalidWordDocument(
+            "NilPICFAndBinData record exceeds the Data stream"
+        )
+    if stored_header_size != header_size:
+        raise InvalidWordDocument(
+            f"NilPICFAndBinData cbHeader is {stored_header_size}; expected 68"
+        )
+    if any(data_stream[offset + 6 : offset + header_size]):
+        raise InvalidWordDocument(
+            "NilPICFAndBinData reserved header bytes are nonzero"
+        )
+    return memoryview(data_stream)[offset + header_size : record_end]
+
+
+def _validate_hyperlink_field_data(payload: memoryview) -> None:
+    # HFD contains a one-byte HFDBits value, a 16-byte CLSID, and a variable
+    # Hyperlink Object. The three high HFDBits bits are reserved by MS-DOC.
+    if len(payload) <= 17:
+        raise InvalidWordDocument("HFD hyperlink field data is truncated")
+    if payload[0] & 0xE0:
+        raise InvalidWordDocument("HFD has nonzero reserved flag bits")
+
+
 def read_inline_pictures(
     data_stream: bytes | None,
     characters: Sequence[StoryCharacter],
@@ -474,8 +555,8 @@ def read_inline_pictures(
         raise ValueError("first_picture_id must be positive")
 
     anchors: list[tuple[int, CharacterProperties]] = []
+    binary_anchors: list[tuple[int, CharacterProperties]] = []
     missing_sprm_count = 0
-    binary_data_count = 0
     for unit in characters:
         if unit.text != "\x01":
             continue
@@ -484,9 +565,44 @@ def read_inline_pictures(
             missing_sprm_count += 1
             continue
         if properties.picture_is_binary is True:
-            binary_data_count += 1
+            binary_anchors.append((unit.cp_start, properties))
             continue
         anchors.append((unit.cp_start, properties))
+
+    binary_data_count = len(binary_anchors)
+    consumed_binary_data_cps: set[int] = set()
+    deferred_binary_data_count = 0
+    deferred_binary_field_types: dict[str, int] = {}
+    field_types = _binary_field_types(characters)
+    for cp, properties in binary_anchors:
+        field_type = field_types.get(cp, "UNKNOWN")
+        source_offset = properties.picture_location
+        assert source_offset is not None
+        if field_type not in _HYPERLINK_BINARY_FIELD_TYPES or data_stream is None:
+            deferred_binary_data_count += 1
+            deferred_binary_field_types[field_type] = (
+                deferred_binary_field_types.get(field_type, 0) + 1
+            )
+            continue
+        try:
+            payload = _read_nil_picf_binary_data(data_stream, source_offset)
+            _validate_hyperlink_field_data(payload)
+        except InvalidWordDocument as exc:
+            deferred_binary_data_count += 1
+            report.warning(
+                "INLINE_BINARY_DATA_MALFORMED",
+                str(exc),
+                location=SourceLocation(
+                    story=story_name,
+                    cp_start=cp,
+                    cp_end=cp + 1,
+                    stream="Data",
+                    fc_start=source_offset,
+                ),
+                field_type=field_type,
+            )
+        else:
+            consumed_binary_data_cps.add(cp)
 
     if missing_sprm_count:
         report.warning(
@@ -495,17 +611,22 @@ def read_inline_pictures(
             location=SourceLocation(story=story_name),
             anchor_count=missing_sprm_count,
         )
-    if binary_data_count:
+    if deferred_binary_field_types:
         report.warning(
             "INLINE_BINARY_DATA_DEFERRED",
-            "U+0001 binary-data records are not raster pictures and remain unsupported",
+            "binary field data without a supported HFD mapping remains deferred",
             location=SourceLocation(story=story_name),
-            anchor_count=binary_data_count,
+            anchor_count=sum(deferred_binary_field_types.values()),
+            field_types={
+                key: deferred_binary_field_types[key]
+                for key in sorted(deferred_binary_field_types)
+            },
         )
     if not anchors:
         return InlinePictureCollection(
-            deferred_count=missing_sprm_count + binary_data_count,
+            deferred_count=missing_sprm_count + deferred_binary_data_count,
             binary_data_count=binary_data_count,
+            consumed_binary_data_cps=frozenset(consumed_binary_data_cps),
         )
     if data_stream is None:
         report.warning(
@@ -515,14 +636,19 @@ def read_inline_pictures(
             anchor_count=len(anchors),
         )
         return InlinePictureCollection(
-            deferred_count=missing_sprm_count + binary_data_count + len(anchors),
+            deferred_count=(
+                missing_sprm_count
+                + deferred_binary_data_count
+                + len(anchors)
+            ),
             binary_data_count=binary_data_count,
+            consumed_binary_data_cps=frozenset(consumed_binary_data_cps),
         )
 
     by_cp: dict[int, InlinePicture] = {}
     by_offset: dict[int, InlinePicture | None] = {}
     pictures: list[InlinePicture] = []
-    deferred_count = missing_sprm_count + binary_data_count
+    deferred_count = missing_sprm_count + deferred_binary_data_count
     for cp, properties in anchors:
         assert properties.picture_location is not None
         source_offset = properties.picture_location
@@ -588,4 +714,5 @@ def read_inline_pictures(
         by_cp=by_cp,
         deferred_count=deferred_count,
         binary_data_count=binary_data_count,
+        consumed_binary_data_cps=frozenset(consumed_binary_data_cps),
     )

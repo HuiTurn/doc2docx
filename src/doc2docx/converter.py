@@ -533,6 +533,9 @@ def convert(
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
         list_names=available_list_names,
+        ignored_character_cps=(
+            header_inline_pictures.consumed_binary_data_cps
+        ),
     )
     sections = header_footers.sections
     parsed_document = parse_main_story(
@@ -552,6 +555,7 @@ def convert(
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
         list_names=available_list_names,
+        ignored_character_cps=inline_pictures.consumed_binary_data_cps,
         sections=sections,
     )
     document = Document(
@@ -768,6 +772,10 @@ def convert(
             "inline_binary_data_count": (
                 inline_pictures.binary_data_count
                 + header_inline_pictures.binary_data_count
+            ),
+            "consumed_binary_field_data_count": (
+                len(inline_pictures.consumed_binary_data_cps)
+                + len(header_inline_pictures.consumed_binary_data_cps)
             ),
             "floating_picture_count": (
                 len(floating_pictures.pictures)

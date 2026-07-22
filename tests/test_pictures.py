@@ -12,6 +12,7 @@ from doc2docx.errors import InvalidWordDocument
 from doc2docx.model import (
     CharacterProperties,
     Document,
+    Field,
     InlinePicture,
     Paragraph,
     StoryCharacter,
@@ -47,6 +48,10 @@ def _officeart_record(
         record_type,
         len(payload),
     ) + payload
+
+
+def _nil_picf_binary_data(payload: bytes) -> bytes:
+    return struct.pack("<iH", 68 + len(payload), 68) + b"\x00" * 62 + payload
 
 
 def _picf_with_blip(
@@ -225,6 +230,71 @@ class InlinePictureTests(unittest.TestCase):
             inline_picture_at=lambda cp: picture if cp == 1 else None,
         )
         self.assertIs(document.paragraphs[0].inlines[1], picture)
+
+    def test_hyperlink_binary_data_is_consumed_without_a_placeholder(self) -> None:
+        story = "\x13 REF Target \\h \x01\x14Target text\x15\r"
+        characters = tuple(
+            StoryCharacter(character, cp, cp + 1)
+            for cp, character in enumerate(story)
+        )
+        anchor_cp = story.index("\x01")
+        properties = CharacterProperties(
+            special=True,
+            picture_location=0,
+            picture_is_binary=True,
+        )
+        hfd = b"\x00" + b"\x00" * 16 + b"hyperlink-object"
+        report = ConversionReport("binary-field.doc")
+
+        collection = read_inline_pictures(
+            _nil_picf_binary_data(hfd),
+            characters,
+            report=report,
+            character_properties_at=lambda _cp: properties,
+        )
+
+        self.assertEqual(collection.binary_data_count, 1)
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertEqual(collection.consumed_binary_data_cps, {anchor_cp})
+        self.assertFalse(report.warnings)
+
+        parsed_report = ConversionReport("binary-field.doc")
+        document = parse_main_story(
+            characters,
+            parsed_report,
+            bookmark_names=("Target",),
+            ignored_character_cps=collection.consumed_binary_data_cps,
+        )
+        field = document.paragraphs[0].inlines[0]
+        self.assertIsInstance(field, Field)
+        assert isinstance(field, Field)
+        self.assertEqual(field.instruction, " REF Target \\h ")
+        self.assertFalse(parsed_report.warnings)
+
+    def test_malformed_hyperlink_binary_data_remains_deferred(self) -> None:
+        story = "\x13 HYPERLINK \"https://example.test\"\x01\x14Link\x15\r"
+        characters = tuple(
+            StoryCharacter(character, cp, cp + 1)
+            for cp, character in enumerate(story)
+        )
+        properties = CharacterProperties(
+            special=True,
+            picture_location=0,
+            picture_is_binary=True,
+        )
+        invalid_hfd = b"\xE0" + b"\x00" * 16 + b"hyperlink-object"
+        report = ConversionReport("malformed-binary-field.doc")
+
+        collection = read_inline_pictures(
+            _nil_picf_binary_data(invalid_hfd),
+            characters,
+            report=report,
+            character_properties_at=lambda _cp: properties,
+        )
+
+        self.assertEqual(collection.deferred_count, 1)
+        self.assertFalse(collection.consumed_binary_data_cps)
+        self.assertEqual(report.warnings[0].code, "INLINE_BINARY_DATA_MALFORMED")
 
     def test_reused_data_offset_gets_unique_drawing_identifiers(self) -> None:
         data = _picf_with_blip(0xF01E, 0x6E0, _PNG)

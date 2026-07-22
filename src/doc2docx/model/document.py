@@ -1200,6 +1200,7 @@ def parse_main_story(
     comment_boundaries_at: (
         Callable[[int], Sequence[CommentRangeStart | CommentRangeEnd]] | None
     ) = None,
+    ignored_character_cps: Collection[int] = (),
     sections: Sequence[SectionProperties] = (),
     story_name: str = "main",
     note_separator_story: bool = False,
@@ -1554,6 +1555,8 @@ def parse_main_story(
                     and not list_field_is_valid
                 ):
                     broken_list_targets.add(list_target or "UNKNOWN")
+            continue
+        if cp_offset in ignored_character_cps:
             continue
         if not visible():
             for context in reversed(field_stack):

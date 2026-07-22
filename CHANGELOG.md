@@ -5,6 +5,18 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+### M18a
+
+- Parse bounded `NilPICFAndBinData` records attached to `REF`, `PAGEREF`,
+  `NOTEREF`, and `HYPERLINK` fields, validate their HFD headers, and consume the
+  redundant U+0001 data marker without emitting a visible placeholder.
+- Keep malformed HFD and unsupported form/add-in binary payloads explicitly
+  deferred instead of treating arbitrary field data as a raster picture.
+- Validate with 176 focused tests and two real DOCs containing five HFD records:
+  all five are consumed, the duplicate binary/control warnings are eliminated,
+  rendered REF and hyperlink results remain intact, and all 36 in-scope files
+  in the 38-file regression batch continue to convert.
+
 ## 0.33.0 - 2026-07-22 (M17a-M17c)
 
 ### M17a
