@@ -5,8 +5,33 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 import json
+import os
 from pathlib import Path
+import tempfile
 from typing import Any
+
+
+def write_json_file(path: str | Path, value: Any) -> None:
+    """Atomically replace a UTF-8 JSON file in its destination directory."""
+
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=destination.parent,
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 class Severity(StrEnum):
@@ -98,8 +123,4 @@ class ConversionReport:
         }
 
     def write_json(self, path: str | Path) -> None:
-        Path(path).write_text(
-            json.dumps(self.to_dict(), ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-
+        write_json_file(path, self.to_dict())

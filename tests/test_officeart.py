@@ -118,6 +118,41 @@ class OfficeArtParsingTests(unittest.TestCase):
         self.assertEqual(style.inset_bottom_emu, 0)
         self.assertFalse(style.approximated)
 
+    def test_reads_compound_and_dashed_line_styles(self) -> None:
+        data = _header_textbox_officeart(
+            1025,
+            line_style=4,
+            line_dashing=9,
+            line_join=0,
+            line_end_cap=1,
+        )
+
+        style = read_officeart_shapes(data, offset=0, size=len(data)).style_at(1025)
+
+        assert style is not None
+        self.assertEqual(style.line_style, "thickBetweenThin")
+        self.assertEqual(style.line_dash, "longdashdot")
+        self.assertEqual(style.line_join, "bevel")
+        self.assertEqual(style.line_end_cap, "square")
+        # The fixture disables the line, so supported stored styling should not
+        # make an otherwise exact textbox approximation-prone.
+        self.assertFalse(style.approximated)
+
+    def test_reads_and_normalizes_wrap_polygon(self) -> None:
+        source_points = ((0, 0), (21600, 0), (10800, 21600), (0, 0))
+        data = _header_textbox_officeart(1025, wrap_polygon=source_points)
+
+        shapes = read_officeart_shapes(data, offset=0, size=len(data))
+
+        self.assertEqual(shapes.wrap_polygon_at(1025), source_points)
+
+    def test_reads_signed_fixed_point_shape_rotation(self) -> None:
+        data = _header_textbox_officeart(1025, rotation_fixed=-45 * 0x10000)
+
+        shapes = read_officeart_shapes(data, offset=0, size=len(data))
+
+        self.assertEqual(shapes.rotation_at(1025), -45.0)
+
     def test_truncated_drawing_record_is_rejected(self) -> None:
         data = _header_textbox_officeart(1025)
 

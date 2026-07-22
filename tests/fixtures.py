@@ -3,8 +3,18 @@
 from __future__ import annotations
 
 import struct
+import hashlib
 
 from doc2docx.cfb.constants import ENDOFCHAIN, FATSECT, FREESECT, NOSTREAM
+from doc2docx.msdoc.encryption import (
+    _rc4,
+    _rc4_binary_key,
+    _rc4_transform_stream,
+    _cryptoapi_rc4_key,
+    _cryptoapi_transform_stream,
+    xor_password_verifier,
+    xor_transform,
+)
 
 
 SECTOR_SIZE = 512
@@ -68,10 +78,12 @@ def _build_fib(
     *,
     ccp_text: int,
     clx_size: int,
+    clx_offset: int = 0,
     ccp_footnotes: int = 0,
     ccp_comments: int = 0,
     ccp_endnotes: int = 0,
     ccp_headers: int = 0,
+    ccp_macros: int = 0,
     ccp_textboxes: int = 0,
     ccp_header_textboxes: int = 0,
     section_plc: tuple[int, int] = (0, 0),
@@ -104,6 +116,8 @@ def _build_fib(
     dop: tuple[int, int] = (0, 0),
     cb_mac: int = 1110,
     encrypted: bool = False,
+    obfuscated: bool = False,
+    encryption_key: int = 0,
     uses_1table: bool = True,
 ) -> bytes:
     fib = bytearray(1024)
@@ -112,11 +126,14 @@ def _build_fib(
         flags |= 0x0200
     if encrypted:
         flags |= 0x0100
+    if obfuscated:
+        flags |= 0x8000
     struct.pack_into("<H", fib, 0, 0xA5EC)
     struct.pack_into("<H", fib, 2, 0x00C1)
     struct.pack_into("<H", fib, 6, 0x0409)
     struct.pack_into("<H", fib, 10, flags)
     struct.pack_into("<H", fib, 12, 0x00BF)
+    struct.pack_into("<I", fib, 14, encryption_key)
 
     position = 32
     struct.pack_into("<H", fib, position, 14)
@@ -128,6 +145,7 @@ def _build_fib(
     fib_rg_lw[3] = ccp_text
     fib_rg_lw[4] = ccp_footnotes
     fib_rg_lw[5] = ccp_headers
+    fib_rg_lw[6] = ccp_macros
     fib_rg_lw[7] = ccp_comments
     fib_rg_lw[8] = ccp_endnotes
     fib_rg_lw[9] = ccp_textboxes
@@ -150,7 +168,7 @@ def _build_fib(
     pairs[22] = standard_bookmark_starts
     pairs[23] = standard_bookmark_ends
     pairs[31] = dop
-    pairs[33] = (0, clx_size)
+    pairs[33] = (clx_offset, clx_size)
     pairs[36] = comment_owners
     pairs[37] = comment_bookmark_tags
     pairs[40] = main_shape_plc
@@ -416,7 +434,17 @@ def _officeart_record(
     ) + payload
 
 
-def _header_textbox_officeart(shape_id: int, *, main_shape: bool = False) -> bytes:
+def _header_textbox_officeart(
+    shape_id: int,
+    *,
+    main_shape: bool = False,
+    line_style: int | None = None,
+    line_dashing: int | None = None,
+    line_join: int | None = None,
+    line_end_cap: int | None = None,
+    rotation_fixed: int | None = None,
+    wrap_polygon: tuple[tuple[int, int], ...] = (),
+) -> bytes:
     drawing_group_data = _officeart_record(
         0,
         0,
@@ -430,17 +458,37 @@ def _header_textbox_officeart(shape_id: int, *, main_shape: bool = False) -> byt
         0xF002,
         _officeart_record(0, 1, 0xF008, struct.pack("<2I", 0, 2048)),
     )
+    shape_property_values = [
+        (0x0081, 0),
+        (0x0082, 0),
+        (0x0083, 0),
+        (0x0084, 0),
+        (0x01BF, 0x00110001),
+        (0x01FF, 0x00080000),
+    ]
+    if line_style is not None:
+        shape_property_values.append((0x01CD, line_style))
+    if line_dashing is not None:
+        shape_property_values.append((0x01CE, line_dashing))
+    if line_join is not None:
+        shape_property_values.append((0x01D6, line_join))
+    if line_end_cap is not None:
+        shape_property_values.append((0x01D7, line_end_cap))
+    if rotation_fixed is not None:
+        shape_property_values.append((0x0004, rotation_fixed & 0xFFFFFFFF))
+    complex_property_data = b""
+    if wrap_polygon:
+        point_data = b"".join(struct.pack("<ii", x, y) for x, y in wrap_polygon)
+        array_data = (
+            struct.pack("<HHH", len(wrap_polygon), len(wrap_polygon), 8)
+            + point_data
+        )
+        shape_property_values.append((0x8383, len(array_data)))
+        complex_property_data = array_data
     shape_properties = b"".join(
         struct.pack("<HI", identifier, value)
-        for identifier, value in (
-            (0x0081, 0),
-            (0x0082, 0),
-            (0x0083, 0),
-            (0x0084, 0),
-            (0x01BF, 0x00110001),
-            (0x01FF, 0x00080000),
-        )
-    )
+        for identifier, value in shape_property_values
+    ) + complex_property_data
     shape = _officeart_record(
         0xF,
         0,
@@ -451,7 +499,12 @@ def _header_textbox_officeart(shape_id: int, *, main_shape: bool = False) -> byt
             0xF00A,
             struct.pack("<2I", shape_id, 0x00000A00),
         )
-        + _officeart_record(3, 6, 0xF00B, shape_properties),
+        + _officeart_record(
+            3,
+            len(shape_property_values),
+            0xF00B,
+            shape_properties,
+        ),
     )
     header_drawing = _officeart_record(
         0xF,
@@ -750,29 +803,152 @@ def build_main_textbox_word_cfb(
 
 
 def build_word_cfb(
-    *, encrypted: bool = False, uses_1table: bool = True
+    *,
+    encrypted: bool = False,
+    password: str | None = None,
+    rc4_password: str | None = None,
+    cryptoapi_password: str | None = None,
+    uses_1table: bool = True,
+    macro_text: bytes = b"",
 ) -> bytes:
+    if sum(
+        value is not None
+        for value in (password, rc4_password, cryptoapi_password)
+    ) > 1:
+        raise ValueError("choose one fixture encryption method")
     compressed_text = b"Hello\r"
     unicode_text = "世界\r".encode("utf-16le")
-    cps = (0, len(compressed_text), len(compressed_text) + len("世界\r"))
+    main_cp_count = len(compressed_text) + len("世界\r")
+    cps = [0, len(compressed_text), main_cp_count]
     compressed_fc = (1024 * 2) | 0x40000000
     unicode_fc = 1100
-    plc_pcd = struct.pack("<3I", *cps)
-    plc_pcd += struct.pack("<HIH", 0, compressed_fc, 0)
-    plc_pcd += struct.pack("<HIH", 0, unicode_fc, 0)
+    pcds = [
+        struct.pack("<HIH", 0, compressed_fc, 0),
+        struct.pack("<HIH", 0, unicode_fc, 0),
+    ]
+    if macro_text:
+        cps.append(main_cp_count + len(macro_text))
+        pcds.append(struct.pack("<HIH", 0, (1200 * 2) | 0x40000000, 0))
+    plc_pcd = struct.pack(f"<{len(cps)}I", *cps) + b"".join(pcds)
     clx = b"\x02" + struct.pack("<I", len(plc_pcd)) + plc_pcd
 
     word_document = bytearray(4096)
+    is_obfuscated = password is not None
+    cryptoapi_header = b""
+    if cryptoapi_password is not None:
+        flags = 0x0C
+        csp_name = "Microsoft Base Cryptographic Provider v1.0\0".encode(
+            "utf-16le"
+        )
+        encryption_header = (
+            struct.pack(
+                "<8I",
+                flags,
+                0,
+                0x6801,
+                0x8004,
+                40,
+                1,
+                0,
+                0,
+            )
+            + csp_name
+        )
+        salt = bytes(range(32, 48))
+        verifier = bytes(range(48, 64))
+        verifier_ciphertext = _rc4(
+            _cryptoapi_rc4_key(cryptoapi_password, salt, 0, 40),
+            verifier + hashlib.sha1(verifier).digest(),
+        )
+        cryptoapi_header = b"".join(
+            (
+                struct.pack("<HHII", 2, 2, flags, len(encryption_header)),
+                encryption_header,
+                struct.pack("<I", len(salt)),
+                salt,
+                verifier_ciphertext[:16],
+                struct.pack("<I", 20),
+                verifier_ciphertext[16:],
+            )
+        )
+    rc4_header_size = (
+        52
+        if rc4_password is not None
+        else len(cryptoapi_header)
+    )
     word_document[:1024] = _build_fib(
-        ccp_text=cps[-1],
+        ccp_text=main_cp_count,
+        ccp_macros=len(macro_text),
         clx_size=len(clx),
-        encrypted=encrypted,
+        clx_offset=rc4_header_size,
+        encrypted=(
+            encrypted
+            or is_obfuscated
+            or rc4_password is not None
+            or cryptoapi_password is not None
+        ),
+        obfuscated=is_obfuscated,
+        encryption_key=(
+            xor_password_verifier(password)
+            if password is not None
+            else rc4_header_size
+        ),
         uses_1table=uses_1table,
     )
     word_document[1024 : 1024 + len(compressed_text)] = compressed_text
     word_document[1100 : 1100 + len(unicode_text)] = unicode_text
+    word_document[1200 : 1200 + len(macro_text)] = macro_text
     table_stream = bytearray(4096)
-    table_stream[: len(clx)] = clx
+    table_stream[rc4_header_size : rc4_header_size + len(clx)] = clx
+    if password is not None:
+        word_document[:] = xor_transform(
+            bytes(word_document),
+            password,
+            clear_prefix=68,
+        )
+        table_stream[:] = xor_transform(bytes(table_stream), password)
+    elif rc4_password is not None:
+        salt = bytes(range(16))
+        verifier = bytes(range(16, 32))
+        verifier_ciphertext = _rc4(
+            _rc4_binary_key(rc4_password, salt, 0),
+            verifier + hashlib.md5(verifier).digest(),
+        )
+        header = struct.pack("<HH", 1, 1) + salt + verifier_ciphertext
+        table_stream[:rc4_header_size] = header
+        encrypted_word = bytearray(
+            _rc4_transform_stream(bytes(word_document), rc4_password, salt)
+        )
+        encrypted_word[:68] = word_document[:68]
+        word_document[:] = encrypted_word
+        encrypted_table = bytearray(
+            _rc4_transform_stream(bytes(table_stream), rc4_password, salt)
+        )
+        encrypted_table[:rc4_header_size] = header
+        table_stream[:] = encrypted_table
+    elif cryptoapi_password is not None:
+        salt = bytes(range(32, 48))
+        table_stream[:rc4_header_size] = cryptoapi_header
+        encrypted_word = bytearray(
+            _cryptoapi_transform_stream(
+                bytes(word_document),
+                cryptoapi_password,
+                salt,
+                40,
+            )
+        )
+        encrypted_word[:68] = word_document[:68]
+        word_document[:] = encrypted_word
+        encrypted_table = bytearray(
+            _cryptoapi_transform_stream(
+                bytes(table_stream),
+                cryptoapi_password,
+                salt,
+                40,
+            )
+        )
+        encrypted_table[:rc4_header_size] = cryptoapi_header
+        table_stream[:] = encrypted_table
 
     sectors = [bytearray(SECTOR_SIZE) for _ in range(18)]
     for index in range(8):

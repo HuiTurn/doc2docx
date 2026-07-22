@@ -9,8 +9,11 @@ import struct
 from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
 from ..model import (
+    BookmarkEnd,
+    BookmarkStart,
     CharacterProperties,
     FloatingPicture,
+    FloatingShape,
     FloatingTextBox,
     FieldEndProperties,
     HeaderFooterStory,
@@ -114,10 +117,14 @@ def read_header_footer_stories(
     floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
     inline_picture_at: Callable[[int], InlinePicture | None] | None = None,
     floating_picture_at: Callable[[int], FloatingPicture | None] | None = None,
+    floating_shape_at: Callable[[int], FloatingShape | None] | None = None,
     field_end_properties_at: (
         Callable[[int], FieldEndProperties | None] | None
     ) = None,
     bookmark_names: Collection[str] | None = None,
+    bookmark_boundaries_at: (
+        Callable[[int], Sequence[BookmarkStart | BookmarkEnd]] | None
+    ) = None,
     style_names: Collection[str] | None = None,
     list_names: Collection[str] | None = None,
     ignored_character_cps: Collection[int] = (),
@@ -201,7 +208,9 @@ def read_header_footer_stories(
             floating_textbox_at=floating_textbox_at,
             inline_picture_at=inline_picture_at,
             floating_picture_at=floating_picture_at,
+            floating_shape_at=floating_shape_at,
             field_end_properties_at=field_end_properties_at,
+            bookmark_boundaries_at=bookmark_boundaries_at,
             bookmark_names=bookmark_names,
             style_names=style_names,
             list_names=list_names,
@@ -244,7 +253,9 @@ def read_header_footer_stories(
                 floating_textbox_at=floating_textbox_at,
                 inline_picture_at=inline_picture_at,
                 floating_picture_at=floating_picture_at,
+                floating_shape_at=floating_shape_at,
                 field_end_properties_at=field_end_properties_at,
+                bookmark_boundaries_at=bookmark_boundaries_at,
                 bookmark_names=bookmark_names,
                 style_names=style_names,
                 list_names=list_names,

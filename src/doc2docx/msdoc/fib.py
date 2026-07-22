@@ -62,6 +62,38 @@ class FibBase:
     environment: int
     flags2: int
 
+    @classmethod
+    def parse(cls, word_document_stream: bytes) -> "FibBase":
+        reader = BinaryReader(word_document_stream, label="WordDocument FibBase")
+        try:
+            w_ident = reader.u16()
+            n_fib = reader.u16()
+            reader.skip(2)
+            lid = reader.u16()
+            reader.skip(2)
+            flags = reader.u16()
+            n_fib_back = reader.u16()
+            l_key = reader.u32()
+            environment = reader.u8()
+            flags2 = reader.u8()
+            reader.skip(12)
+        except BinaryBoundsError as exc:
+            raise InvalidWordDocument(f"truncated or invalid FibBase: {exc}") from exc
+        if w_ident != FIB_IDENT:
+            raise InvalidWordDocument(
+                f"WordDocument FIB has wIdent 0x{w_ident:04X}; expected 0xA5EC"
+            )
+        return cls(
+            w_ident,
+            n_fib,
+            lid,
+            flags,
+            n_fib_back,
+            l_key,
+            environment,
+            flags2,
+        )
+
     @property
     def is_template(self) -> bool:
         return bool(self.flags & 0x0001)
@@ -129,6 +161,10 @@ class FileInformationBlock:
         return self.fib_rg_lw[5] if len(self.fib_rg_lw) > 5 else 0
 
     @property
+    def ccp_macros(self) -> int:
+        return self.fib_rg_lw[6] if len(self.fib_rg_lw) > 6 else 0
+
+    @property
     def ccp_comments(self) -> int:
         return self.fib_rg_lw[7] if len(self.fib_rg_lw) > 7 else 0
 
@@ -185,6 +221,7 @@ class FileInformationBlock:
         names_and_indexes = (
             ("footnotes", 4),
             ("headers", 5),
+            ("macros", 6),
             ("comments", 7),
             ("endnotes", 8),
             ("textboxes", 9),
@@ -428,22 +465,8 @@ class FileInformationBlock:
     def parse(cls, word_document_stream: bytes) -> "FileInformationBlock":
         reader = BinaryReader(word_document_stream, label="WordDocument FIB")
         try:
-            w_ident = reader.u16()
-            n_fib = reader.u16()
-            reader.skip(2)  # unused
-            lid = reader.u16()
-            reader.skip(2)  # pnNext
-            flags = reader.u16()
-            n_fib_back = reader.u16()
-            l_key = reader.u32()
-            environment = reader.u8()
-            flags2 = reader.u8()
-            reader.skip(12)  # reserved3 through reserved6
-
-            if w_ident != FIB_IDENT:
-                raise InvalidWordDocument(
-                    f"WordDocument FIB has wIdent 0x{w_ident:04X}; expected 0xA5EC"
-                )
+            base = FibBase.parse(word_document_stream)
+            reader.seek(32)
 
             csw = reader.u16()
             fib_rg_w = tuple(reader.u16() for _ in range(csw))
@@ -480,16 +503,7 @@ class FileInformationBlock:
             raise InvalidWordDocument(f"invalid main-story character count {ccp_text}")
 
         return cls(
-            base=FibBase(
-                w_ident,
-                n_fib,
-                lid,
-                flags,
-                n_fib_back,
-                l_key,
-                environment,
-                flags2,
-            ),
+            base=base,
             fib_rg_w=fib_rg_w,
             fib_rg_lw=fib_rg_lw,
             fib_rg_fc_lcb=fib_rg_fc_lcb,

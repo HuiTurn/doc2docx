@@ -5,25 +5,34 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from urllib.parse import urlsplit
 
 from ..diagnostics import ConversionReport, SourceLocation
 
 
 _MAX_TABLE_DEPTH = 64
 
-# These fields update from document-local metadata, pagination, statistics, or
-# the clock. Fields that can execute commands, load templates/add-ins, or read
-# external resources deliberately remain flattened to their cached result.
+# These fields update from document-local metadata, pagination, statistics, the
+# clock, or purely local Word field expressions. Fields that can execute
+# commands, load templates/add-ins, or read external resources deliberately
+# remain flattened to their cached result.
 _SAFE_LIVE_FIELD_TYPES = frozenset(
     {
+        "=",
         "AUTHOR",
+        "AUTONUM",
+        "AUTONUMLGL",
+        "AUTONUMOUT",
         "COMMENTS",
         "CREATEDATE",
         "DATE",
         "EDITTIME",
+        "EQ",
         "FILENAME",
         "FILESIZE",
+        "FORMULA",
         "KEYWORDS",
+        "INDEX",
         "LASTSAVEDBY",
         "NUMCHARS",
         "NUMPAGES",
@@ -35,8 +44,15 @@ _SAFE_LIVE_FIELD_TYPES = frozenset(
         "SECTION",
         "SECTIONPAGES",
         "SUBJECT",
+        "SYMBOL",
         "TIME",
         "TITLE",
+        "TOC",
+        "TOA",
+        "TA",
+        "TC",
+        "XE",
+        "QUOTE",
     }
 )
 _EXTERNAL_OR_ACTIVE_FIELD_TYPES = frozenset(
@@ -62,6 +78,8 @@ _BOOKMARK_LIVE_FIELD_TYPES = frozenset(
 _SEQUENCE_LIVE_FIELD_TYPES = frozenset({"SEQ"})
 _STYLE_LIVE_FIELD_TYPES = frozenset({"STYLEREF"})
 _LIST_LIVE_FIELD_TYPES = frozenset({"LISTNUM"})
+_HYPERLINK_LIVE_FIELD_TYPES = frozenset({"HYPERLINK"})
+_SAFE_HYPERLINK_SCHEMES = frozenset({"http", "https", "mailto"})
 
 
 def _field_first_argument(instruction: str) -> str | None:
@@ -96,6 +114,56 @@ def _normalized_field_instruction(instruction: str, field_type: str) -> str:
     leading_length = len(instruction) - len(instruction.lstrip())
     token_end = leading_length + len(field_type)
     return instruction[:leading_length] + "NOTEREF" + instruction[token_end:]
+
+
+def _valid_ole_prog_id(value: str | None) -> str | None:
+    if (
+        value is None
+        or not 1 <= len(value) <= 39
+        or value[0].isdigit()
+        or any(
+            not (character.isascii() and (character.isalnum() or character == "."))
+            for character in value
+        )
+    ):
+        return None
+    return value
+
+
+def _hyperlink_is_safe(
+    instruction: str,
+    *,
+    available_bookmark_names: frozenset[str],
+) -> bool:
+    """Return whether a HYPERLINK target is safe to retain as a live field.
+
+    DOC fields can reference local files and arbitrary URI schemes.  Retaining
+    those as live OOXML fields would make a converted document acquire a new
+    external-action surface.  Web, mail, and document-local bookmark targets
+    are declarative and have stable WordprocessingML equivalents.
+    """
+
+    target = _field_first_argument(instruction)
+    if target is not None:
+        if any(character.isspace() or ord(character) < 0x20 for character in target):
+            return False
+        try:
+            parsed = urlsplit(target)
+        except ValueError:
+            return False
+        if parsed.scheme.casefold() not in _SAFE_HYPERLINK_SCHEMES:
+            return False
+        if parsed.scheme.casefold() in {"http", "https"} and not parsed.netloc:
+            return False
+        return bool(parsed.path or parsed.netloc)
+
+    # An internal target has the form HYPERLINK \\l "BookmarkName".  The
+    # minimal scanner deliberately accepts only the standard single switch;
+    # unusual switch combinations stay as cached text.
+    tokens = instruction.lstrip().split()
+    if len(tokens) == 3 and tokens[1].casefold() == "\\l":
+        return tokens[2].strip('"').casefold() in available_bookmark_names
+    return False
 
 
 class BreakType(StrEnum):
@@ -134,19 +202,37 @@ class CharacterProperties:
     small_caps: bool | None = None
     caps: bool | None = None
     hidden: bool | None = None
+    web_hidden: bool | None = None
+    special_vanish: bool | None = None
+    bidirectional: bool | None = None
+    complex_script: bool | None = None
     special: bool | None = None
     picture_location: int | None = None
     picture_is_binary: bool | None = None
+    ole_object: bool | None = None
+    object_placeholder: bool | None = None
     no_proof: bool | None = None
     underline: str | None = None
+    underline_color: str | None = None
     color: str | None = None
     highlight: str | None = None
+    shading: "ShadingProperties | None" = None
+    border: "BorderProperties | None" = None
     size_half_points: int | None = None
     complex_script_size_half_points: int | None = None
     kerning_half_points: int | None = None
     spacing_twips: int | None = None
     scale_percent: int | None = None
+    fit_text_width_twips: int | None = None
+    fit_text_id: int | None = None
+    east_asian_vertical: bool | None = None
+    east_asian_combine: bool | None = None
+    east_asian_combine_brackets: str | None = None
+    east_asian_vertical_compress: bool | None = None
+    east_asian_layout_id: int | None = None
     emphasis: str | None = None
+    text_effect: str | None = None
+    line_break_clear: str | None = None
     vertical_align: str | None = None
     position_half_points: int | None = None
     snap_to_grid: bool | None = None
@@ -177,6 +263,9 @@ class TableBorders:
     right: BorderProperties | None = None
     inside_horizontal: BorderProperties | None = None
     inside_vertical: BorderProperties | None = None
+    between: BorderProperties | None = None
+    diagonal_down: BorderProperties | None = None
+    diagonal_up: BorderProperties | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -208,6 +297,17 @@ class ParagraphFrameProperties:
     horizontal_anchor: str | None = None
     vertical_anchor: str | None = None
     wrap: str | None = None
+    horizontal_position_twips: int | None = None
+    horizontal_alignment: str | None = None
+    vertical_position_twips: int | None = None
+    vertical_alignment: str | None = None
+    width_twips: int | None = None
+    height_twips: int | None = None
+    height_rule: str | None = None
+    horizontal_space_twips: int | None = None
+    vertical_space_twips: int | None = None
+    anchor_locked: bool | None = None
+    text_direction: str | None = None
     drop_cap: str | None = None
     drop_cap_lines: int | None = None
 
@@ -232,9 +332,11 @@ class TableCellDefinition:
     preferred_width_twips: int | None = None
     horizontal_merge: str | None = None
     vertical_merge: str | None = None
+    text_direction: str | None = None
     vertical_alignment: str | None = None
     fit_text: bool | None = None
     no_wrap: bool | None = None
+    hide_mark: bool | None = None
     borders: TableBorders = field(default_factory=TableBorders)
 
 
@@ -247,6 +349,18 @@ class TableRowProperties:
     cell_boundaries_twips: tuple[int, ...] = ()
     cell_definitions: tuple[TableCellDefinition, ...] = ()
     alignment: str | None = None
+    bidirectional: bool | None = None
+    no_overlap: bool | None = None
+    horizontal_anchor: str | None = None
+    vertical_anchor: str | None = None
+    horizontal_position_twips: int | None = None
+    horizontal_alignment: str | None = None
+    vertical_position_twips: int | None = None
+    vertical_alignment: str | None = None
+    distance_left_twips: int | None = None
+    distance_right_twips: int | None = None
+    distance_top_twips: int | None = None
+    distance_bottom_twips: int | None = None
     left_indent_twips: int | None = None
     auto_fit: bool | None = None
     first_row_style: bool | None = None
@@ -255,15 +369,23 @@ class TableRowProperties:
     last_column_style: bool | None = None
     no_row_banding: bool | None = None
     no_column_banding: bool | None = None
+    row_band_size: int | None = None
+    column_band_size: int | None = None
+    grid_before_width: int | None = None
+    grid_before_width_type: str | None = None
+    grid_after_width: int | None = None
+    grid_after_width_type: str | None = None
     gap_half_twips: int | None = None
     height_twips: int | None = None
     height_rule: str | None = None
     cant_split: bool | None = None
     is_header: bool | None = None
     borders: TableBorders = field(default_factory=TableBorders)
+    table_shading: ShadingProperties | None = None
     default_cell_margins: TableCellMargins = field(
         default_factory=TableCellMargins
     )
+    cell_spacing_twips: int | None = None
     cell_margin_overrides: tuple[TableCellMarginOverride, ...] = ()
     cell_width_overrides: tuple[TableCellWidthOverride, ...] = ()
     cell_shadings: tuple[ShadingProperties | None, ...] = ()
@@ -271,6 +393,10 @@ class TableRowProperties:
     cell_left_border_colors: tuple[str | None, ...] = ()
     cell_bottom_border_colors: tuple[str | None, ...] = ()
     cell_right_border_colors: tuple[str | None, ...] = ()
+    style_cell_borders: TableBorders = field(default_factory=TableBorders)
+    style_cell_shading: ShadingProperties | None = None
+    style_cell_vertical_alignment: str | None = None
+    style_cell_no_wrap: bool | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -299,13 +425,21 @@ class ParagraphProperties:
     auto_space_east_asian_numbers: bool | None = None
     snap_to_grid: bool | None = None
     adjust_right_indent: bool | None = None
+    text_alignment: str | None = None
+    mirror_indents: bool | None = None
+    textbox_tight_wrap: str | None = None
     frame: ParagraphFrameProperties | None = None
     borders: TableBorders | None = None
     shading: ShadingProperties | None = None
     tab_stops: tuple[TabStop, ...] | None = None
     left_indent_twips: int | None = None
+    nest_indent_twips: int | None = None
+    nest_indent_modern: bool | None = None
     right_indent_twips: int | None = None
     first_line_indent_twips: int | None = None
+    left_indent_chars: int | None = None
+    right_indent_chars: int | None = None
+    first_line_indent_chars: int | None = None
     space_before_twips: int | None = None
     space_after_twips: int | None = None
     space_before_lines: int | None = None
@@ -418,10 +552,25 @@ class StyleDefinition:
     character_properties: CharacterProperties = field(
         default_factory=CharacterProperties
     )
+    conditional_table_properties: tuple[TableStyleConditionalProperties, ...] = ()
 
     @property
     def ooxml_style_id(self) -> str:
         return f"DocStyle{self.index}"
+
+
+@dataclass(slots=True, frozen=True)
+class TableStyleConditionalProperties:
+    """One location-dependent branch of a DOC table style."""
+
+    condition: str
+    table_properties: TableRowProperties | None = None
+    paragraph_properties: ParagraphProperties = field(
+        default_factory=ParagraphProperties
+    )
+    character_properties: CharacterProperties = field(
+        default_factory=CharacterProperties
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -555,6 +704,7 @@ class FootnoteReference:
     """A main-story reference to one footnote body."""
 
     footnote_id: int
+    custom_mark: str | None = None
     properties: CharacterProperties = field(default_factory=CharacterProperties)
 
 
@@ -563,6 +713,7 @@ class EndnoteReference:
     """A main-story reference to one endnote body."""
 
     endnote_id: int
+    custom_mark: str | None = None
     properties: CharacterProperties = field(default_factory=CharacterProperties)
 
 
@@ -604,6 +755,18 @@ class InlinePicture:
 
 
 @dataclass(slots=True, frozen=True)
+class EmbeddedObject:
+    """One OLE storage anchored by an EMBED field in the main story."""
+
+    object_id: int
+    storage_id: int
+    data: bytes
+    prog_id: str | None = None
+    preview: InlinePicture | None = None
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+
+
+@dataclass(slots=True, frozen=True)
 class FloatingPicture:
     """One picture positioned by a main/header DOC Spa anchor."""
 
@@ -623,7 +786,36 @@ class FloatingPicture:
     wrap_side: str
     behind_text: bool
     anchor_locked: bool
+    wrap_polygon: tuple[tuple[int, int], ...] = ()
     name: str | None = None
+    properties: CharacterProperties = field(default_factory=CharacterProperties)
+    flip_horizontal: bool = False
+    flip_vertical: bool = False
+    rotation_degrees: float = 0.0
+
+
+@dataclass(slots=True, frozen=True)
+class FloatingShape:
+    """One positioned OfficeArt preset shape without picture or textbox data."""
+
+    shape_id: int
+    shape_type: int
+    anchor_cp: int
+    left_twips: int
+    top_twips: int
+    width_twips: int
+    height_twips: int
+    horizontal_relative: str
+    vertical_relative: str
+    wrap_type: str
+    wrap_side: str
+    behind_text: bool
+    anchor_locked: bool
+    flip_horizontal: bool = False
+    flip_vertical: bool = False
+    rotation_degrees: float = 0.0
+    geometry_path: str | None = None
+    shape_style: "ShapeStyle | None" = None
     properties: CharacterProperties = field(default_factory=CharacterProperties)
 
 
@@ -638,6 +830,10 @@ class ShapeStyle:
     line_color: str = "000000"
     line_opacity: int = 0x10000
     line_width_emu: int = 0x2535
+    line_style: str = "single"
+    line_dash: str = "solid"
+    line_join: str = "round"
+    line_end_cap: str = "flat"
     inset_left_emu: int = 0x16530
     inset_top_emu: int = 0xB298
     inset_right_emu: int = 0x16530
@@ -664,6 +860,9 @@ class FloatingTextBox:
     paragraphs: tuple["Paragraph", ...]
     blocks: tuple["Paragraph | Table", ...] = ()
     shape_style: ShapeStyle | None = None
+    flip_horizontal: bool = False
+    flip_vertical: bool = False
+    rotation_degrees: float = 0.0
 
     @property
     def body_blocks(self) -> tuple["Paragraph | Table", ...]:
@@ -688,7 +887,9 @@ Inline = (
     | CommentRangeEnd
     | CommentReference
     | InlinePicture
+    | EmbeddedObject
     | FloatingPicture
+    | FloatingShape
     | FloatingTextBox
 )
 
@@ -773,9 +974,11 @@ class TableCell:
     width_twips: int | None = None
     grid_span: int = 1
     vertical_merge: str | None = None
+    text_direction: str | None = None
     vertical_alignment: str | None = None
     fit_text: bool | None = None
     no_wrap: bool | None = None
+    hide_mark: bool | None = None
     borders: TableBorders = field(default_factory=TableBorders)
     margins: TableCellMargins = field(default_factory=TableCellMargins)
     shading: ShadingProperties | None = None
@@ -915,6 +1118,7 @@ class Document:
     core_properties: CoreProperties = field(default_factory=CoreProperties)
     numbering: NumberingDefinitions = field(default_factory=NumberingDefinitions)
     pictures: tuple[InlinePicture | FloatingPicture, ...] = ()
+    embedded_objects: tuple[EmbeddedObject, ...] = ()
     even_and_odd_headers: bool = False
     mirror_margins: bool = False
     gutter_at_top: bool = False
@@ -923,6 +1127,8 @@ class Document:
     do_not_hyphenate_caps: bool | None = None
     hyphenation_zone_twips: int | None = None
     consecutive_hyphen_limit: int | None = None
+    track_revisions: bool | None = None
+    document_protection_edit: str | None = None
     adjust_line_height_in_table: bool | None = None
 
     @property
@@ -950,6 +1156,7 @@ class _FieldContext:
     result: list[Inline]
     properties: CharacterProperties
     has_separator: bool = False
+    embedded_object: EmbeddedObject | None = None
 
 
 def _replace_margin_sides(
@@ -1069,9 +1276,11 @@ def _build_table_row(
             ),
             width_twips=width,
             vertical_merge=definition.vertical_merge,
+            text_direction=definition.text_direction,
             vertical_alignment=definition.vertical_alignment,
             fit_text=definition.fit_text,
             no_wrap=definition.no_wrap,
+            hide_mark=definition.hide_mark,
             borders=borders,
             margins=_cell_margins(properties, index),
             shading=(
@@ -1205,7 +1414,9 @@ def parse_main_story(
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
     inline_picture_at: Callable[[int], InlinePicture | None] | None = None,
+    embedded_object_at: Callable[[int], EmbeddedObject | None] | None = None,
     floating_picture_at: Callable[[int], FloatingPicture | None] | None = None,
+    floating_shape_at: Callable[[int], FloatingShape | None] | None = None,
     field_end_properties_at: (
         Callable[[int], FieldEndProperties | None] | None
     ) = None,
@@ -1432,6 +1643,8 @@ def parse_main_story(
             if visible():
                 flush_text()
             field_stack[-1].has_separator = True
+            if embedded_object_at is not None:
+                field_stack[-1].embedded_object = embedded_object_at(cp_offset)
             continue
         if value == 0x15 and field_stack:  # field end
             if visible():
@@ -1440,6 +1653,10 @@ def parse_main_story(
             instruction = "".join(context.instruction)
             instruction_tokens = instruction.lstrip().split(maxsplit=1)
             field_type = instruction_tokens[0].upper() if instruction_tokens else ""
+            # Formula fields use the expression itself as their first token,
+            # for example ``=SUM(ABOVE)`` rather than a literal FORMULA name.
+            if field_type.startswith("="):
+                field_type = "="
             parent_is_visible = visible()
             field_end_properties = (
                 field_end_properties_at(cp_offset)
@@ -1483,6 +1700,13 @@ def parse_main_story(
                 list_target is not None
                 and list_target.casefold() in available_list_names
             )
+            hyperlink_field_is_valid = (
+                field_type in _HYPERLINK_LIVE_FIELD_TYPES
+                and _hyperlink_is_safe(
+                    instruction,
+                    available_bookmark_names=available_bookmark_names,
+                )
+            )
             safe_live_field = field_type in _SAFE_LIVE_FIELD_TYPES or (
                 field_type in _BOOKMARK_LIVE_FIELD_TYPES
                 and bookmark_field_is_valid
@@ -1495,14 +1719,37 @@ def parse_main_story(
             ) or (
                 field_type in _LIST_LIVE_FIELD_TYPES
                 and list_field_is_valid
-            )
+            ) or hyperlink_field_is_valid
             private_bookmark_boundaries = (
                 contained_bookmark_boundaries(context.result)
                 if field_end_properties is not None
                 and field_end_properties.private_result
                 else []
             )
-            if safe_live_field and declared_field:
+            if (
+                field_type == "EMBED"
+                and context.embedded_object is not None
+                and declared_field
+            ):
+                if parent_is_visible:
+                    preview = next(
+                        (
+                            value
+                            for value in context.result
+                            if isinstance(value, InlinePicture)
+                        ),
+                        None,
+                    )
+                    current_inlines().append(
+                        replace(
+                            context.embedded_object,
+                            preview=preview,
+                            prog_id=_valid_ole_prog_id(
+                                _field_first_argument(instruction)
+                            ),
+                        )
+                    )
+            elif safe_live_field and declared_field:
                 if parent_is_visible:
                     current_inlines().append(
                         Field(
@@ -1668,15 +1915,15 @@ def parse_main_story(
             last_was_terminator = True
         elif character == "\t":
             flush_text()
-            inlines.append(Tab(character_properties))
+            current_inlines().append(Tab(character_properties))
             last_was_terminator = False
         elif value == 0x1E:
             flush_text()
-            inlines.append(NoBreakHyphen(character_properties))
+            current_inlines().append(NoBreakHyphen(character_properties))
             last_was_terminator = False
         elif value == 0x1F:
             flush_text()
-            inlines.append(SoftHyphen(character_properties))
+            current_inlines().append(SoftHyphen(character_properties))
             last_was_terminator = False
         elif (
             note_separator_story
@@ -1684,7 +1931,7 @@ def parse_main_story(
             and value in (0x03, 0x04)
         ):
             flush_text()
-            inlines.append(
+            current_inlines().append(
                 SeparatorMark(character_properties)
                 if value == 0x03
                 else ContinuationSeparatorMark(character_properties)
@@ -1692,7 +1939,7 @@ def parse_main_story(
             last_was_terminator = False
         elif character in ("\n", "\v"):
             flush_text()
-            inlines.append(Break(BreakType.LINE, character_properties))
+            current_inlines().append(Break(BreakType.LINE, character_properties))
             last_was_terminator = False
         elif character == "\f":
             section = internal_sections_by_end.get(unit.cp_end)
@@ -1712,7 +1959,7 @@ def parse_main_story(
                 last_was_terminator = True
             else:
                 flush_text()
-                inlines.append(Break(BreakType.PAGE, character_properties))
+                current_inlines().append(Break(BreakType.PAGE, character_properties))
                 if not section_values:
                     deferred_markers["BREAK_KIND_APPROXIMATED"] = (
                         deferred_markers.get("BREAK_KIND_APPROXIMATED", 0) + 1
@@ -1755,6 +2002,16 @@ def parse_main_story(
             if textbox is not None:
                 flush_text()
                 current_inlines().append(textbox)
+                last_was_terminator = False
+                continue
+            shape = (
+                floating_shape_at(cp_offset)
+                if value == 0x08 and floating_shape_at is not None
+                else None
+            )
+            if shape is not None:
+                flush_text()
+                current_inlines().append(shape)
                 last_was_terminator = False
                 continue
             marker_code = {

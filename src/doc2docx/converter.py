@@ -13,7 +13,6 @@ from typing import Any
 from .cfb import CompoundFile, CompoundFileLimits, ObjectType
 from .diagnostics import ConversionReport
 from .errors import (
-    EncryptedDocumentError,
     InvalidWordDocument,
     StreamNotFound,
     UnsafeOutputPathError,
@@ -21,6 +20,9 @@ from .errors import (
 from .model import (
     CoreProperties,
     Document,
+    EmbeddedObject,
+    Field,
+    FloatingTextBox,
     Paragraph,
     Symbol,
     Table,
@@ -38,11 +40,14 @@ from .msdoc import (
     read_formatting,
     read_footnotes,
     read_header_floating_pictures,
+    read_header_floating_shapes,
     read_header_footer_stories,
     read_header_textboxes,
     read_main_floating_pictures,
+    read_main_floating_shapes,
     read_main_textboxes,
     read_numbering,
+    read_embedded_objects,
     read_officeart_shapes,
     read_inline_pictures,
     read_piece_table,
@@ -50,6 +55,8 @@ from .msdoc import (
     read_shape_anchors,
     read_style_sheet,
 )
+from .msdoc.encryption import decrypt_word_streams
+from .msdoc.fib import FibBase
 from .ooxml import validate_docx, write_docx
 
 
@@ -70,15 +77,55 @@ def _iter_tables(blocks: Iterable[Paragraph | Table]) -> Iterator[Table]:
                 yield from _iter_tables(cell.body_blocks)
 
 
+def _iter_embedded_objects(
+    blocks: Iterable[Paragraph | Table],
+) -> Iterator[EmbeddedObject]:
+    for block in blocks:
+        if isinstance(block, Table):
+            for row in block.rows:
+                for cell in row.cells:
+                    yield from _iter_embedded_objects(cell.body_blocks)
+            continue
+        for inline in block.inlines:
+            if isinstance(inline, EmbeddedObject):
+                yield inline
+            elif isinstance(inline, Field):
+                for result in inline.result:
+                    if isinstance(result, EmbeddedObject):
+                        yield result
+            elif isinstance(inline, FloatingTextBox):
+                yield from _iter_embedded_objects(inline.body_blocks)
+
+
 def _load_word_parts(
     source: str | Path,
     *,
     limits: CompoundFileLimits | None,
-) -> tuple[CompoundFile, bytes, FileInformationBlock]:
+    password: str | None,
+) -> tuple[
+    CompoundFile,
+    bytes,
+    FileInformationBlock,
+    bytes,
+    bytes | None,
+]:
     compound = CompoundFile.from_path(source, limits=limits)
     word_document = compound.open_stream("WordDocument")
-    fib = FileInformationBlock.parse(word_document)
-    return compound, word_document, fib
+    base = FibBase.parse(word_document)
+    table_stream = compound.open_stream(base.table_stream_name)
+    try:
+        data_stream = compound.open_stream("Data")
+    except StreamNotFound:
+        data_stream = None
+    streams = decrypt_word_streams(
+        base,
+        password=password,
+        word_document=word_document,
+        table=table_stream,
+        data=data_stream,
+    )
+    fib = FileInformationBlock.parse(streams.word_document)
+    return compound, streams.word_document, fib, streams.table, streams.data
 
 
 def convert(
@@ -86,6 +133,7 @@ def convert(
     destination: str | Path | None = None,
     *,
     limits: CompoundFileLimits | None = None,
+    password: str | None = None,
 ) -> ConversionResult:
     source_path = Path(source)
     destination_path = (
@@ -97,7 +145,11 @@ def convert(
         raise UnsafeOutputPathError("destination must not overwrite the source document")
     report = ConversionReport(str(source_path), str(destination_path))
 
-    compound, word_document, fib = _load_word_parts(source_path, limits=limits)
+    compound, word_document, fib, table_stream, data_stream = _load_word_parts(
+        source_path,
+        limits=limits,
+        password=password,
+    )
     try:
         summary_information = read_summary_information(
             compound.open_stream("\x05SummaryInformation"),
@@ -119,18 +171,6 @@ def convert(
             "a malformed root directory name was safely normalized",
             entry_count=len(repaired_entries),
         )
-    if fib.base.is_encrypted:
-        method = "XOR obfuscation" if fib.base.is_obfuscated else "RC4 encryption"
-        raise EncryptedDocumentError(
-            f"password-protected Word documents using {method} are not yet supported"
-        )
-
-    table_name = fib.base.table_stream_name
-    table_stream = compound.open_stream(table_name)
-    try:
-        data_stream = compound.open_stream("Data")
-    except StreamNotFound:
-        data_stream = None
     dop = fib.dop
     document_settings = read_document_settings(
         table_stream,
@@ -138,6 +178,26 @@ def convert(
         size=dop.lcb,
         n_fib=fib.n_fib,
     )
+    if document_settings.protection_mode_conflict:
+        report.warning(
+            "DOCUMENT_PROTECTION_CONFLICT_REPAIRED",
+            "conflicting legacy protection flags were reduced to one mode",
+            selected_mode=document_settings.document_protection_edit,
+        )
+    if document_settings.track_revisions_repaired:
+        report.warning(
+            "TRACK_REVISIONS_REPAIRED",
+            "locked revision protection required revision tracking to be enabled",
+        )
+    if (
+        document_settings.document_protection_edit is not None
+        and document_settings.legacy_protection_key is not None
+    ):
+        report.warning(
+            "DOCUMENT_PROTECTION_PASSWORD_DROPPED",
+            "the legacy DOC protection password verifier cannot be represented "
+            "safely in OOXML and was omitted",
+        )
     section_table = fib.plcf_sed
     sections = read_sections(
         table_stream,
@@ -245,6 +305,23 @@ def convert(
         main_story_length=fib.ccp_text,
         total_story_length=fib.total_story_cp_count,
         report=report,
+        supported_story_ranges=tuple(
+            (name, start, start + length)
+            for name, start, length in (
+                ("main", 0, fib.ccp_text),
+                ("footnotes", fib.ccp_text, fib.ccp_footnotes),
+                ("headers", fib.header_story_cp_start, fib.ccp_headers),
+                ("comments", fib.comment_story_cp_start, fib.ccp_comments),
+                ("endnotes", fib.endnote_story_cp_start, fib.ccp_endnotes),
+                ("textboxes", fib.textbox_story_cp_start, fib.ccp_textboxes),
+                (
+                    "header-textboxes",
+                    fib.header_textbox_story_cp_start,
+                    fib.ccp_header_textboxes,
+                ),
+            )
+            if length or name == "main"
+        ),
     )
     main_field_table = fib.plcf_fld_mom
     main_fields = read_field_table(
@@ -326,6 +403,7 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         field_end_properties_at=footnote_fields.end_properties_at,
+        bookmark_boundaries_at=bookmarks.boundaries_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
         list_names=available_list_names,
@@ -358,6 +436,7 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         field_end_properties_at=comment_fields.end_properties_at,
+        bookmark_boundaries_at=bookmarks.boundaries_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
         list_names=available_list_names,
@@ -378,6 +457,7 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         field_end_properties_at=endnote_fields.end_properties_at,
+        bookmark_boundaries_at=bookmarks.boundaries_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
         list_names=available_list_names,
@@ -423,6 +503,10 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         shape_style_at=officeart_shapes.style_at,
+        shape_rotation_at=officeart_shapes.rotation_at,
+        shape_horizontally_flipped_at=officeart_shapes.is_horizontally_flipped,
+        shape_vertically_flipped_at=officeart_shapes.is_vertically_flipped,
+        bookmark_boundaries_at=bookmarks.boundaries_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
         list_names=available_list_names,
@@ -449,6 +533,10 @@ def convert(
         character_properties_at=formatting.character_properties_at,
         paragraph_properties_at=formatting.paragraph_properties_at,
         shape_style_at=officeart_shapes.style_at,
+        shape_rotation_at=officeart_shapes.rotation_at,
+        shape_horizontally_flipped_at=officeart_shapes.is_horizontally_flipped,
+        shape_vertically_flipped_at=officeart_shapes.is_vertically_flipped,
+        bookmark_boundaries_at=bookmarks.boundaries_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
         list_names=available_list_names,
@@ -458,6 +546,12 @@ def convert(
         fib.ccp_text,
         report,
         story="main",
+    )
+    embedded_objects = read_embedded_objects(
+        compound,
+        main_characters,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
     )
     header_characters = piece_table.extract_characters(
         fib.header_story_cp_start,
@@ -476,6 +570,13 @@ def convert(
         officeart_shapes,
         excluded_shape_ids=main_textboxes.shape_ids,
         first_picture_id=len(inline_pictures.pictures) + 1,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
+    main_floating_shapes = read_main_floating_shapes(
+        main_shape_anchors,
+        officeart_shapes,
+        excluded_shape_ids=main_textboxes.shape_ids,
         report=report,
         character_properties_at=formatting.character_properties_at,
     )
@@ -514,6 +615,14 @@ def convert(
         report=report,
         character_properties_at=formatting.character_properties_at,
     )
+    header_floating_shapes = read_header_floating_shapes(
+        header_shape_anchors,
+        officeart_shapes,
+        header_story_cp_start=fib.header_story_cp_start,
+        excluded_shape_ids=header_textboxes.shape_ids,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
     header_table = fib.plcf_hdd
     header_footers = read_header_footer_stories(
         table_stream,
@@ -529,7 +638,9 @@ def convert(
         floating_textbox_at=header_textboxes.textbox_at,
         inline_picture_at=header_inline_pictures.picture_at,
         floating_picture_at=header_floating_pictures.picture_at,
+        floating_shape_at=header_floating_shapes.shape_at,
         field_end_properties_at=header_fields.end_properties_at,
+        bookmark_boundaries_at=bookmarks.boundaries_at,
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
         list_names=available_list_names,
@@ -545,7 +656,9 @@ def convert(
         paragraph_properties_at=formatting.paragraph_properties_at,
         floating_textbox_at=main_textboxes.textbox_at,
         inline_picture_at=inline_pictures.picture_at,
+        embedded_object_at=embedded_objects.object_at,
         floating_picture_at=floating_pictures.picture_at,
+        floating_shape_at=main_floating_shapes.shape_at,
         footnote_reference_at=footnotes.reference_at,
         endnote_reference_at=endnotes.reference_at,
         comment_reference_at=comments.reference_at,
@@ -589,6 +702,9 @@ def convert(
             + header_inline_pictures.pictures
             + header_floating_pictures.pictures
         ),
+        embedded_objects=tuple(
+            _iter_embedded_objects(parsed_document.body_blocks)
+        ),
         even_and_odd_headers=document_settings.even_and_odd_headers,
         mirror_margins=document_settings.mirror_margins,
         gutter_at_top=document_settings.gutter_at_top,
@@ -599,6 +715,10 @@ def convert(
         consecutive_hyphen_limit=(
             document_settings.consecutive_hyphen_limit
         ),
+        track_revisions=document_settings.track_revisions,
+        document_protection_edit=(
+            document_settings.document_protection_edit
+        ),
         adjust_line_height_in_table=(
             document_settings.adjust_line_height_in_table
         ),
@@ -608,11 +728,12 @@ def convert(
     report.statistics.update(
         {
             "cfb_sector_count": compound.sector_count,
-            "table_stream": table_name,
+            "table_stream": fib.base.table_stream_name,
             "fib_version": fib.n_fib,
             "piece_count": len(piece_table.pieces),
             "main_story_cp_count": fib.ccp_text,
             "paragraph_count": len(document.paragraphs),
+            "embedded_object_count": len(document.embedded_objects),
             "character_format_span_count": len(formatting.character_spans),
             "paragraph_format_span_count": len(formatting.paragraph_spans),
             "character_fkp_run_count": formatting.character_fkp_run_count,
@@ -696,6 +817,7 @@ def convert(
                 len(row.cells) for table in tables for row in table.rows
             ),
             "section_count": len(sections),
+            "macro_story_cp_count": fib.ccp_macros,
             "document_grid_section_count": sum(
                 section.document_grid_type is not None for section in sections
             ),
@@ -779,6 +901,10 @@ def convert(
             "consecutive_hyphen_limit": (
                 document.consecutive_hyphen_limit or 0
             ),
+            "track_revisions": document.track_revisions is True,
+            "document_protection_edit": (
+                document.document_protection_edit or "none"
+            ),
             "adjust_line_height_in_table": (
                 document.adjust_line_height_in_table is True
             ),
@@ -828,6 +954,14 @@ def convert(
             "floating_picture_count": (
                 len(floating_pictures.pictures)
                 + len(header_floating_pictures.pictures)
+            ),
+            "floating_shape_count": (
+                len(main_floating_shapes.shapes)
+                + len(header_floating_shapes.shapes)
+            ),
+            "deferred_floating_shape_count": (
+                main_floating_shapes.deferred_count
+                + header_floating_shapes.deferred_count
             ),
             "main_floating_picture_count": len(floating_pictures.pictures),
             "header_floating_picture_count": len(
@@ -880,8 +1014,8 @@ def convert(
     secondary_stories.pop("header_textboxes", None)
     if secondary_stories:
         report.warning(
-            "SECONDARY_STORIES_DEFERRED",
-            "some secondary document stories remain unsupported after M7d",
+            "MACRO_STORY_OMITTED",
+            "the legacy Word macro story has no safe WordprocessingML equivalent and was omitted",
             stories=secondary_stories,
         )
 
@@ -920,8 +1054,13 @@ def inspect_doc(
     source: str | Path,
     *,
     limits: CompoundFileLimits | None = None,
+    password: str | None = None,
 ) -> dict[str, Any]:
-    compound, _, fib = _load_word_parts(source, limits=limits)
+    compound, _, fib, _, _ = _load_word_parts(
+        source,
+        limits=limits,
+        password=password,
+    )
     entries = []
     for entry in compound.entries:
         if entry.path == "":
@@ -959,6 +1098,7 @@ def inspect_doc(
             "ccpEdn": fib.ccp_endnotes,
             "ccpAtn": fib.ccp_comments,
             "ccpHdd": fib.ccp_headers,
+            "ccpMcr": fib.ccp_macros,
             "ccpHdrTxbx": fib.ccp_header_textboxes,
             "ccpTxbx": fib.ccp_textboxes,
             "fcClx": fib.clx.fc,

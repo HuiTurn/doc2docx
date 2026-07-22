@@ -323,21 +323,24 @@ class ConversionTests(unittest.TestCase):
                     with self.assertRaises(InvalidWordDocument):
                         convert(source)
 
-    def test_custom_endnote_mark_is_explicitly_approximated(self) -> None:
+    def test_custom_endnote_mark_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "custom-endnote.doc"
             source.write_bytes(build_endnote_word_cfb(custom_mark=True))
 
             result = convert(source)
 
-            self.assertEqual(
-                [warning.code for warning in result.report.warnings],
-                ["CUSTOM_ENDNOTE_MARK_APPROXIMATED"],
-            )
+            self.assertFalse(result.report.warnings)
             self.assertEqual(
                 result.report.statistics["custom_endnote_mark_count"],
                 1,
             )
+            with zipfile.ZipFile(result.output_path) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            reference = root.find(f".//{W}endnoteReference")
+            assert reference is not None
+            self.assertEqual(reference.get(f"{W}customMarkFollows"), "1")
+            self.assertIn("*", "".join(root.itertext()))
 
     def test_automatic_footnote_is_linked_and_packaged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -406,21 +409,24 @@ class ConversionTests(unittest.TestCase):
                     with self.assertRaises(InvalidWordDocument):
                         convert(source)
 
-    def test_custom_footnote_mark_is_explicitly_approximated(self) -> None:
+    def test_custom_footnote_mark_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "custom-footnote.doc"
             source.write_bytes(build_footnote_word_cfb(custom_mark=True))
 
             result = convert(source)
 
-            self.assertEqual(
-                [warning.code for warning in result.report.warnings],
-                ["CUSTOM_FOOTNOTE_MARK_APPROXIMATED"],
-            )
+            self.assertFalse(result.report.warnings)
             self.assertEqual(
                 result.report.statistics["custom_footnote_mark_count"],
                 1,
             )
+            with zipfile.ZipFile(result.output_path) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            reference = root.find(f".//{W}footnoteReference")
+            assert reference is not None
+            self.assertEqual(reference.get(f"{W}customMarkFollows"), "1")
+            self.assertIn("*", "".join(root.itertext()))
 
     def test_header_textbox_field_table_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -791,6 +797,7 @@ class ConversionTests(unittest.TestCase):
             self.assertEqual(info["fib"]["table_stream"], "1Table")
             self.assertEqual(info["fib"]["ccpText"], 9)
             self.assertEqual(info["fib"]["ccpHdd"], 0)
+            self.assertEqual(info["fib"]["ccpMcr"], 0)
             self.assertEqual(info["fib"]["lcbPlcfBteChpx"], 0)
             self.assertEqual(info["fib"]["lcbPlcfBtePapx"], 0)
             self.assertEqual(info["fib"]["lcbPlcfSed"], 0)
@@ -800,6 +807,23 @@ class ConversionTests(unittest.TestCase):
                 {item["path"] for item in info["entries"]},
                 {"WordDocument", "1Table"},
             )
+
+    def test_macro_story_is_explicitly_reported_as_deferred(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "macro-story.doc"
+            source.write_bytes(build_word_cfb(macro_text=b"M\r"))
+
+            result = convert(source)
+            inspected = inspect_doc(source)
+
+            self.assertEqual(result.report.statistics["macro_story_cp_count"], 2)
+            warning = next(
+                item
+                for item in result.report.warnings
+                if item.code == "MACRO_STORY_OMITTED"
+            )
+            self.assertEqual(warning.details["stories"], {"macros": 2})
+            self.assertEqual(inspected["fib"]["ccpMcr"], 2)
 
     def test_zero_table_is_selected_from_fib_flag(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -816,6 +840,51 @@ class ConversionTests(unittest.TestCase):
             with self.assertRaises(EncryptedDocumentError):
                 convert(source)
             self.assertFalse(source.with_suffix(".docx").exists())
+
+    def test_xor_obfuscated_document_converts_with_correct_password(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "xor-obfuscated.doc"
+            source.write_bytes(build_word_cfb(password="swordfish"))
+
+            with self.assertRaisesRegex(EncryptedDocumentError, "provide a password"):
+                convert(source)
+            with self.assertRaisesRegex(EncryptedDocumentError, "incorrect password"):
+                convert(source, password="wrong")
+
+            result = convert(source, password="swordfish")
+            inspected = inspect_doc(source, password="swordfish")
+            with zipfile.ZipFile(result.output_path) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+            self.assertEqual("".join(root.itertext()), "Hello世界")
+            self.assertTrue(inspected["fib"]["encrypted"])
+            self.assertTrue(inspected["fib"]["obfuscated"])
+
+    def test_binary_rc4_document_converts_with_correct_password(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "rc4-encrypted.doc"
+            source.write_bytes(build_word_cfb(rc4_password="swordfish"))
+
+            with self.assertRaisesRegex(EncryptedDocumentError, "incorrect password"):
+                convert(source, password="wrong")
+            result = convert(source, password="swordfish")
+            with zipfile.ZipFile(result.output_path) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+            self.assertEqual("".join(root.itertext()), "Hello世界")
+
+    def test_cryptoapi_rc4_document_converts_with_correct_password(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "cryptoapi-encrypted.doc"
+            source.write_bytes(build_word_cfb(cryptoapi_password="swordfish"))
+
+            with self.assertRaisesRegex(EncryptedDocumentError, "incorrect password"):
+                convert(source, password="wrong")
+            result = convert(source, password="swordfish")
+            with zipfile.ZipFile(result.output_path) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+            self.assertEqual("".join(root.itertext()), "Hello世界")
 
     def test_conversion_never_overwrites_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -22,10 +22,12 @@ from ..model import (
     CommentReference,
     ContinuationSeparatorMark,
     Document,
+    EmbeddedObject,
     Endnote,
     EndnoteReference,
     Field,
     FloatingPicture,
+    FloatingShape,
     FloatingTextBox,
     Footnote,
     FootnoteReference,
@@ -41,6 +43,7 @@ from ..model import (
     SectionProperties,
     SeparatorMark,
     ShadingProperties,
+    ShapeStyle,
     SoftHyphen,
     StyleSheet,
     Symbol,
@@ -126,6 +129,12 @@ CORE_PROPERTIES_REL = (
 IMAGE_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
 )
+OLE_OBJECT_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+)
+OLE_OBJECT_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.oleObject"
+)
 XML_NS = "http://www.w3.org/XML/1998/namespace"
 VML_NS = "urn:schemas-microsoft-com:vml"
 OFFICE_NS = "urn:schemas-microsoft-com:office:office"
@@ -137,6 +146,59 @@ CP_NS = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties
 DC_NS = "http://purl.org/dc/elements/1.1/"
 DCTERMS_NS = "http://purl.org/dc/terms/"
 XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
+
+_VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
+    1: ("rect", None),
+    2: ("roundrect", None),
+    3: ("oval", None),
+    4: ("shape", "m10800,0l21600,10800,10800,21600,0,10800xe"),
+    5: ("shape", "m10800,0l21600,21600,0,21600xe"),
+    6: ("shape", "m0,0l21600,21600,0,21600xe"),
+    7: ("shape", "m5400,0l21600,0,16200,21600,0,21600xe"),
+    8: ("shape", "m5400,0l16200,0,21600,21600,0,21600xe"),
+    9: (
+        "shape",
+        "m5400,0l16200,0,21600,10800,16200,21600,5400,21600,0,10800xe",
+    ),
+    10: (
+        "shape",
+        "m6300,0l15300,0,21600,6300,21600,15300,15300,21600,"
+        "6300,21600,0,15300,0,6300xe",
+    ),
+    11: (
+        "shape",
+        "m8100,0l13500,0,13500,8100,21600,8100,21600,13500,"
+        "13500,13500,13500,21600,8100,21600,8100,13500,0,13500,"
+        "0,8100,8100,8100xe",
+    ),
+    12: (
+        "shape",
+        "m10800,0l13300,7500,21600,7500,14900,12300,17400,21600,"
+        "10800,15800,4200,21600,6700,12300,0,7500,8300,7500xe",
+    ),
+    13: (
+        "shape",
+        "m0,8100l12960,8100,12960,0,21600,10800,12960,21600,"
+        "12960,13500,0,13500xe",
+    ),
+    14: (
+        "shape",
+        "m0,5400l10800,5400,10800,0,21600,10800,10800,21600,"
+        "10800,16200,0,16200xe",
+    ),
+    15: (
+        "shape",
+        "m0,0l16200,0,21600,10800,16200,21600,0,21600xe",
+    ),
+    20: ("shape", "m0,0l21600,21600e"),
+    21: (
+        "shape",
+        "m3600,0l18000,0c18000,1980,19620,3600,21600,3600l21600,18000"
+        "c19620,18000,18000,19620,18000,21600l3600,21600"
+        "c3600,19620,1980,18000,0,18000l0,3600"
+        "c1980,3600,3600,1980,3600,0xe",
+    ),
+}
 
 ET.register_namespace("w", W_NS)
 ET.register_namespace("r", R_NS)
@@ -169,6 +231,8 @@ def _pictures_in_inlines(
     for inline in inlines:
         if isinstance(inline, (InlinePicture, FloatingPicture)):
             pictures.append(inline)
+        elif isinstance(inline, EmbeddedObject) and inline.preview is not None:
+            pictures.append(inline.preview)
         elif isinstance(inline, Field):
             pictures.extend(_pictures_in_inlines(inline.result))
         elif isinstance(inline, FloatingTextBox):
@@ -226,6 +290,7 @@ def _content_types_xml(
     has_numbering: bool,
     has_core_properties: bool,
     pictures: tuple[InlinePicture | FloatingPicture, ...],
+    embedded_objects: tuple[EmbeddedObject, ...],
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
     # OPC consumers in the wild are more interoperable with the conventional
@@ -243,6 +308,13 @@ def _content_types_xml(
         Extension="xml",
         ContentType="application/xml",
     )
+    if embedded_objects:
+        ET.SubElement(
+            root,
+            "Default",
+            Extension="bin",
+            ContentType=OLE_OBJECT_CONTENT_TYPE,
+        )
     image_content_types: dict[str, str] = {}
     for picture in pictures:
         previous = image_content_types.setdefault(
@@ -364,6 +436,7 @@ def _document_relationships_xml(
     has_comments: bool,
     has_numbering: bool,
     pictures: tuple[InlinePicture | FloatingPicture, ...],
+    embedded_objects: tuple[EmbeddedObject, ...],
     header_footer_parts: tuple[_HeaderFooterPart, ...],
 ) -> bytes:
     root = ET.Element("Relationships", xmlns=REL_NS)
@@ -438,6 +511,16 @@ def _document_relationships_xml(
             Id=f"rIdImage{picture.picture_id}",
             Type=IMAGE_REL,
             Target=f"media/image{picture.picture_id}.{picture.extension}",
+        )
+    for embedded_object in embedded_objects:
+        ET.SubElement(
+            root,
+            "Relationship",
+            Id=f"rIdOleObject{embedded_object.object_id}",
+            Type=OLE_OBJECT_REL,
+            Target=(
+                f"embeddings/oleObject{embedded_object.object_id}.bin"
+            ),
         )
     for part in header_footer_parts:
         ET.SubElement(
@@ -540,6 +623,9 @@ def _has_character_properties(properties: CharacterProperties) -> bool:
         properties,
         picture_location=None,
         picture_is_binary=None,
+        ole_object=None,
+        object_placeholder=None,
+        line_break_clear=None,
         revision_format_id=None,
         revision_text_id=None,
     ) != CharacterProperties()
@@ -596,6 +682,7 @@ def _append_character_property_elements(
     _append_boolean_property(run_properties, "noProof", properties.no_proof)
     _append_boolean_property(run_properties, "snapToGrid", properties.snap_to_grid)
     _append_boolean_property(run_properties, "vanish", properties.hidden)
+    _append_boolean_property(run_properties, "webHidden", properties.web_hidden)
     if properties.color is not None:
         ET.SubElement(
             run_properties,
@@ -646,10 +733,39 @@ def _append_character_property_elements(
             {_qn(W_NS, "val"): properties.highlight},
         )
     if properties.underline is not None:
+        underline_attributes = {_qn(W_NS, "val"): properties.underline}
+        if properties.underline_color is not None:
+            underline_attributes[_qn(W_NS, "color")] = (
+                properties.underline_color
+            )
         ET.SubElement(
             run_properties,
             _qn(W_NS, "u"),
-            {_qn(W_NS, "val"): properties.underline},
+            underline_attributes,
+        )
+    if properties.text_effect is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "effect"),
+            {_qn(W_NS, "val"): properties.text_effect},
+        )
+    if properties.border is not None:
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "bdr"),
+            _border_attributes(properties.border),
+        )
+    _append_shading(run_properties, properties.shading)
+    if properties.fit_text_width_twips is not None:
+        fit_text_attributes = {
+            _qn(W_NS, "val"): str(properties.fit_text_width_twips),
+        }
+        if properties.fit_text_id is not None:
+            fit_text_attributes[_qn(W_NS, "id")] = str(properties.fit_text_id)
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "fitText"),
+            fit_text_attributes,
         )
     if properties.vertical_align is not None:
         ET.SubElement(
@@ -657,6 +773,8 @@ def _append_character_property_elements(
             _qn(W_NS, "vertAlign"),
             {_qn(W_NS, "val"): properties.vertical_align},
         )
+    _append_boolean_property(run_properties, "rtl", properties.bidirectional)
+    _append_boolean_property(run_properties, "cs", properties.complex_script)
     if properties.emphasis is not None:
         ET.SubElement(
             run_properties,
@@ -672,6 +790,44 @@ def _append_character_property_elements(
         language_attributes[_qn(W_NS, "bidi")] = properties.complex_script_language
     if language_attributes:
         ET.SubElement(run_properties, _qn(W_NS, "lang"), language_attributes)
+    if (
+        properties.east_asian_vertical is not None
+        or properties.east_asian_combine is not None
+        or properties.east_asian_combine_brackets is not None
+        or properties.east_asian_vertical_compress is not None
+        or properties.east_asian_layout_id is not None
+    ):
+        east_asian_attributes: dict[str, str] = {}
+        if properties.east_asian_vertical is not None:
+            east_asian_attributes[_qn(W_NS, "vert")] = (
+                "1" if properties.east_asian_vertical else "0"
+            )
+        if properties.east_asian_combine is not None:
+            east_asian_attributes[_qn(W_NS, "combine")] = (
+                "1" if properties.east_asian_combine else "0"
+            )
+        if properties.east_asian_combine_brackets is not None:
+            east_asian_attributes[_qn(W_NS, "combineBrackets")] = (
+                properties.east_asian_combine_brackets
+            )
+        if properties.east_asian_vertical_compress is not None:
+            east_asian_attributes[_qn(W_NS, "vertCompress")] = (
+                "1" if properties.east_asian_vertical_compress else "0"
+            )
+        if properties.east_asian_layout_id is not None:
+            east_asian_attributes[_qn(W_NS, "id")] = str(
+                properties.east_asian_layout_id
+            )
+        ET.SubElement(
+            run_properties,
+            _qn(W_NS, "eastAsianLayout"),
+            east_asian_attributes,
+        )
+    _append_boolean_property(
+        run_properties,
+        "specVanish",
+        properties.special_vanish,
+    )
 
 
 def _append_run_properties(
@@ -731,6 +887,9 @@ def _append_paragraph_properties(
         or properties.auto_space_east_asian_numbers is not None
         or properties.snap_to_grid is not None
         or properties.adjust_right_indent is not None
+        or properties.text_alignment is not None
+        or properties.mirror_indents is not None
+        or properties.textbox_tight_wrap is not None
         or properties.frame is not None
         or properties.borders is not None
         or properties.shading is not None
@@ -738,6 +897,9 @@ def _append_paragraph_properties(
         or properties.left_indent_twips is not None
         or properties.right_indent_twips is not None
         or properties.first_line_indent_twips is not None
+        or properties.left_indent_chars is not None
+        or properties.right_indent_chars is not None
+        or properties.first_line_indent_chars is not None
         or properties.space_before_twips is not None
         or properties.space_after_twips is not None
         or properties.space_before_lines is not None
@@ -794,6 +956,48 @@ def _append_paragraph_properties(
             )
         if properties.frame.wrap is not None:
             frame_attributes[_qn(W_NS, "wrap")] = properties.frame.wrap
+        if properties.frame.horizontal_position_twips is not None:
+            frame_attributes[_qn(W_NS, "x")] = str(
+                properties.frame.horizontal_position_twips
+            )
+        if properties.frame.horizontal_alignment is not None:
+            frame_attributes[_qn(W_NS, "xAlign")] = (
+                properties.frame.horizontal_alignment
+            )
+        if properties.frame.vertical_position_twips is not None:
+            frame_attributes[_qn(W_NS, "y")] = str(
+                properties.frame.vertical_position_twips
+            )
+        if properties.frame.vertical_alignment is not None:
+            frame_attributes[_qn(W_NS, "yAlign")] = (
+                properties.frame.vertical_alignment
+            )
+        if properties.frame.width_twips is not None:
+            frame_attributes[_qn(W_NS, "w")] = str(
+                properties.frame.width_twips
+            )
+        if properties.frame.height_twips is not None:
+            frame_attributes[_qn(W_NS, "h")] = str(
+                properties.frame.height_twips
+            )
+        if properties.frame.height_rule is not None:
+            frame_attributes[_qn(W_NS, "hRule")] = properties.frame.height_rule
+        if properties.frame.horizontal_space_twips is not None:
+            frame_attributes[_qn(W_NS, "hSpace")] = str(
+                properties.frame.horizontal_space_twips
+            )
+        if properties.frame.vertical_space_twips is not None:
+            frame_attributes[_qn(W_NS, "vSpace")] = str(
+                properties.frame.vertical_space_twips
+            )
+        if properties.frame.anchor_locked is not None:
+            frame_attributes[_qn(W_NS, "anchorLock")] = (
+                "1" if properties.frame.anchor_locked else "0"
+            )
+        if properties.frame.text_direction is not None:
+            frame_attributes[_qn(W_NS, "vert")] = (
+                properties.frame.text_direction
+            )
         ET.SubElement(
             paragraph_properties,
             _qn(W_NS, "framePr"),
@@ -906,6 +1110,23 @@ def _append_paragraph_properties(
         "snapToGrid",
         properties.snap_to_grid,
     )
+    if properties.text_alignment is not None:
+        ET.SubElement(
+            paragraph_properties,
+            _qn(W_NS, "textAlignment"),
+            {_qn(W_NS, "val"): properties.text_alignment},
+        )
+    _append_boolean_property(
+        paragraph_properties,
+        "mirrorIndents",
+        properties.mirror_indents,
+    )
+    if properties.textbox_tight_wrap is not None:
+        ET.SubElement(
+            paragraph_properties,
+            _qn(W_NS, "textboxTightWrap"),
+            {_qn(W_NS, "val"): properties.textbox_tight_wrap},
+        )
     spacing: dict[str, str] = {}
     if properties.space_before_twips is not None:
         spacing[_qn(W_NS, "before")] = str(properties.space_before_twips)
@@ -942,6 +1163,19 @@ def _append_paragraph_properties(
         else:
             indentation[_qn(W_NS, "firstLine")] = str(
                 properties.first_line_indent_twips
+            )
+    if properties.left_indent_chars is not None:
+        indentation[_qn(W_NS, "leftChars")] = str(properties.left_indent_chars)
+    if properties.right_indent_chars is not None:
+        indentation[_qn(W_NS, "rightChars")] = str(properties.right_indent_chars)
+    if properties.first_line_indent_chars is not None:
+        if properties.first_line_indent_chars < 0:
+            indentation[_qn(W_NS, "hangingChars")] = str(
+                -properties.first_line_indent_chars
+            )
+        else:
+            indentation[_qn(W_NS, "firstLineChars")] = str(
+                properties.first_line_indent_chars
             )
     if indentation:
         ET.SubElement(paragraph_properties, _qn(W_NS, "ind"), indentation)
@@ -1017,6 +1251,9 @@ def _append_picture_graphic(
     *,
     width_emu: int,
     height_emu: int,
+    rotation_degrees: float = 0.0,
+    flip_horizontal: bool = False,
+    flip_vertical: bool = False,
 ) -> None:
     picture_name = picture.name or f"Picture {picture.picture_id}"
     ET.SubElement(
@@ -1061,7 +1298,18 @@ def _append_picture_graphic(
     stretch = ET.SubElement(blip_fill, _qn(A_NS, "stretch"))
     ET.SubElement(stretch, _qn(A_NS, "fillRect"))
     shape_properties = ET.SubElement(picture_element, _qn(PIC_NS, "spPr"))
-    transform = ET.SubElement(shape_properties, _qn(A_NS, "xfrm"))
+    transform_attributes: dict[str, str] = {}
+    if rotation_degrees:
+        transform_attributes["rot"] = str(round(rotation_degrees * 60000))
+    if flip_horizontal:
+        transform_attributes["flipH"] = "1"
+    if flip_vertical:
+        transform_attributes["flipV"] = "1"
+    transform = ET.SubElement(
+        shape_properties,
+        _qn(A_NS, "xfrm"),
+        transform_attributes,
+    )
     ET.SubElement(transform, _qn(A_NS, "off"), {"x": "0", "y": "0"})
     ET.SubElement(
         transform,
@@ -1109,6 +1357,61 @@ def _append_inline_picture(
         picture,
         width_emu=picture.width_emu,
         height_emu=picture.height_emu,
+    )
+
+
+def _append_embedded_object(
+    paragraph_element: ET.Element,
+    embedded_object: EmbeddedObject,
+    *,
+    valid_style_ids: set[int],
+) -> None:
+    run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    _append_run_properties(
+        run,
+        embedded_object.properties,
+        valid_style_ids=valid_style_ids,
+    )
+    object_element = ET.SubElement(run, _qn(W_NS, "object"))
+    shape_id = f"_x0000_i{1024 + embedded_object.object_id}"
+    preview = embedded_object.preview
+    width_emu = preview.width_emu if preview is not None else 914400
+    height_emu = preview.height_emu if preview is not None else 457200
+    shape = ET.SubElement(
+        object_element,
+        _qn(VML_NS, "shape"),
+        {
+            "id": shape_id,
+            "type": "#_x0000_t75",
+            "style": (
+                f"width:{width_emu / 12700:.2f}pt;"
+                f"height:{height_emu / 12700:.2f}pt"
+            ),
+            _qn(OFFICE_NS, "ole"): "",
+        },
+    )
+    if preview is not None:
+        ET.SubElement(
+            shape,
+            _qn(VML_NS, "imagedata"),
+            {
+                _qn(R_NS, "id"): f"rIdImage{preview.picture_id}",
+                _qn(OFFICE_NS, "title"): "",
+            },
+        )
+    ole_attributes = {
+        "Type": "Embed",
+        "DrawAspect": "Content",
+        "ObjectID": f"_OBJECT_{embedded_object.object_id}",
+        "ShapeID": shape_id,
+        _qn(R_NS, "id"): f"rIdOleObject{embedded_object.object_id}",
+    }
+    if embedded_object.prog_id:
+        ole_attributes["ProgID"] = embedded_object.prog_id
+    ET.SubElement(
+        object_element,
+        _qn(OFFICE_NS, "OLEObject"),
+        ole_attributes,
     )
 
 
@@ -1181,16 +1484,46 @@ def _append_floating_picture(
             "right": "right",
             "largest": "largest",
         }[picture.wrap_side]
-        ET.SubElement(
-            anchor,
-            _qn(WP_NS, "wrapSquare"),
-            {"wrapText": wrap_text},
-        )
+        if picture.wrap_type in ("tight", "through") and picture.wrap_polygon:
+            wrap = ET.SubElement(
+                anchor,
+                _qn(
+                    WP_NS,
+                    "wrapTight" if picture.wrap_type == "tight" else "wrapThrough",
+                ),
+                {"wrapText": wrap_text},
+            )
+            polygon = ET.SubElement(
+                wrap,
+                _qn(WP_NS, "wrapPolygon"),
+                {"edited": "0"},
+            )
+            first_x, first_y = picture.wrap_polygon[0]
+            ET.SubElement(
+                polygon,
+                _qn(WP_NS, "start"),
+                {"x": str(first_x), "y": str(first_y)},
+            )
+            for x, y in picture.wrap_polygon[1:]:
+                ET.SubElement(
+                    polygon,
+                    _qn(WP_NS, "lineTo"),
+                    {"x": str(x), "y": str(y)},
+                )
+        else:
+            ET.SubElement(
+                anchor,
+                _qn(WP_NS, "wrapSquare"),
+                {"wrapText": wrap_text},
+            )
     _append_picture_graphic(
         anchor,
         picture,
         width_emu=width_emu,
         height_emu=height_emu,
+        rotation_degrees=picture.rotation_degrees,
+        flip_horizontal=picture.flip_horizontal,
+        flip_vertical=picture.flip_vertical,
     )
 
 
@@ -1273,6 +1606,112 @@ def _append_field(
     )
 
 
+def _append_floating_shape(
+    paragraph_element: ET.Element,
+    floating_shape: FloatingShape,
+    *,
+    valid_character_style_ids: set[int],
+) -> None:
+    horizontal_relative = {
+        "margin": "margin",
+        "page": "page",
+        "column": "text",
+    }[floating_shape.horizontal_relative]
+    vertical_relative = {
+        "margin": "margin",
+        "page": "page",
+        "paragraph": "text",
+    }[floating_shape.vertical_relative]
+    style_parts = [
+        "position:absolute",
+        f"margin-left:{_twips_as_points(floating_shape.left_twips)}pt",
+        f"margin-top:{_twips_as_points(floating_shape.top_twips)}pt",
+        f"width:{_twips_as_points(floating_shape.width_twips)}pt",
+        f"height:{_twips_as_points(floating_shape.height_twips)}pt",
+        f"z-index:{-1 if floating_shape.behind_text else 1}",
+        f"mso-position-horizontal-relative:{horizontal_relative}",
+        f"mso-position-vertical-relative:{vertical_relative}",
+    ]
+    if floating_shape.flip_horizontal:
+        style_parts.append("flip:x")
+    if floating_shape.flip_vertical:
+        style_parts.append("flip:y")
+    if floating_shape.rotation_degrees:
+        rotation = f"{floating_shape.rotation_degrees:.4f}".rstrip("0").rstrip(".")
+        style_parts.append(f"rotation:{rotation}")
+    run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    _append_run_properties(
+        run,
+        floating_shape.properties,
+        valid_style_ids=valid_character_style_ids,
+    )
+    pict = ET.SubElement(run, _qn(W_NS, "pict"))
+    shape_style = floating_shape.shape_style or ShapeStyle()
+    shape_attributes = {
+        "id": f"_x0000_s{floating_shape.shape_id}",
+        "style": ";".join(style_parts),
+        "stroked": "t" if shape_style.line_enabled else "f",
+        "filled": "t" if shape_style.fill_enabled else "f",
+        _qn(OFFICE_NS, "allowincell"): "f",
+    }
+    if shape_style.fill_enabled:
+        shape_attributes["fillcolor"] = f"#{shape_style.fill_color}"
+    if shape_style.line_enabled:
+        shape_attributes["strokecolor"] = f"#{shape_style.line_color}"
+        shape_attributes["strokeweight"] = (
+            f"{_emus_as_points(shape_style.line_width_emu)}pt"
+        )
+    if floating_shape.geometry_path is not None:
+        element_name, path = "shape", floating_shape.geometry_path
+    else:
+        element_name, path = _VML_PRESET_SHAPES[floating_shape.shape_type]
+    if path is not None:
+        shape_attributes["coordsize"] = "21600,21600"
+        shape_attributes["path"] = path
+    if element_name == "shape":
+        shape_attributes[_qn(OFFICE_NS, "spt")] = str(
+            floating_shape.shape_type
+        )
+    shape = ET.SubElement(
+        pict,
+        _qn(VML_NS, element_name),
+        shape_attributes,
+    )
+    if shape_style.fill_enabled and shape_style.fill_opacity < 0x10000:
+        ET.SubElement(
+            shape,
+            _qn(VML_NS, "fill"),
+            {"opacity": _opacity_as_percentage(shape_style.fill_opacity)},
+        )
+    stroke_attributes: dict[str, str] = {}
+    if shape_style.line_enabled:
+        if shape_style.line_opacity < 0x10000:
+            stroke_attributes["opacity"] = _opacity_as_percentage(
+                shape_style.line_opacity
+            )
+        if shape_style.line_style != "single":
+            stroke_attributes["linestyle"] = shape_style.line_style
+        if shape_style.line_dash != "solid":
+            stroke_attributes["dashstyle"] = shape_style.line_dash
+        if shape_style.line_join != "round":
+            stroke_attributes["joinstyle"] = shape_style.line_join
+        if shape_style.line_end_cap != "flat":
+            stroke_attributes["endcap"] = shape_style.line_end_cap
+    if stroke_attributes:
+        ET.SubElement(shape, _qn(VML_NS, "stroke"), stroke_attributes)
+    ET.SubElement(
+        shape,
+        _qn(WORD_2003_NS, "wrap"),
+        {"type": floating_shape.wrap_type, "side": floating_shape.wrap_side},
+    )
+    if floating_shape.anchor_locked:
+        ET.SubElement(
+            shape,
+            _qn(OFFICE_NS, "lock"),
+            {_qn(VML_NS, "ext"): "edit", "position": "t"},
+        )
+
+
 def _append_floating_textbox(
     paragraph_element: ET.Element,
     textbox: FloatingTextBox,
@@ -1290,8 +1729,7 @@ def _append_floating_textbox(
         "page": "page",
         "paragraph": "text",
     }[textbox.vertical_relative]
-    style = ";".join(
-        (
+    style_parts = [
             "position:absolute",
             f"margin-left:{_twips_as_points(textbox.left_twips)}pt",
             f"margin-top:{_twips_as_points(textbox.top_twips)}pt",
@@ -1300,8 +1738,15 @@ def _append_floating_textbox(
             f"z-index:{-1 if textbox.behind_text else 1}",
             f"mso-position-horizontal-relative:{horizontal_relative}",
             f"mso-position-vertical-relative:{vertical_relative}",
-        )
-    )
+    ]
+    if textbox.flip_horizontal:
+        style_parts.append("flip:x")
+    if textbox.flip_vertical:
+        style_parts.append("flip:y")
+    if textbox.rotation_degrees:
+        rotation = f"{textbox.rotation_degrees:.4f}".rstrip("0").rstrip(".")
+        style_parts.append(f"rotation:{rotation}")
+    style = ";".join(style_parts)
     run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
     pict = ET.SubElement(run, _qn(W_NS, "pict"))
     shape_style = textbox.shape_style
@@ -1334,15 +1779,25 @@ def _append_floating_textbox(
             _qn(VML_NS, "fill"),
             {"opacity": _opacity_as_percentage(shape_style.fill_opacity)},
         )
-    if (
-        shape_style is not None
-        and shape_style.line_enabled
-        and shape_style.line_opacity < 0x10000
-    ):
+    stroke_attributes: dict[str, str] = {}
+    if shape_style is not None and shape_style.line_enabled:
+        if shape_style.line_opacity < 0x10000:
+            stroke_attributes["opacity"] = _opacity_as_percentage(
+                shape_style.line_opacity
+            )
+        if shape_style.line_style != "single":
+            stroke_attributes["linestyle"] = shape_style.line_style
+        if shape_style.line_dash != "solid":
+            stroke_attributes["dashstyle"] = shape_style.line_dash
+        if shape_style.line_join != "round":
+            stroke_attributes["joinstyle"] = shape_style.line_join
+        if shape_style.line_end_cap != "flat":
+            stroke_attributes["endcap"] = shape_style.line_end_cap
+    if stroke_attributes:
         ET.SubElement(
             shape,
             _qn(VML_NS, "stroke"),
-            {"opacity": _opacity_as_percentage(shape_style.line_opacity)},
+            stroke_attributes,
         )
     ET.SubElement(
         shape,
@@ -1416,7 +1871,9 @@ def _append_inline(
         | CommentRangeEnd
         | CommentReference
         | InlinePicture
+        | EmbeddedObject
         | FloatingPicture
+        | FloatingShape
         | FloatingTextBox
     ),
     *,
@@ -1442,11 +1899,23 @@ def _append_inline(
             inline,
             valid_style_ids=valid_character_style_ids,
         )
+    elif isinstance(inline, EmbeddedObject):
+        _append_embedded_object(
+            paragraph_element,
+            inline,
+            valid_style_ids=valid_character_style_ids,
+        )
     elif isinstance(inline, FloatingPicture):
         _append_floating_picture(
             paragraph_element,
             inline,
             valid_style_ids=valid_character_style_ids,
+        )
+    elif isinstance(inline, FloatingShape):
+        _append_floating_shape(
+            paragraph_element,
+            inline,
+            valid_character_style_ids=valid_character_style_ids,
         )
     elif isinstance(inline, Tab):
         run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
@@ -1500,6 +1969,13 @@ def _append_inline(
             if inline.kind is BreakType.PAGE
             else {}
         )
+        if (
+            inline.kind is BreakType.LINE
+            and inline.properties.line_break_clear is not None
+        ):
+            attributes[_qn(W_NS, "clear")] = (
+                inline.properties.line_break_clear
+            )
         ET.SubElement(run, _qn(W_NS, "br"), attributes)
     elif isinstance(inline, Field):
         _append_field(
@@ -1534,11 +2010,22 @@ def _append_inline(
         if run_properties is None:
             run_properties = ET.Element(_qn(W_NS, "rPr"))
             run.insert(0, run_properties)
-        ET.SubElement(
-            run_properties,
-            _qn(W_NS, "vertAlign"),
-            {_qn(W_NS, "val"): "superscript"},
-        )
+        vertical_align = run_properties.find(_qn(W_NS, "vertAlign"))
+        if vertical_align is None:
+            vertical_align = ET.SubElement(
+                run_properties,
+                _qn(W_NS, "vertAlign"),
+            )
+        vertical_align.set(_qn(W_NS, "val"), "superscript")
+        reference_attributes = {
+            _qn(W_NS, "id"): str(
+                inline.footnote_id
+                if isinstance(inline, FootnoteReference)
+                else inline.endnote_id
+            )
+        }
+        if inline.custom_mark is not None:
+            reference_attributes[_qn(W_NS, "customMarkFollows")] = "1"
         ET.SubElement(
             run,
             _qn(
@@ -1547,14 +2034,28 @@ def _append_inline(
                 if isinstance(inline, FootnoteReference)
                 else "endnoteReference",
             ),
-            {
-                _qn(W_NS, "id"): str(
-                    inline.footnote_id
-                    if isinstance(inline, FootnoteReference)
-                    else inline.endnote_id
-                )
-            },
+            reference_attributes,
         )
+        if inline.custom_mark is not None:
+            mark_run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+            _append_run_properties(
+                mark_run,
+                inline.properties,
+                valid_style_ids=valid_character_style_ids,
+            )
+            mark_properties = mark_run.find(_qn(W_NS, "rPr"))
+            if mark_properties is None:
+                mark_properties = ET.Element(_qn(W_NS, "rPr"))
+                mark_run.insert(0, mark_properties)
+            mark_align = mark_properties.find(_qn(W_NS, "vertAlign"))
+            if mark_align is None:
+                mark_align = ET.SubElement(
+                    mark_properties,
+                    _qn(W_NS, "vertAlign"),
+                )
+            mark_align.set(_qn(W_NS, "val"), "superscript")
+            mark_text = ET.SubElement(mark_run, _qn(W_NS, "t"))
+            mark_text.text = inline.custom_mark
     elif isinstance(inline, (CommentRangeStart, CommentRangeEnd)):
         ET.SubElement(
             paragraph_element,
@@ -1977,6 +2478,13 @@ def _append_borders(
             ("insideH", borders.inside_horizontal),
             ("insideV", borders.inside_vertical),
         )
+    if container_name == "tcBorders":
+        values += (
+            ("tl2br", borders.diagonal_down),
+            ("tr2bl", borders.diagonal_up),
+        )
+    elif container_name == "pBdr":
+        values += (("between", borders.between),)
     if not any(border is not None for _, border in values):
         return
     container = ET.SubElement(parent, _qn(W_NS, container_name))
@@ -2039,6 +2547,50 @@ def _append_table_property_elements(
     *,
     include_width: bool,
 ) -> None:
+    positioning_attributes: dict[str, str] = {}
+    for name, value in (
+        ("horzAnchor", properties.horizontal_anchor),
+        ("vertAnchor", properties.vertical_anchor),
+        ("tblpX", properties.horizontal_position_twips),
+        ("tblpXSpec", properties.horizontal_alignment),
+        ("tblpY", properties.vertical_position_twips),
+        ("tblpYSpec", properties.vertical_alignment),
+        ("leftFromText", properties.distance_left_twips),
+        ("rightFromText", properties.distance_right_twips),
+        ("topFromText", properties.distance_top_twips),
+        ("bottomFromText", properties.distance_bottom_twips),
+    ):
+        if value is not None:
+            positioning_attributes[_qn(W_NS, name)] = str(value)
+    if positioning_attributes:
+        ET.SubElement(
+            parent,
+            _qn(W_NS, "tblpPr"),
+            positioning_attributes,
+        )
+    if properties.no_overlap is not None:
+        ET.SubElement(
+            parent,
+            _qn(W_NS, "tblOverlap"),
+            {
+                _qn(W_NS, "val"): (
+                    "never" if properties.no_overlap else "overlap"
+                )
+            },
+        )
+    _append_boolean_property(parent, "bidiVisual", properties.bidirectional)
+    if properties.row_band_size is not None:
+        ET.SubElement(
+            parent,
+            _qn(W_NS, "tblStyleRowBandSize"),
+            {_qn(W_NS, "val"): str(properties.row_band_size)},
+        )
+    if properties.column_band_size is not None:
+        ET.SubElement(
+            parent,
+            _qn(W_NS, "tblStyleColBandSize"),
+            {_qn(W_NS, "val"): str(properties.column_band_size)},
+        )
     if include_width or properties.preferred_width_type is not None:
         width_type = properties.preferred_width_type or "auto"
         width = properties.preferred_width or 0
@@ -2076,6 +2628,7 @@ def _append_table_property_elements(
         properties.borders,
         include_inside=True,
     )
+    _append_shading(parent, properties.table_shading)
     if properties.auto_fit is not None:
         ET.SubElement(
             parent,
@@ -2111,6 +2664,38 @@ def _append_table_property_elements(
         )
 
 
+def _append_table_style_cell_properties(
+    parent: ET.Element,
+    properties: TableRowProperties,
+) -> None:
+    if (
+        properties.style_cell_borders == TableBorders()
+        and properties.style_cell_shading is None
+        and properties.style_cell_vertical_alignment is None
+        and properties.style_cell_no_wrap is None
+    ):
+        return
+    cell_properties = ET.SubElement(parent, _qn(W_NS, "tcPr"))
+    _append_borders(
+        cell_properties,
+        "tcBorders",
+        properties.style_cell_borders,
+        include_inside=True,
+    )
+    _append_shading(cell_properties, properties.style_cell_shading)
+    _append_boolean_property(
+        cell_properties,
+        "noWrap",
+        properties.style_cell_no_wrap,
+    )
+    if properties.style_cell_vertical_alignment is not None:
+        ET.SubElement(
+            cell_properties,
+            _qn(W_NS, "vAlign"),
+            {_qn(W_NS, "val"): properties.style_cell_vertical_alignment},
+        )
+
+
 def _append_table_cell(
     row_element: ET.Element,
     cell: TableCell,
@@ -2124,9 +2709,11 @@ def _append_table_cell(
         cell.width_twips is not None
         or cell.grid_span > 1
         or cell.vertical_merge is not None
+        or cell.text_direction is not None
         or cell.vertical_alignment is not None
         or cell.fit_text is not None
         or cell.no_wrap is not None
+        or cell.hide_mark is not None
         or cell.borders != TableBorders()
         or cell.margins != TableCellMargins()
         or cell.shading is not None
@@ -2154,6 +2741,12 @@ def _append_table_cell(
                 _qn(W_NS, "vMerge"),
                 {_qn(W_NS, "val"): cell.vertical_merge},
             )
+        if cell.text_direction is not None:
+            ET.SubElement(
+                properties,
+                _qn(W_NS, "textDirection"),
+                {_qn(W_NS, "val"): cell.text_direction},
+            )
         _append_borders(
             properties,
             "tcBorders",
@@ -2164,6 +2757,7 @@ def _append_table_cell(
         _append_boolean_property(properties, "noWrap", cell.no_wrap)
         _append_cell_margins(properties, cell.margins)
         _append_boolean_property(properties, "tcFitText", cell.fit_text)
+        _append_boolean_property(properties, "hideMark", cell.hide_mark)
         if cell.vertical_alignment is not None:
             ET.SubElement(
                 properties,
@@ -2224,9 +2818,21 @@ def _append_table(
         )
 
     grid = ET.SubElement(table_element, _qn(W_NS, "tblGrid"))
-    boundaries = (
-        first_properties.cell_boundaries_twips if first_properties is not None else ()
-    )
+    shared_boundaries: set[int] = set()
+    for row in table.rows:
+        row_boundaries = row.properties.cell_boundaries_twips
+        shared_boundaries.update(row_boundaries)
+        if row_boundaries:
+            if row.properties.grid_before_width:
+                shared_boundaries.add(
+                    row_boundaries[0] - row.properties.grid_before_width
+                )
+            if row.properties.grid_after_width:
+                shared_boundaries.add(
+                    row_boundaries[-1] + row.properties.grid_after_width
+                )
+    boundaries = tuple(sorted(shared_boundaries))
+    boundary_indexes = {value: index for index, value in enumerate(boundaries)}
     if len(boundaries) >= 2:
         for left, right in zip(boundaries, boundaries[1:]):
             ET.SubElement(
@@ -2237,6 +2843,17 @@ def _append_table(
 
     for row in table.rows:
         properties = row.properties
+        row_boundaries = properties.cell_boundaries_twips
+        grid_before = (
+            boundary_indexes.get(row_boundaries[0], 0)
+            if row_boundaries and boundaries
+            else 0
+        )
+        grid_after = (
+            len(boundaries) - 1 - boundary_indexes.get(row_boundaries[-1], 0)
+            if row_boundaries and boundaries
+            else 0
+        )
         row_attributes = {}
         if properties.revision_save_id is not None:
             row_attributes[_qn(W_NS, "rsidTr")] = (
@@ -2251,8 +2868,43 @@ def _append_table(
             properties.height_twips is not None
             or properties.cant_split
             or properties.is_header
+            or properties.cell_spacing_twips is not None
+            or grid_before
+            or grid_after
+            or properties.grid_before_width_type is not None
+            or properties.grid_after_width_type is not None
         ):
             row_properties = ET.SubElement(row_element, _qn(W_NS, "trPr"))
+            if grid_before:
+                ET.SubElement(
+                    row_properties,
+                    _qn(W_NS, "gridBefore"),
+                    {_qn(W_NS, "val"): str(grid_before)},
+                )
+            if properties.grid_before_width_type is not None:
+                ET.SubElement(
+                    row_properties,
+                    _qn(W_NS, "wBefore"),
+                    {
+                        _qn(W_NS, "w"): str(properties.grid_before_width or 0),
+                        _qn(W_NS, "type"): properties.grid_before_width_type,
+                    },
+                )
+            if grid_after:
+                ET.SubElement(
+                    row_properties,
+                    _qn(W_NS, "gridAfter"),
+                    {_qn(W_NS, "val"): str(grid_after)},
+                )
+            if properties.grid_after_width_type is not None:
+                ET.SubElement(
+                    row_properties,
+                    _qn(W_NS, "wAfter"),
+                    {
+                        _qn(W_NS, "w"): str(properties.grid_after_width or 0),
+                        _qn(W_NS, "type"): properties.grid_after_width_type,
+                    },
+                )
             if properties.cant_split:
                 ET.SubElement(row_properties, _qn(W_NS, "cantSplit"))
             if properties.height_twips is not None:
@@ -2262,10 +2914,34 @@ def _append_table(
                 ET.SubElement(row_properties, _qn(W_NS, "trHeight"), attributes)
             if properties.is_header:
                 ET.SubElement(row_properties, _qn(W_NS, "tblHeader"))
+            if properties.cell_spacing_twips is not None:
+                ET.SubElement(
+                    row_properties,
+                    _qn(W_NS, "tblCellSpacing"),
+                    {
+                        _qn(W_NS, "w"): str(properties.cell_spacing_twips),
+                        _qn(W_NS, "type"): "dxa",
+                    },
+                )
+        row_boundary_index = 0
         for cell in row.cells:
+            output_cell = cell
+            if (
+                row_boundaries
+                and row_boundary_index + cell.grid_span < len(row_boundaries)
+            ):
+                left = row_boundaries[row_boundary_index]
+                right = row_boundaries[row_boundary_index + cell.grid_span]
+                inferred_span = boundary_indexes.get(right, 0) - boundary_indexes.get(
+                    left,
+                    0,
+                )
+                if inferred_span > 0 and inferred_span != cell.grid_span:
+                    output_cell = replace(cell, grid_span=inferred_span)
+                row_boundary_index += cell.grid_span
             _append_table_cell(
                 row_element,
-                cell,
+                output_cell,
                 valid_paragraph_style_ids=valid_paragraph_style_ids,
                 valid_character_style_ids=valid_character_style_ids,
                 valid_table_style_ids=valid_table_style_ids or set(),
@@ -2606,6 +3282,8 @@ def _settings_xml(
     do_not_hyphenate_caps: bool | None,
     hyphenation_zone_twips: int | None,
     consecutive_hyphen_limit: int | None,
+    track_revisions: bool | None,
+    document_protection_edit: str | None,
     adjust_line_height_in_table: bool | None,
 ) -> bytes:
     root = ET.Element(_qn(W_NS, "settings"))
@@ -2613,6 +3291,16 @@ def _settings_xml(
         ET.SubElement(root, _qn(W_NS, "mirrorMargins"))
     if gutter_at_top:
         ET.SubElement(root, _qn(W_NS, "gutterAtTop"))
+    _append_boolean_property(root, "trackRevisions", track_revisions)
+    if document_protection_edit is not None:
+        ET.SubElement(
+            root,
+            _qn(W_NS, "documentProtection"),
+            {
+                _qn(W_NS, "edit"): document_protection_edit,
+                _qn(W_NS, "enforcement"): "1",
+            },
+        )
     if default_tab_stop_twips is not None:
         ET.SubElement(
             root,
@@ -2802,6 +3490,50 @@ def _styles_xml(style_sheet: StyleSheet) -> bytes:
                 style.paragraph_properties.table_row,
                 include_width=False,
             )
+            _append_table_style_cell_properties(
+                element,
+                style.paragraph_properties.table_row,
+            )
+        for conditional in style.conditional_table_properties:
+            conditional_element = ET.SubElement(
+                element,
+                _qn(W_NS, "tblStylePr"),
+                {_qn(W_NS, "type"): conditional.condition},
+            )
+            conditional_paragraph_holder = ET.Element("holder")
+            _append_paragraph_properties(
+                conditional_paragraph_holder,
+                conditional.paragraph_properties,
+                valid_style_ids=emitted_ids,
+            )
+            conditional_paragraph = conditional_paragraph_holder.find(
+                _qn(W_NS, "pPr")
+            )
+            if conditional_paragraph is not None:
+                conditional_element.append(conditional_paragraph)
+            if _has_character_properties(conditional.character_properties):
+                conditional_run = ET.SubElement(
+                    conditional_element,
+                    _qn(W_NS, "rPr"),
+                )
+                _append_character_property_elements(
+                    conditional_run,
+                    conditional.character_properties,
+                    valid_style_ids=emitted_ids,
+                )
+            if conditional.table_properties is not None:
+                conditional_table = ET.Element(_qn(W_NS, "tblPr"))
+                _append_table_property_elements(
+                    conditional_table,
+                    conditional.table_properties,
+                    include_width=False,
+                )
+                if len(conditional_table):
+                    conditional_element.append(conditional_table)
+                _append_table_style_cell_properties(
+                    conditional_element,
+                    conditional.table_properties,
+                )
     return _xml_bytes(root)
 
 
@@ -3026,6 +3758,8 @@ def write_docx(document: Document, destination: str | Path) -> None:
         or document.do_not_hyphenate_caps is not None
         or document.hyphenation_zone_twips is not None
         or document.consecutive_hyphen_limit is not None
+        or document.track_revisions is not None
+        or document.document_protection_edit is not None
         or document.adjust_line_height_in_table is True
     )
     has_footnotes = bool(
@@ -3050,6 +3784,13 @@ def write_docx(document: Document, destination: str | Path) -> None:
         set(picture_ids)
     ) != len(picture_ids):
         raise PackageWriteError("inline picture identifiers must be unique and positive")
+    object_ids = [value.object_id for value in document.embedded_objects]
+    if any(object_id <= 0 for object_id in object_ids) or len(
+        set(object_ids)
+    ) != len(object_ids):
+        raise PackageWriteError(
+            "embedded object identifiers must be unique and positive"
+        )
     header_footer_parts = _build_header_footer_parts(
         document,
         has_styles=has_styles,
@@ -3092,6 +3833,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     has_numbering=has_numbering,
                     has_core_properties=has_core_properties,
                     pictures=document.pictures,
+                    embedded_objects=document.embedded_objects,
                     header_footer_parts=header_footer_parts,
                 ),
             )
@@ -3122,6 +3864,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                 or has_comments
                 or has_numbering
                 or main_pictures
+                or document.embedded_objects
                 or header_footer_parts
             ):
                 _write_part(
@@ -3136,6 +3879,7 @@ def write_docx(document: Document, destination: str | Path) -> None:
                         has_comments=has_comments,
                         has_numbering=has_numbering,
                         pictures=main_pictures,
+                        embedded_objects=document.embedded_objects,
                         header_footer_parts=header_footer_parts,
                     ),
                 )
@@ -3167,6 +3911,10 @@ def write_docx(document: Document, destination: str | Path) -> None:
                         ),
                         consecutive_hyphen_limit=(
                             document.consecutive_hyphen_limit
+                        ),
+                        track_revisions=document.track_revisions,
+                        document_protection_edit=(
+                            document.document_protection_edit
                         ),
                         adjust_line_height_in_table=(
                             document.adjust_line_height_in_table
@@ -3214,6 +3962,15 @@ def write_docx(document: Document, destination: str | Path) -> None:
                     package,
                     f"word/media/image{picture.picture_id}.{picture.extension}",
                     picture.data,
+                )
+            for embedded_object in document.embedded_objects:
+                _write_part(
+                    package,
+                    (
+                        "word/embeddings/"
+                        f"oleObject{embedded_object.object_id}.bin"
+                    ),
+                    embedded_object.data,
                 )
             for part in header_footer_parts:
                 _write_part(

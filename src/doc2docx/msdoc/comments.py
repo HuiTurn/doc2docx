@@ -9,6 +9,8 @@ import struct
 from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
 from ..model import (
+    BookmarkEnd,
+    BookmarkStart,
     CharacterProperties,
     Comment,
     CommentRangeEnd,
@@ -349,6 +351,9 @@ def read_comments(
         Callable[[int], FieldEndProperties | None] | None
     ) = None,
     bookmark_names: Collection[str] | None = None,
+    bookmark_boundaries_at: (
+        Callable[[int], Sequence[BookmarkStart | BookmarkEnd]] | None
+    ) = None,
     style_names: Collection[str] | None = None,
     list_names: Collection[str] | None = None,
 ) -> CommentCollection:
@@ -536,6 +541,7 @@ def read_comments(
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
             field_end_properties_at=field_end_properties_at,
+            bookmark_boundaries_at=bookmark_boundaries_at,
             bookmark_names=bookmark_names,
             style_names=style_names,
             list_names=list_names,

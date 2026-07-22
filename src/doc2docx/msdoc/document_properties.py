@@ -19,6 +19,11 @@ class WordDocumentSettings:
     do_not_hyphenate_caps: bool | None = None
     hyphenation_zone_twips: int | None = None
     consecutive_hyphen_limit: int | None = None
+    track_revisions: bool | None = None
+    document_protection_edit: str | None = None
+    legacy_protection_key: int | None = None
+    protection_mode_conflict: bool = False
+    track_revisions_repaired: bool = False
     adjust_line_height_in_table: bool | None = None
     footnote_position: str | None = None
     footnote_number_format: str | None = None
@@ -84,6 +89,64 @@ def read_document_settings(
         if size >= 18
         else None
     )
+    track_revisions = (
+        bool(extended_flags & (1 << 15)) if size >= 8 else None
+    )
+    base_protection_modes: list[str] = []
+    if size >= 8:
+        if extended_flags & (1 << 30):
+            base_protection_modes.append("trackedChanges")
+        if extended_flags & (1 << 25):
+            base_protection_modes.append("forms")
+        if extended_flags & (1 << 20):
+            treat_as_read_only = (
+                bool(
+                    struct.unpack_from("<I", table_stream, offset + 594)[0]
+                    & 0x00000001
+                )
+                if n_fib >= 0x010C and size >= 598
+                else False
+            )
+            base_protection_modes.append(
+                "readOnly" if treat_as_read_only else "comments"
+            )
+    protection_mode_conflict = len(base_protection_modes) > 1
+    document_protection_edit = (
+        base_protection_modes[0] if base_protection_modes else None
+    )
+    if n_fib >= 0x010C and size >= 600:
+        dop2003_protection = struct.unpack_from(
+            "<H",
+            table_stream,
+            offset + 598,
+        )[0]
+        if dop2003_protection & (1 << 3):
+            mode_value = (dop2003_protection >> 4) & 0x07
+            if mode_value not in {0, 1, 2, 3, 7}:
+                raise InvalidWordDocument(
+                    f"Dop2003 has invalid iDocProtCur value {mode_value}"
+                )
+            document_protection_edit = {
+                0: "trackedChanges",
+                1: "comments",
+                2: "forms",
+                3: "readOnly",
+                7: None,
+            }[mode_value]
+            protection_mode_conflict = False
+    track_revisions_repaired = (
+        document_protection_edit == "trackedChanges"
+        and track_revisions is False
+    )
+    if track_revisions_repaired:
+        track_revisions = True
+    legacy_protection_key = (
+        struct.unpack_from("<I", table_stream, offset + 78)[0]
+        if size >= 82
+        else None
+    )
+    if legacy_protection_key == 0:
+        legacy_protection_key = None
     footnote_position: str | None = None
     footnote_number_format: str | None = None
     footnote_number_start: int | None = None
@@ -177,6 +240,11 @@ def read_document_settings(
         ),
         hyphenation_zone_twips=hyphenation_zone_twips,
         consecutive_hyphen_limit=consecutive_hyphen_limit,
+        track_revisions=track_revisions,
+        document_protection_edit=document_protection_edit,
+        legacy_protection_key=legacy_protection_key,
+        protection_mode_conflict=protection_mode_conflict,
+        track_revisions_repaired=track_revisions_repaired,
         adjust_line_height_in_table=adjust_line_height_in_table,
         footnote_position=footnote_position,
         footnote_number_format=footnote_number_format,

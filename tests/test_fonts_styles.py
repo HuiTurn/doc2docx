@@ -151,6 +151,73 @@ def _table_style_sheet() -> bytes:
     )
 
 
+def _conditional_modifier(opcode: int, condition: int, grpprl: bytes) -> bytes:
+    payload = struct.pack("<h", condition) + grpprl
+    return struct.pack("<HB", opcode, len(payload)) + payload
+
+
+def _conditional_table_style_sheet() -> bytes:
+    normal = _paragraph_std(
+        "Normal",
+        index=0,
+        based_on=None,
+        character_grpprl=b"",
+    )
+    table_index = 1
+    table_base = struct.pack(
+        "<5H",
+        0,
+        (0x0FFF << 4) | 3,
+        (table_index << 4) | 3,
+        0,
+        0,
+    )
+    shading = b"\0\0\0\xFF" + b"\xEE\xDD\xCC\0" + struct.pack("<H", 0)
+    border = bytes((0x11, 0x22, 0x33, 0, 8, 1, 0, 0))
+    conditional_shading = (
+        struct.pack("<HB", 0xD685, len(border))
+        + border
+        + struct.pack("<HB", 0xD687, len(shading))
+        + shading
+    )
+    tapx = b"".join(
+        (
+            struct.pack("<HH", 0x563A, table_index),
+            struct.pack("<HB", 0x3488, 2),
+            struct.pack("<HB", 0x3489, 3),
+            _conditional_modifier(0xD66A, 0x0001, conditional_shading),
+        )
+    )
+    papx = struct.pack("<H", table_index) + _conditional_modifier(
+        0xC666,
+        0x0001,
+        struct.pack("<HB", 0x2403, 1),
+    )
+    chpx = _conditional_modifier(
+        0xCA85,
+        0x0001,
+        struct.pack("<HB", 0x0835, 1),
+    )
+    table = (
+        table_base
+        + _xstz("Conditional Table")
+        + _lpupx(tapx)
+        + _lpupx(papx)
+        + _lpupx(chpx)
+    )
+    stshif = struct.pack("<6H3h", 2, 10, 0, 2, 0, 0, 0, 0, 0)
+    return b"".join(
+        (
+            struct.pack("<H", len(stshif)),
+            stshif,
+            struct.pack("<H", len(normal)),
+            normal,
+            struct.pack("<H", len(table)),
+            table,
+        )
+    )
+
+
 def _numbering_style_sheet() -> bytes:
     normal = _paragraph_std(
         "Normal",
@@ -598,6 +665,79 @@ class FontAndStyleTests(unittest.TestCase):
             ),
             "108",
         )
+
+    def test_parses_and_writes_conditional_table_style_properties(self) -> None:
+        report = ConversionReport("conditional-table-style.doc")
+        style_bytes = _conditional_table_style_sheet()
+        styles = read_style_sheet(
+            style_bytes,
+            offset=0,
+            size=len(style_bytes),
+            fonts=(),
+            report=report,
+        )
+        table_style = styles.styles[1]
+        assert table_style is not None
+        assert table_style.paragraph_properties.table_row is not None
+        self.assertEqual(
+            table_style.paragraph_properties.table_row.row_band_size,
+            2,
+        )
+        self.assertEqual(
+            table_style.paragraph_properties.table_row.column_band_size,
+            3,
+        )
+        self.assertEqual(len(table_style.conditional_table_properties), 1)
+        conditional = table_style.conditional_table_properties[0]
+        self.assertEqual(conditional.condition, "firstRow")
+        self.assertEqual(conditional.paragraph_properties.justification, "center")
+        self.assertTrue(conditional.character_properties.bold)
+        assert conditional.table_properties is not None
+        assert conditional.table_properties.style_cell_shading is not None
+        self.assertEqual(
+            conditional.table_properties.style_cell_shading.background,
+            "EEDDCC",
+        )
+        self.assertIsNotNone(
+            conditional.table_properties.style_cell_borders.diagonal_down
+        )
+        self.assertFalse(report.warnings)
+
+        document = Document(
+            (Paragraph((TextRun("Body"),)),),
+            styles=styles,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "conditional-table-style.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/styles.xml"))
+
+        style = root.find(f"{W}style[@{W}styleId='DocStyle1']")
+        assert style is not None
+        table_properties = style.find(f"{W}tblPr")
+        assert table_properties is not None
+        self.assertEqual(
+            table_properties.find(f"{W}tblStyleRowBandSize").get(f"{W}val"),  # type: ignore[union-attr]
+            "2",
+        )
+        self.assertEqual(
+            table_properties.find(f"{W}tblStyleColBandSize").get(f"{W}val"),  # type: ignore[union-attr]
+            "3",
+        )
+        first_row = style.find(f"{W}tblStylePr[@{W}type='firstRow']")
+        assert first_row is not None
+        self.assertEqual(
+            first_row.find(f"{W}pPr/{W}jc").get(f"{W}val"),  # type: ignore[union-attr]
+            "center",
+        )
+        self.assertIsNotNone(first_row.find(f"{W}rPr/{W}b"))
+        shading = first_row.find(f"{W}tcPr/{W}shd")
+        assert shading is not None
+        self.assertEqual(shading.get(f"{W}fill"), "EEDDCC")
+        diagonal = first_row.find(f"{W}tcPr/{W}tcBorders/{W}tl2br")
+        assert diagonal is not None
+        self.assertEqual(diagonal.get(f"{W}color"), "112233")
 
     def test_writes_font_and_style_parts_with_relationships(self) -> None:
         font_bytes = _font_table()

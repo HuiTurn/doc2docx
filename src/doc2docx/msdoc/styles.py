@@ -13,6 +13,9 @@ from ..model import (
     ParagraphProperties,
     StyleDefinition,
     StyleSheet,
+    TableCellMargins,
+    TableRowProperties,
+    TableStyleConditionalProperties,
 )
 from .sprm import (
     PropertyModifier,
@@ -27,6 +30,25 @@ from .sprm import (
 
 _STYLE_KINDS = {1: "paragraph", 2: "character", 3: "table", 4: "numbering"}
 
+_CONDITIONAL_TABLE_STYLE_TYPES = {
+    0x0040: "band1Horz",
+    0x0080: "band2Horz",
+    0x0010: "band1Vert",
+    0x0020: "band2Vert",
+    0x0004: "firstCol",
+    0x0008: "lastCol",
+    0x0001: "firstRow",
+    0x0002: "lastRow",
+    0x0200: "nwCell",
+    0x0100: "neCell",
+    0x0800: "swCell",
+    0x0400: "seCell",
+}
+
+_EMPTY_STYLE_TABLE_ROW = TableRowProperties(
+    default_cell_margins=TableCellMargins(None, None, None, None)
+)
+
 
 @dataclass(slots=True, frozen=True)
 class _RawStyle:
@@ -38,6 +60,39 @@ class _RawStyle:
     table_modifiers: tuple[PropertyModifier, ...]
     paragraph_modifiers: tuple[PropertyModifier, ...]
     character_modifiers: tuple[PropertyModifier, ...]
+
+
+def _split_conditional_modifiers(
+    modifiers: tuple[PropertyModifier, ...],
+    *,
+    opcode: int,
+    label: str,
+) -> tuple[
+    tuple[PropertyModifier, ...],
+    dict[int, tuple[PropertyModifier, ...]],
+]:
+    unconditional: list[PropertyModifier] = []
+    conditional: dict[int, tuple[PropertyModifier, ...]] = {}
+    for modifier in modifiers:
+        if modifier.opcode != opcode:
+            unconditional.append(modifier)
+            continue
+        operand = modifier.operand
+        if len(operand) < 3 or operand[0] != len(operand) - 1:
+            raise InvalidWordDocument(f"{label} CNFOperand has an invalid byte count")
+        condition = struct.unpack_from("<h", operand, 1)[0]
+        if condition not in _CONDITIONAL_TABLE_STYLE_TYPES:
+            raise InvalidWordDocument(
+                f"{label} CNFOperand has invalid condition 0x{condition & 0xFFFF:04X}"
+            )
+        nested = parse_grpprl(
+            operand[3:],
+            label=(
+                f"{label} {_CONDITIONAL_TABLE_STYLE_TYPES[condition]} conditional grpprl"
+            ),
+        )
+        conditional[condition] = (*conditional.get(condition, ()), *nested)
+    return tuple(unconditional), conditional
 
 
 def _font_name(fonts: tuple[FontDefinition, ...], index: int) -> str | None:
@@ -271,26 +326,53 @@ def read_style_sheet(
             if effective_characters[raw.based_on] is not None:
                 parent_character = effective_characters[raw.based_on]  # type: ignore[assignment]
 
+        table_modifiers = raw.table_modifiers
+        paragraph_modifiers = raw.paragraph_modifiers
+        character_modifiers = raw.character_modifiers
+        conditional_table: dict[int, tuple[PropertyModifier, ...]] = {}
+        conditional_paragraph: dict[int, tuple[PropertyModifier, ...]] = {}
+        conditional_character: dict[int, tuple[PropertyModifier, ...]] = {}
+        if raw.kind == "table":
+            table_modifiers, conditional_table = _split_conditional_modifiers(
+                table_modifiers,
+                opcode=0xD66A,
+                label=f"STSH table style {index} TAPX",
+            )
+            paragraph_modifiers, conditional_paragraph = (
+                _split_conditional_modifiers(
+                    paragraph_modifiers,
+                    opcode=0xC666,
+                    label=f"STSH table style {index} PAPX",
+                )
+            )
+            character_modifiers, conditional_character = (
+                _split_conditional_modifiers(
+                    character_modifiers,
+                    opcode=0xCA85,
+                    label=f"STSH table style {index} CHPX",
+                )
+            )
+
         # A sprmTIstd inside UpxTapx identifies the style itself and MUST be
         # ignored while applying that style. Other supported table modifiers
         # are retained in table_row so they can be emitted in w:tblPr.
         table_paragraph, unsupported = apply_paragraph_modifiers(
             tuple(
                 modifier
-                for modifier in raw.table_modifiers
+                for modifier in table_modifiers
                 if modifier.opcode != 0x563A
             ),
             style_id=None,
         )
         unsupported_table.update(unsupported)
         direct_paragraph, unsupported = apply_paragraph_modifiers(
-            raw.paragraph_modifiers,
+            paragraph_modifiers,
             style_id=None,
             initial_properties=table_paragraph,
         )
         unsupported_paragraph.update(unsupported)
         direct_character, unsupported, _ = apply_character_modifiers(
-            raw.character_modifiers,
+            character_modifiers,
             base_properties=parent_character,
             font_names=font_names,
         )
@@ -303,6 +385,58 @@ def read_style_sheet(
             parent_character,
             replace(direct_character, style_id=None),
         )
+        conditional_definitions: list[TableStyleConditionalProperties] = []
+        conditional_ids = (
+            set(conditional_table)
+            | set(conditional_paragraph)
+            | set(conditional_character)
+        )
+        for condition in _CONDITIONAL_TABLE_STYLE_TYPES:
+            if condition not in conditional_ids:
+                continue
+            conditional_table_paragraph, unsupported = apply_paragraph_modifiers(
+                conditional_table.get(condition, ()),
+                style_id=None,
+                initial_properties=ParagraphProperties(
+                    table_row=_EMPTY_STYLE_TABLE_ROW
+                ),
+            )
+            unsupported_table.update(unsupported)
+            conditional_direct_paragraph, unsupported = apply_paragraph_modifiers(
+                conditional_paragraph.get(condition, ()),
+                style_id=None,
+                initial_properties=conditional_table_paragraph,
+            )
+            unsupported_paragraph.update(unsupported)
+            nested_character_modifiers = conditional_character.get(condition, ())
+            repaired_language_lids.update(
+                unassigned_language_lids(nested_character_modifiers)
+            )
+            conditional_direct_character, unsupported, _ = (
+                apply_character_modifiers(
+                    nested_character_modifiers,
+                    base_properties=parent_character,
+                    font_names=font_names,
+                )
+            )
+            unsupported_character.update(unsupported)
+            table_row = conditional_direct_paragraph.table_row
+            conditional_definitions.append(
+                TableStyleConditionalProperties(
+                    condition=_CONDITIONAL_TABLE_STYLE_TYPES[condition],
+                    table_properties=(
+                        table_row
+                        if table_row is not None
+                        and table_row != _EMPTY_STYLE_TABLE_ROW
+                        else None
+                    ),
+                    paragraph_properties=replace(
+                        conditional_direct_paragraph,
+                        table_row=None,
+                    ),
+                    character_properties=conditional_direct_character,
+                )
+            )
         definitions[index] = StyleDefinition(
             index=index,
             name=raw.name,
@@ -311,6 +445,7 @@ def read_style_sheet(
             next_style=raw.next_style,
             paragraph_properties=direct_paragraph,
             character_properties=direct_character,
+            conditional_table_properties=tuple(conditional_definitions),
         )
         effective_paragraphs[index] = effective_paragraph
         effective_characters[index] = effective_character

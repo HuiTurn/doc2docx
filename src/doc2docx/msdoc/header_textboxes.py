@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 import struct
 
 from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
 from ..model import (
+    BookmarkEnd,
+    BookmarkStart,
     CharacterProperties,
     FieldEndProperties,
     FloatingTextBox,
@@ -210,6 +212,9 @@ def _read_textbox_entries(
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None,
     field_end_properties_at: Callable[[int], FieldEndProperties | None] | None,
     bookmark_names: Collection[str] | None,
+    bookmark_boundaries_at: (
+        Callable[[int], Sequence[BookmarkStart | BookmarkEnd]] | None
+    ),
     style_names: Collection[str] | None,
     list_names: Collection[str] | None,
 ) -> tuple[_TextBoxEntry, ...]:
@@ -282,6 +287,7 @@ def _read_textbox_entries(
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
             field_end_properties_at=field_end_properties_at,
+            bookmark_boundaries_at=bookmark_boundaries_at,
             bookmark_names=bookmark_names,
             style_names=style_names,
             list_names=list_names,
@@ -369,7 +375,13 @@ def _read_textboxes(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
+    shape_rotation_at: Callable[[int], float] | None = None,
+    shape_horizontally_flipped_at: Callable[[int], bool] | None = None,
+    shape_vertically_flipped_at: Callable[[int], bool] | None = None,
     bookmark_names: Collection[str] | None = None,
+    bookmark_boundaries_at: (
+        Callable[[int], Sequence[BookmarkStart | BookmarkEnd]] | None
+    ) = None,
     style_names: Collection[str] | None = None,
     list_names: Collection[str] | None = None,
     is_header: bool,
@@ -439,6 +451,7 @@ def _read_textboxes(
         character_properties_at=character_properties_at,
         paragraph_properties_at=paragraph_properties_at,
         field_end_properties_at=fields.end_properties_at,
+        bookmark_boundaries_at=bookmark_boundaries_at,
         bookmark_names=bookmark_names,
         style_names=style_names,
         list_names=list_names,
@@ -487,6 +500,21 @@ def _read_textboxes(
             paragraphs=entry.paragraphs,
             blocks=entry.blocks,
             shape_style=shape_style,
+            flip_horizontal=(
+                shape_horizontally_flipped_at(entry.shape_id)
+                if shape_horizontally_flipped_at is not None
+                else False
+            ),
+            flip_vertical=(
+                shape_vertically_flipped_at(entry.shape_id)
+                if shape_vertically_flipped_at is not None
+                else False
+            ),
+            rotation_degrees=(
+                shape_rotation_at(entry.shape_id)
+                if shape_rotation_at is not None
+                else 0.0
+            ),
         )
         if entry.chain_length > 1:
             linked_count += 1
@@ -541,7 +569,13 @@ def read_header_textboxes(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
+    shape_rotation_at: Callable[[int], float] | None = None,
+    shape_horizontally_flipped_at: Callable[[int], bool] | None = None,
+    shape_vertically_flipped_at: Callable[[int], bool] | None = None,
     bookmark_names: Collection[str] | None = None,
+    bookmark_boundaries_at: (
+        Callable[[int], Sequence[BookmarkStart | BookmarkEnd]] | None
+    ) = None,
     style_names: Collection[str] | None = None,
     list_names: Collection[str] | None = None,
 ) -> TextBoxCollection:
@@ -566,6 +600,10 @@ def read_header_textboxes(
         character_properties_at=character_properties_at,
         paragraph_properties_at=paragraph_properties_at,
         shape_style_at=shape_style_at,
+        shape_rotation_at=shape_rotation_at,
+        shape_horizontally_flipped_at=shape_horizontally_flipped_at,
+        shape_vertically_flipped_at=shape_vertically_flipped_at,
+        bookmark_boundaries_at=bookmark_boundaries_at,
         bookmark_names=bookmark_names,
         style_names=style_names,
         list_names=list_names,
@@ -592,7 +630,13 @@ def read_main_textboxes(
     character_properties_at: Callable[[int], CharacterProperties] | None = None,
     paragraph_properties_at: Callable[[int], ParagraphProperties] | None = None,
     shape_style_at: Callable[[int], ShapeStyle | None] | None = None,
+    shape_rotation_at: Callable[[int], float] | None = None,
+    shape_horizontally_flipped_at: Callable[[int], bool] | None = None,
+    shape_vertically_flipped_at: Callable[[int], bool] | None = None,
     bookmark_names: Collection[str] | None = None,
+    bookmark_boundaries_at: (
+        Callable[[int], Sequence[BookmarkStart | BookmarkEnd]] | None
+    ) = None,
     style_names: Collection[str] | None = None,
     list_names: Collection[str] | None = None,
 ) -> TextBoxCollection:
@@ -617,6 +661,10 @@ def read_main_textboxes(
         character_properties_at=character_properties_at,
         paragraph_properties_at=paragraph_properties_at,
         shape_style_at=shape_style_at,
+        shape_rotation_at=shape_rotation_at,
+        shape_horizontally_flipped_at=shape_horizontally_flipped_at,
+        shape_vertically_flipped_at=shape_vertically_flipped_at,
+        bookmark_boundaries_at=bookmark_boundaries_at,
         bookmark_names=bookmark_names,
         style_names=style_names,
         list_names=list_names,

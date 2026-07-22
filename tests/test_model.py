@@ -6,6 +6,7 @@ import zipfile
 
 from doc2docx.diagnostics import ConversionReport
 from doc2docx.model import (
+    BorderProperties,
     Break,
     BreakType,
     CharacterProperties,
@@ -20,6 +21,7 @@ from doc2docx.model import (
     Symbol,
     Tab,
     TextRun,
+    TableBorders,
     parse_main_story,
 )
 from doc2docx.ooxml import write_docx
@@ -37,10 +39,28 @@ class DocumentModelTests(unittest.TestCase):
                 horizontal_anchor="page",
                 vertical_anchor="text",
                 wrap="around",
+                horizontal_position_twips=719,
+                vertical_alignment="center",
+                width_twips=1440,
+                height_twips=720,
+                height_rule="atLeast",
+                horizontal_space_twips=240,
+                vertical_space_twips=120,
+                anchor_locked=True,
+                text_direction="tbRlV",
                 drop_cap="margin",
                 drop_cap_lines=3,
             ),
             shading=ShadingProperties("clear", "000000", "FFFFFF"),
+            borders=TableBorders(
+                between=BorderProperties("single", 8, "112233")
+            ),
+            text_alignment="baseline",
+            mirror_indents=True,
+            textbox_tight_wrap="firstAndLastLine",
+            left_indent_chars=250,
+            right_indent_chars=125,
+            first_line_indent_chars=-75,
         )
         document = Document((Paragraph((TextRun("Frame"),), properties),))
 
@@ -53,7 +73,10 @@ class DocumentModelTests(unittest.TestCase):
         paragraph_properties = root.find(f"./{W}body/{W}p/{W}pPr")
         assert paragraph_properties is not None
         names = [child.tag.removeprefix(W) for child in paragraph_properties]
-        self.assertEqual(names[:4], ["keepLines", "framePr", "widowControl", "shd"])
+        self.assertEqual(
+            names[:5],
+            ["keepLines", "framePr", "widowControl", "pBdr", "shd"],
+        )
         frame = paragraph_properties.find(f"{W}framePr")
         assert frame is not None
         self.assertEqual(frame.get(f"{W}dropCap"), "margin")
@@ -61,11 +84,37 @@ class DocumentModelTests(unittest.TestCase):
         self.assertEqual(frame.get(f"{W}hAnchor"), "page")
         self.assertEqual(frame.get(f"{W}vAnchor"), "text")
         self.assertEqual(frame.get(f"{W}wrap"), "around")
+        self.assertEqual(frame.get(f"{W}x"), "719")
+        self.assertEqual(frame.get(f"{W}yAlign"), "center")
+        self.assertEqual(frame.get(f"{W}w"), "1440")
+        self.assertEqual(frame.get(f"{W}h"), "720")
+        self.assertEqual(frame.get(f"{W}hRule"), "atLeast")
+        self.assertEqual(frame.get(f"{W}hSpace"), "240")
+        self.assertEqual(frame.get(f"{W}vSpace"), "120")
+        self.assertEqual(frame.get(f"{W}anchorLock"), "1")
+        self.assertEqual(frame.get(f"{W}vert"), "tbRlV")
         shading = paragraph_properties.find(f"{W}shd")
         assert shading is not None
         self.assertEqual(shading.get(f"{W}val"), "clear")
         self.assertEqual(shading.get(f"{W}color"), "000000")
         self.assertEqual(shading.get(f"{W}fill"), "FFFFFF")
+        between = paragraph_properties.find(f"{W}pBdr/{W}between")
+        assert between is not None
+        self.assertEqual(between.get(f"{W}color"), "112233")
+        self.assertEqual(
+            paragraph_properties.find(f"{W}textAlignment").get(f"{W}val"),  # type: ignore[union-attr]
+            "baseline",
+        )
+        self.assertIsNotNone(paragraph_properties.find(f"{W}mirrorIndents"))
+        self.assertEqual(
+            paragraph_properties.find(f"{W}textboxTightWrap").get(f"{W}val"),  # type: ignore[union-attr]
+            "firstAndLastLine",
+        )
+        indentation = paragraph_properties.find(f"{W}ind")
+        assert indentation is not None
+        self.assertEqual(indentation.get(f"{W}leftChars"), "250")
+        self.assertEqual(indentation.get(f"{W}rightChars"), "125")
+        self.assertEqual(indentation.get(f"{W}hangingChars"), "75")
 
     def test_character_effects_scale_and_emphasis_are_written(self) -> None:
         character = CharacterProperties(
@@ -73,8 +122,26 @@ class DocumentModelTests(unittest.TestCase):
             shadow=False,
             emboss=True,
             imprint=False,
+            web_hidden=True,
+            special_vanish=True,
+            text_effect="antsBlack",
+            bidirectional=True,
+            complex_script=True,
+            kerning_half_points=24,
+            language="en-US",
             scale_percent=125,
+            fit_text_width_twips=1440,
+            fit_text_id=7,
+            east_asian_vertical=True,
+            east_asian_combine=True,
+            east_asian_combine_brackets="round",
+            east_asian_vertical_compress=True,
+            east_asian_layout_id=9,
             emphasis="underDot",
+            underline="single",
+            underline_color="112233",
+            shading=ShadingProperties("solid", "FF0000", "00FF00"),
+            border=BorderProperties("single", 8, "0000FF"),
         )
         document = Document((Paragraph((TextRun("effects", character),)),))
 
@@ -86,6 +153,11 @@ class DocumentModelTests(unittest.TestCase):
 
         run_properties = root.find(f"./{W}body/{W}p/{W}r/{W}rPr")
         assert run_properties is not None
+        names = [child.tag.removeprefix(W) for child in run_properties]
+        self.assertLess(names.index("kern"), names.index("fitText"))
+        self.assertLess(names.index("shd"), names.index("fitText"))
+        self.assertLess(names.index("lang"), names.index("eastAsianLayout"))
+        self.assertLess(names.index("eastAsianLayout"), names.index("specVanish"))
         self.assertIsNotNone(run_properties.find(f"{W}outline"))
         shadow = run_properties.find(f"{W}shadow")
         assert shadow is not None
@@ -94,9 +166,37 @@ class DocumentModelTests(unittest.TestCase):
         imprint = run_properties.find(f"{W}imprint")
         assert imprint is not None
         self.assertEqual(imprint.get(f"{W}val"), "0")
+        self.assertIsNotNone(run_properties.find(f"{W}webHidden"))
+        self.assertIsNotNone(run_properties.find(f"{W}specVanish"))
+        self.assertEqual(
+            run_properties.find(f"{W}effect").get(f"{W}val"),  # type: ignore[union-attr]
+            "antsBlack",
+        )
+        self.assertIsNotNone(run_properties.find(f"{W}rtl"))
+        self.assertIsNotNone(run_properties.find(f"{W}cs"))
         scale = run_properties.find(f"{W}w")
         assert scale is not None
         self.assertEqual(scale.get(f"{W}val"), "125")
+        fit_text = run_properties.find(f"{W}fitText")
+        assert fit_text is not None
+        self.assertEqual(fit_text.get(f"{W}val"), "1440")
+        self.assertEqual(fit_text.get(f"{W}id"), "7")
+        east_asian_layout = run_properties.find(f"{W}eastAsianLayout")
+        assert east_asian_layout is not None
+        self.assertEqual(east_asian_layout.get(f"{W}vert"), "1")
+        self.assertEqual(east_asian_layout.get(f"{W}combine"), "1")
+        self.assertEqual(east_asian_layout.get(f"{W}combineBrackets"), "round")
+        self.assertEqual(east_asian_layout.get(f"{W}vertCompress"), "1")
+        self.assertEqual(east_asian_layout.get(f"{W}id"), "9")
+        underline = run_properties.find(f"{W}u")
+        assert underline is not None
+        self.assertEqual(underline.get(f"{W}color"), "112233")
+        shading = run_properties.find(f"{W}shd")
+        assert shading is not None
+        self.assertEqual(shading.get(f"{W}fill"), "00FF00")
+        border = run_properties.find(f"{W}bdr")
+        assert border is not None
+        self.assertEqual(border.get(f"{W}color"), "0000FF")
         emphasis = run_properties.find(f"{W}em")
         assert emphasis is not None
         self.assertEqual(emphasis.get(f"{W}val"), "underDot")
@@ -189,6 +289,30 @@ class DocumentModelTests(unittest.TestCase):
             ),
         )
 
+    def test_line_break_clear_side_is_written(self) -> None:
+        document = Document(
+            (
+                Paragraph(
+                    (
+                        Break(
+                            BreakType.LINE,
+                            CharacterProperties(line_break_clear="all"),
+                        ),
+                    )
+                ),
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "clear-line-break.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        line_break = root.find(f"./{W}body/{W}p/{W}r/{W}br")
+        assert line_break is not None
+        self.assertEqual(line_break.get(f"{W}clear"), "all")
+
     def test_word_hyphen_controls_are_written_natively(self) -> None:
         document = Document(
             (
@@ -213,22 +337,32 @@ class DocumentModelTests(unittest.TestCase):
         self.assertEqual(len(root.findall(f".//{W}noBreakHyphen")), 1)
         self.assertEqual(len(root.findall(f".//{W}softHyphen")), 1)
 
-    def test_fields_are_flattened_to_displayed_result(self) -> None:
+    def test_safe_hyperlink_fields_remain_live_with_their_cached_result(self) -> None:
         report = ConversionReport("fixture.doc")
         document = parse_main_story(
             "before \x13HYPERLINK https://example.invalid\x14cached\x15 after\r",
             report,
         )
         self.assertEqual(
+            document.paragraphs[0].inlines,
+            (
+                TextRun("before "),
+                Field("HYPERLINK https://example.invalid", (TextRun("cached"),)),
+                TextRun(" after"),
+            ),
+        )
+        self.assertFalse(report.warnings)
+
+    def test_unsafe_hyperlink_fields_are_flattened_to_displayed_result(self) -> None:
+        report = ConversionReport("fixture.doc")
+        document = parse_main_story(
+            "before \x13HYPERLINK file:///private.doc\x14cached\x15 after\r",
+            report,
+        )
+        self.assertEqual(
             document.paragraphs[0].inlines, (TextRun("before cached after"),)
         )
-        self.assertEqual(
-            [warning.code for warning in report.warnings], ["FIELDS_FLATTENED"]
-        )
-        self.assertEqual(
-            report.warnings[0].details["field_types"],
-            {"HYPERLINK": 1},
-        )
+        self.assertEqual([warning.code for warning in report.warnings], ["FIELDS_FLATTENED"])
 
     def test_page_fields_remain_live_with_their_cached_result(self) -> None:
         report = ConversionReport("fixture.doc")
@@ -243,6 +377,85 @@ class DocumentModelTests(unittest.TestCase):
                 Field(" PAGE \\* MERGEFORMAT ", (TextRun("1"),)),
                 TextRun(" after"),
             ),
+        )
+
+    def test_local_expression_and_automatic_number_fields_remain_live(self) -> None:
+        report = ConversionReport("local-fields.doc")
+        document = parse_main_story(
+            "".join(
+                (
+                    "\x13 EQ \\f(1,2) \\* ROMAN \x14II\x15 ",
+                    "\x13 QUOTE \\\"literal\\\" \x14literal\x15 ",
+                    "\x13 SYMBOL 169 \\f Symbol \x14©\x15 ",
+                    "\x13 =SUM(ABOVE) \\# 0.00 \x142.00\x15 ",
+                    "\x13 AUTONUMOUT \x14Article I\x15\r",
+                )
+            ),
+            report,
+        )
+
+        fields = [
+            inline
+            for inline in document.paragraphs[0].inlines
+            if isinstance(inline, Field)
+        ]
+        self.assertEqual(
+            [field.instruction for field in fields],
+            [
+                " EQ \\f(1,2) \\* ROMAN ",
+                ' QUOTE \\\"literal\\\" ',
+                " SYMBOL 169 \\f Symbol ",
+                " =SUM(ABOVE) \\# 0.00 ",
+                " AUTONUMOUT ",
+            ],
+        )
+        self.assertFalse(report.warnings)
+
+    def test_table_of_contents_field_remains_live(self) -> None:
+        report = ConversionReport("toc.doc")
+        document = parse_main_story(
+            "\x13 TOC \\o \\\"1-3\\\" \\h \\z \\u \x14Heading\t1\x15\r",
+            report,
+        )
+
+        self.assertEqual(
+            document.paragraphs[0].inlines,
+            (
+                Field(
+                    ' TOC \\o \\\"1-3\\\" \\h \\z \\u ',
+                    (TextRun("Heading"), Tab(), TextRun("1")),
+                ),
+            ),
+        )
+        self.assertFalse(report.warnings)
+
+    def test_index_and_table_of_authorities_fields_remain_live(self) -> None:
+        report = ConversionReport("indexes.doc")
+        document = parse_main_story(
+            "".join(
+                (
+                    '\x13 XE "Entry" \\b Bold \x15',
+                    '\x13 TC "Heading" \\l 1 \x15',
+                    '\x13 TA \\l "Case" \\s "123" \x15',
+                    '\x13 INDEX \\c 2 \x14Entry, 1\x15',
+                    '\x13 TOA \\c 1 \x14Case 123\x15\r',
+                )
+            ),
+            report,
+        )
+
+        fields = [
+            inline
+            for inline in document.paragraphs[0].inlines
+            if isinstance(inline, Field)
+        ]
+        self.assertEqual(
+            [field.instruction.lstrip().split()[0] for field in fields],
+            ["XE", "TC", "TA", "INDEX", "TOA"],
+        )
+        self.assertEqual(
+            [field.has_separator for field in fields],
+            [False, False, False, True, True],
         )
         self.assertFalse(report.warnings)
 

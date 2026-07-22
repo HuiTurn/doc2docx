@@ -16,6 +16,7 @@ from .constants import (
 )
 from .directory import DirectoryEntry, ObjectType
 from .header import CompoundFileHeader
+from .writer import write_compound_storage
 from ..errors import InvalidCompoundFile, StreamNotFound
 
 
@@ -24,6 +25,15 @@ class CompoundFileLimits:
     max_input_bytes: int = 512 * 1024 * 1024
     max_stream_bytes: int = 256 * 1024 * 1024
     max_directory_entries: int = 1_000_000
+
+    def __post_init__(self) -> None:
+        for name in (
+            "max_input_bytes",
+            "max_stream_bytes",
+            "max_directory_entries",
+        ):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"{name} must be positive")
 
 
 class CompoundFile:
@@ -368,3 +378,20 @@ class CompoundFile:
             entry.stream_size,
             label=f"stream {entry.path!r}",
         )
+
+    def export_storage(self, path: str) -> bytes:
+        """Rebuild one storage subtree as a standalone compound file."""
+
+        normalized = path.strip("/")
+        root = self.get_entry(normalized)
+        if root.object_type is not ObjectType.STORAGE:
+            raise StreamNotFound(f"compound-file entry {path!r} is not a storage")
+        prefix = normalized + "/"
+        descendants: list[tuple[str, DirectoryEntry, bytes | None]] = []
+        for entry in self.entries:
+            if not entry.path.startswith(prefix):
+                continue
+            relative = entry.path[len(prefix) :]
+            data = self.open_stream(entry.path) if entry.object_type is ObjectType.STREAM else None
+            descendants.append((relative, entry, data))
+        return write_compound_storage(root, tuple(descendants))

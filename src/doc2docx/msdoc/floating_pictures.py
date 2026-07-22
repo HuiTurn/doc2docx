@@ -81,7 +81,8 @@ def _read_floating_pictures(
                 f"multiple floating pictures use {anchor_story_name} CP "
                 f"{anchor.anchor_cp}"
             )
-        if anchor.wrap_type in ("tight", "through"):
+        wrap_polygon = officeart.wrap_polygon_at(anchor.shape_id)
+        if anchor.wrap_type in ("tight", "through") and not wrap_polygon:
             approximated_wrap_count += 1
         picture = FloatingPicture(
             picture_id=first_picture_id + len(pictures),
@@ -100,6 +101,10 @@ def _read_floating_pictures(
             wrap_side=anchor.wrap_side,
             behind_text=anchor.behind_text,
             anchor_locked=anchor.anchor_locked,
+            wrap_polygon=wrap_polygon,
+            flip_horizontal=officeart.is_horizontally_flipped(anchor.shape_id),
+            flip_vertical=officeart.is_vertically_flipped(anchor.shape_id),
+            rotation_degrees=officeart.rotation_at(anchor.shape_id),
             properties=replace(
                 properties,
                 special=None,

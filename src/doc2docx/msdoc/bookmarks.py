@@ -26,7 +26,7 @@ class _BookmarkRecord:
 
 @dataclass(slots=True, frozen=True)
 class BookmarkCollection:
-    """Validated standard bookmarks that can be emitted in the main story."""
+    """Validated standard bookmarks that can be emitted in supported stories."""
 
     boundaries_by_cp: Mapping[int, tuple[BookmarkBoundary, ...]]
     names: frozenset[str] = frozenset()
@@ -256,8 +256,9 @@ def read_bookmarks(
     main_story_length: int,
     total_story_length: int,
     report: ConversionReport,
+    supported_story_ranges: Sequence[tuple[str, int, int]] | None = None,
 ) -> BookmarkCollection:
-    """Read standard bookmarks and retain ranges wholly in the main story."""
+    """Read standard bookmarks and retain ranges wholly in supported stories."""
 
     sizes = (names_size, starts_size, ends_size)
     if not any(sizes):
@@ -303,6 +304,14 @@ def read_bookmarks(
     records: list[_BookmarkRecord] = []
     deferred_count = 0
     column_count = 0
+    story_ranges = tuple(
+        supported_story_ranges or (("main", 0, main_story_length),)
+    )
+    for story_name, cp_start, cp_end in story_ranges:
+        if cp_start < 0 or cp_end < cp_start or cp_end > total_story_length:
+            raise InvalidWordDocument(
+                f"bookmark story range {story_name!r} [{cp_start}, {cp_end}) is invalid"
+            )
     for bookmark_id, (name, start_record) in enumerate(
         zip(names, start_records, strict=True)
     ):
@@ -312,7 +321,15 @@ def read_bookmarks(
             raise InvalidWordDocument(
                 f"standard bookmark {bookmark_id} begins after it ends"
             )
-        if cp_start > main_story_length or cp_end > main_story_length:
+        contained_story = next(
+            (
+                story_name
+                for story_name, story_start, story_end in story_ranges
+                if story_start <= cp_start <= cp_end <= story_end
+            ),
+            None,
+        )
+        if contained_story is None:
             deferred_count += 1
             continue
         is_column = bool(bkc & 0x8000)
@@ -333,7 +350,7 @@ def read_bookmarks(
     if deferred_count:
         report.warning(
             "SECONDARY_STORY_BOOKMARKS_DEFERRED",
-            "standard bookmarks outside or crossing the main story were not emitted",
+            "bookmarks in unsupported stories or crossing story boundaries were not emitted",
             location=SourceLocation(story="document"),
             bookmark_count=deferred_count,
         )

@@ -5,6 +5,8 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.36.0 - 2026-07-22 (M20a-M20g)
+
 ### M20a
 
 - Preserve DopBase mirrored-margin and top-gutter flags as native
@@ -29,6 +31,71 @@ current capabilities without release-by-release notes.
   structurally validated without overstating real-file coverage. The 38-file
   regression batch remains at 36 in-scope successes with no unsupported
   warnings.
+
+### M20c
+
+- Preserve revision tracking and all four document editing-restriction modes
+  (`trackedChanges`, `comments`, `forms`, and `readOnly`) from DopBase and the
+  authoritative Dop2003 protection fields as native WordprocessingML settings.
+- Repair locked revision mode when its required tracking bit is absent, report
+  conflicting legacy modes, and reject invalid Dop2003 mode values.
+- Deliberately omit incompatible legacy 32-bit password verifiers with an
+  explicit diagnostic instead of emitting a modern OOXML hash that could not
+  be used to remove protection.
+
+### M20d
+
+- Open XOR-obfuscated, classic RC4, and RC4 CryptoAPI encrypted Word documents
+  after password verification, while keeping passwords out of reports and
+  recommending password files in the CLI.
+- Preserve confirmed ObjectPool storages as native embedded OLE parts with
+  exact field anchors, ProgIDs, deterministic relationships, and a standalone
+  CFB writer that supports MiniFAT and multi-sector DIFAT chains.
+
+### M20e
+
+- Preserve common floating OfficeArt preset shapes, picture/textbox rotation
+  and flips, line dash/cap/join styles, and tight/through wrap polygons; retain
+  Macintosh PICT media without pretending every DOCX consumer can render it.
+- Preserve custom footnote/endnote reference marks, bookmarks in supported
+  secondary stories, safe index-entry fields, and table conditional-style
+  properties.
+
+### M20f
+
+- Preserve low-frequency run properties including fit text, underline color,
+  character shading/borders, and East Asian vertical/combined layout.
+- Apply direct table insert/delete, merge/split, text direction, vertical
+  merge/alignment, fit/no-wrap/hide-mark, cell spacing, modern and legacy cell
+  shading/borders (including diagonals), RTL layout, and overlap controls while
+  keeping dependent cell ranges synchronized.
+- Correct implicit-length `sprmPChgTabs` parsing and MiniFAT free-sector
+  padding, then validate the cumulative implementation with 236 standard-library
+  regression tests.
+
+### M20g
+
+- Preserve complete paragraph-frame positioning, sizing, text distances,
+  anchor locking, and text flow, plus floating-table anchors, absolute or
+  aligned positions, wrap distances, whole-table shading, and segmented cell
+  shading through cells 23–63.
+- Expand compact Piece `Prm0` handling to every directly representable
+  paragraph and character property, including special object/field anchors,
+  frame and East Asian controls, outline/style level changes, character
+  animation, Web hiding, and style separators.
+- Preserve legacy character shading and borders, explicit complex-script and
+  right-to-left run flags, character-unit paragraph indents, nested-indent
+  precedence, conditional table-style diagonal borders, and clear-direction
+  line breaks. Preserve the structural character state required across
+  `sprmCPlain` and character-style resets, and add exact VML paths for arrow,
+  thick-arrow, home-plate, line, and plaque OfficeArt presets. Reconstruct
+  otherwise unsupported geometry from an available exact wrap contour with a
+  dedicated approximation diagnostic, and correct run-property XML schema
+  ordering for fit text and East Asian layout.
+- Harden CLI limits, password-file decoding, atomic JSON report writes, and
+  report collision checks; read one batch password file once, and verify the
+  built wheel in an extracted installation state. Validate the cumulative
+  implementation with 246 passing standard-library regression tests.
 
 ## 0.35.0 - 2026-07-22 (M19a-M19c)
 

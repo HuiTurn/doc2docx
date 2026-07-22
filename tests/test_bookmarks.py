@@ -56,6 +56,7 @@ def _read(
     main_story_length: int,
     total_story_length: int,
     report: ConversionReport | None = None,
+    supported_story_ranges: tuple[tuple[str, int, int], ...] | None = None,
 ):
     offsets = (0, len(names), len(names) + len(starts))
     stream = names + starts + ends
@@ -70,6 +71,7 @@ def _read(
         main_story_length=main_story_length,
         total_story_length=total_story_length,
         report=report or ConversionReport("bookmarks.doc"),
+        supported_story_ranges=supported_story_ranges,
     )
 
 
@@ -273,6 +275,34 @@ class BookmarkTests(unittest.TestCase):
             [warning.code for warning in report.warnings],
             ["SECONDARY_STORY_BOOKMARKS_DEFERRED"],
         )
+
+    def test_preserves_bookmark_wholly_inside_supported_secondary_story(self) -> None:
+        names = _name_table(("HeaderMark",))
+        starts = _start_table((6,), (0,), (0,), 8)
+        ends = _end_table((7,), 8)
+        report = ConversionReport("secondary.doc")
+
+        bookmarks = _read(
+            names,
+            starts,
+            ends,
+            main_story_length=5,
+            total_story_length=8,
+            report=report,
+            supported_story_ranges=(
+                ("main", 0, 5),
+                ("headers", 5, 8),
+            ),
+        )
+
+        self.assertEqual(bookmarks.preserved_count, 1)
+        self.assertEqual(bookmarks.names, frozenset(("HeaderMark",)))
+        self.assertEqual(
+            bookmarks.boundaries_at(6),
+            (BookmarkStart(0, "HeaderMark"),),
+        )
+        self.assertEqual(bookmarks.boundaries_at(7), (BookmarkEnd(0),))
+        self.assertFalse(report.warnings)
 
     def test_accepts_a_document_end_terminal_cp_with_a_diagnostic(self) -> None:
         names = _name_table(("Compatible",))

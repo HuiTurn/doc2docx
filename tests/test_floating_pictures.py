@@ -25,6 +25,7 @@ from doc2docx.ooxml import write_docx
 
 
 WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
@@ -64,6 +65,8 @@ class FloatingPictureTests(unittest.TestCase):
                     1,
                 )
             },
+            horizontally_flipped_shape_ids=frozenset((shape_id,)),
+            rotations_by_shape_id={shape_id: 12.5},
         )
         collection = read_header_floating_pictures(
             {shape_id: _anchor(shape_id)},
@@ -79,6 +82,8 @@ class FloatingPictureTests(unittest.TestCase):
         self.assertEqual(len(collection.pictures), 1)
         self.assertEqual(collection.pictures[0].picture_id, 4)
         self.assertEqual(collection.pictures[0].anchor_cp, 107)
+        self.assertTrue(collection.pictures[0].flip_horizontal)
+        self.assertEqual(collection.pictures[0].rotation_degrees, 12.5)
         self.assertIs(collection.picture_at(107), collection.pictures[0])
 
     def test_associates_spa_anchor_with_officeart_raster_image(self) -> None:
@@ -131,6 +136,25 @@ class FloatingPictureTests(unittest.TestCase):
         self.assertEqual([picture.shape_id for picture in collection.pictures], [100])
         self.assertEqual(report.warnings[0].code, "FLOATING_PICTURE_WRAP_APPROXIMATED")
 
+    def test_tight_wrap_polygon_is_preserved_without_approximation(self) -> None:
+        shape_id = 100
+        polygon = ((0, 0), (21600, 0), (10800, 21600), (0, 0))
+        report = ConversionReport("floating-wrap-polygon.doc")
+        collection = read_main_floating_pictures(
+            {shape_id: _anchor(shape_id, wrap_type="tight")},
+            OfficeArtShapeCollection(
+                {},
+                {shape_id: OfficeArtRasterImage(_PNG, "png", "image/png", 1)},
+                {},
+                {shape_id: polygon},
+            ),
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(collection.pictures[0].wrap_polygon, polygon)
+        self.assertFalse(report.warnings)
+
     def test_packages_positioned_picture_as_wp_anchor(self) -> None:
         picture = FloatingPicture(
             picture_id=1,
@@ -149,6 +173,9 @@ class FloatingPictureTests(unittest.TestCase):
             wrap_side="both",
             behind_text=False,
             anchor_locked=True,
+            flip_horizontal=True,
+            flip_vertical=True,
+            rotation_degrees=-22.5,
         )
         document = Document(
             (Paragraph((picture,)),),
@@ -180,6 +207,47 @@ class FloatingPictureTests(unittest.TestCase):
         )
         assert blip is not None
         self.assertEqual(blip.get(f"{R}embed"), "rIdImage1")
+        transform = root.find(f".//{A}xfrm")
+        assert transform is not None
+        self.assertEqual(transform.get("rot"), "-1350000")
+        self.assertEqual(transform.get("flipH"), "1")
+        self.assertEqual(transform.get("flipV"), "1")
+
+    def test_packages_tight_wrap_polygon(self) -> None:
+        polygon = ((0, 0), (21600, 0), (10800, 21600), (0, 0))
+        picture = FloatingPicture(
+            picture_id=1,
+            shape_id=1026,
+            anchor_cp=7,
+            data=_PNG,
+            extension="png",
+            content_type="image/png",
+            left_twips=0,
+            top_twips=0,
+            width_twips=2160,
+            height_twips=1080,
+            horizontal_relative="column",
+            vertical_relative="paragraph",
+            wrap_type="tight",
+            wrap_side="both",
+            behind_text=False,
+            anchor_locked=False,
+            wrap_polygon=polygon,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "tight-wrap.docx"
+            write_docx(Document((Paragraph((picture,)),), pictures=(picture,)), destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        wrap = root.find(f".//{WP}wrapTight")
+        assert wrap is not None
+        self.assertEqual(wrap.get("wrapText"), "bothSides")
+        points = wrap.findall(f"{WP}wrapPolygon/*")
+        self.assertEqual(
+            [(point.get("x"), point.get("y")) for point in points],
+            [(str(x), str(y)) for x, y in polygon],
+        )
 
     def test_scopes_image_relationships_to_document_and_header_parts(self) -> None:
         main_picture = FloatingPicture(

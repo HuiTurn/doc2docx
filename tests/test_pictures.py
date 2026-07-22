@@ -110,11 +110,12 @@ def _metafile_payload(data: bytes, *, compressed: bool) -> bytes:
 
 
 class InlinePictureTests(unittest.TestCase):
-    def test_parses_compressed_emf_uncompressed_wmf_and_tiff_blips(self) -> None:
+    def test_parses_metafile_and_tiff_blips(self) -> None:
         emf = bytearray(88)
         struct.pack_into("<II", emf, 0, 1, len(emf))
         struct.pack_into("<I", emf, 40, 0x464D4520)
         wmf = struct.pack("<HHHIHIH", 1, 9, 0x0300, 9, 0, 3, 0)
+        pict = struct.pack(">HhhhhHH", 14, 0, 0, 100, 200, 0x0011, 0x02FF)
         tiff = b"II*\0\x08\0\0\0\0\0"
         cases = (
             (
@@ -130,6 +131,13 @@ class InlinePictureTests(unittest.TestCase):
                 _metafile_payload(wmf, compressed=False),
                 "wmf",
                 wmf,
+            ),
+            (
+                0xF01C,
+                0x542,
+                _metafile_payload(pict, compressed=True),
+                "pct",
+                pict,
             ),
             (0xF029, 0x6E4, b"\0" * 16 + b"\xFF" + tiff, "tif", tiff),
         )
@@ -201,7 +209,7 @@ class InlinePictureTests(unittest.TestCase):
         with self.assertRaises(InvalidWordDocument):
             parse_inline_picture(bytes(malformed), 0, picture_id=1)
 
-        unsupported = _picf_with_blip(0xF01C, 0x542, b"PICT")
+        unsupported = _picf_with_blip(0xF020, 0x001, b"unsupported")
         properties = CharacterProperties(special=True, picture_location=0)
         report = ConversionReport("unknown-picture.doc")
         collection = read_inline_pictures(

@@ -12,6 +12,11 @@ from .floating_pictures import (
     read_header_floating_pictures,
     read_main_floating_pictures,
 )
+from .floating_shapes import (
+    FloatingShapeCollection,
+    read_header_floating_shapes,
+    read_main_floating_shapes,
+)
 from .headers import HeaderFooterCollection, read_header_footer_stories
 from .header_textboxes import (
     HeaderTextBoxCollection,
@@ -28,6 +33,7 @@ from .officeart import (
     read_officeart_shapes,
 )
 from .numbering import read_numbering
+from .objects import EmbeddedObjectCollection, read_embedded_objects
 from .pieces import Piece, PieceTable, read_piece_table
 from .pictures import (
     InlinePictureCollection,
@@ -46,6 +52,7 @@ __all__ = [
     "FormattingMap",
     "FootnoteCollection",
     "FloatingPictureCollection",
+    "FloatingShapeCollection",
     "HeaderFooterCollection",
     "HeaderTextBoxCollection",
     "ShapeAnchor",
@@ -53,6 +60,7 @@ __all__ = [
     "OfficeArtShapeCollection",
     "OfficeArtImage",
     "OfficeArtRasterImage",
+    "EmbeddedObjectCollection",
     "Piece",
     "PieceTable",
     "InlinePictureCollection",
@@ -66,13 +74,16 @@ __all__ = [
     "read_formatting",
     "read_footnotes",
     "read_header_floating_pictures",
+    "read_header_floating_shapes",
     "read_main_floating_pictures",
+    "read_main_floating_shapes",
     "read_header_footer_stories",
     "read_header_textboxes",
     "read_main_textboxes",
     "read_shape_anchors",
     "read_officeart_shapes",
     "read_numbering",
+    "read_embedded_objects",
     "read_piece_table",
     "parse_inline_picture",
     "read_inline_pictures",

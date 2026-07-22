@@ -31,6 +31,14 @@ class PropertyModifier:
 
 _FIXED_OPERAND_LENGTHS = {0: 1, 1: 1, 2: 2, 3: 4, 4: 2, 5: 2, 7: 3}
 
+_TABLE_TEXT_DIRECTIONS = {
+    0: "lrTb",
+    1: "tbRl",
+    3: "btLr",
+    4: "lrTbV",
+    5: "tbRlV",
+}
+
 
 def parse_grpprl(
     data: bytes,
@@ -69,13 +77,27 @@ def parse_grpprl(
             else:
                 byte_count = data[position]
                 operand_length = 1 + byte_count
-            # sprmPChgTabs permits 0xFF with an implicit size. We do not yet
-            # consume tab-stop operands, so retaining the remainder as one
-            # opaque operand is safer than guessing boundaries.
             if opcode == 0xC615 and byte_count == 0xFF:
-                modifiers.append(PropertyModifier(opcode, data[position:]))
-                position = len(data)
-                continue
+                if position > len(data) - 2:
+                    raise InvalidWordDocument(
+                        f"{label} sprmPChgTabs has no PChgTabsDelClose"
+                    )
+                delete_count = data[position + 1]
+                if delete_count > 64:
+                    raise InvalidWordDocument(
+                        f"{label} sprmPChgTabs has too many deleted tab stops"
+                    )
+                add_count_position = position + 2 + delete_count * 4
+                if add_count_position >= len(data):
+                    raise InvalidWordDocument(
+                        f"{label} sprmPChgTabs deletion data is truncated"
+                    )
+                add_count = data[add_count_position]
+                if add_count > 64:
+                    raise InvalidWordDocument(
+                        f"{label} sprmPChgTabs has too many added tab stops"
+                    )
+                operand_length = 3 + delete_count * 4 + add_count * 3
         else:
             operand_length = _FIXED_OPERAND_LENGTHS.get(spra)
             if operand_length is None:
@@ -101,6 +123,10 @@ _CHARACTER_TOGGLES = {
     0x083A: "small_caps",
     0x083B: "caps",
     0x083C: "hidden",
+    0x0811: "web_hidden",
+    0x0818: "special_vanish",
+    0x085A: "bidirectional",
+    0x0882: "complex_script",
     0x0854: "imprint",
     0x0855: "special",
     0x0858: "emboss",
@@ -152,6 +178,23 @@ _FRAME_WRAPS = {
     0x05: "through",
 }
 
+_FRAME_HORIZONTAL_ALIGNMENTS = {
+    0x0000: "left",
+    0xFFFC: "center",
+    0xFFF8: "right",
+    0xFFF4: "inside",
+    0xFFF0: "outside",
+}
+
+_FRAME_VERTICAL_ALIGNMENTS = {
+    0x0000: "inline",
+    0xFFFC: "top",
+    0xFFF8: "center",
+    0xFFF4: "bottom",
+    0xFFF0: "inside",
+    0xFFEC: "outside",
+}
+
 _FONT_HINTS = {
     0x00: "default",
     0x01: "eastAsia",
@@ -164,6 +207,47 @@ _EMPHASIS_MARKS = {
     0x02: "comma",
     0x03: "circle",
     0x04: "underDot",
+}
+
+_TEXT_EFFECTS = {
+    0x00: None,
+    0x01: "lights",
+    0x02: "blinkBackground",
+    0x03: "sparkle",
+    0x04: "antsBlack",
+    0x05: "antsRed",
+    0x06: "shimmer",
+}
+
+_LINE_BREAK_CLEARS = {
+    0x00: "none",
+    0x01: "left",
+    0x02: "right",
+    0x03: "all",
+}
+
+_COMBINE_BRACKETS = {
+    0: "none",
+    1: "round",
+    2: "square",
+    3: "angle",
+    4: "curly",
+}
+
+_PARAGRAPH_TEXT_ALIGNMENTS = {
+    0: "top",
+    1: "center",
+    2: "baseline",
+    3: "bottom",
+    4: "auto",
+}
+
+_TEXTBOX_TIGHT_WRAPS = {
+    0: "none",
+    1: "allLines",
+    2: "firstAndLastLine",
+    3: "firstLineOnly",
+    4: "lastLineOnly",
 }
 
 _LANGUAGE_ATTRIBUTES = {
@@ -462,9 +546,17 @@ _TAB_LEADERS = {
 }
 
 
-def _parse_tab_changes(operand: bytes) -> tuple[TabStop, ...]:
-    if not operand or operand[0] != len(operand) - 1 or operand[0] < 2:
-        raise InvalidWordDocument("PChgTabsPapxOperand has an invalid byte count")
+def _parse_tab_changes(
+    operand: bytes,
+    *,
+    deletion_ranges: bool,
+) -> tuple[TabStop, ...]:
+    if (
+        not operand
+        or operand[0] not in (len(operand) - 1, 0xFF)
+        or operand[0] < 2
+    ):
+        raise InvalidWordDocument("PChgTabsOperand has an invalid byte count")
     position = 1
     delete_count = operand[position]
     position += 1
@@ -474,8 +566,16 @@ def _parse_tab_changes(operand: bytes) -> tuple[TabStop, ...]:
     position += delete_count * 2
     if tuple(sorted(deleted)) != deleted:
         raise InvalidWordDocument("deleted tab stops are not in ascending order")
+    if deletion_ranges:
+        close_end = position + delete_count * 2
+        if close_end > len(operand):
+            raise InvalidWordDocument("PChgTabsDelClose ranges exceed their operand")
+        close_ranges = struct.unpack_from(f"<{delete_count}H", operand, position)
+        if any(value == 0 for value in close_ranges):
+            raise InvalidWordDocument("PChgTabsDelClose has an invalid close range")
+        position = close_end
     if position >= len(operand):
-        raise InvalidWordDocument("PChgTabsPapxOperand has no PChgTabsAdd")
+        raise InvalidWordDocument("PChgTabsOperand has no PChgTabsAdd")
     add_count = operand[position]
     position += 1
     required = position + add_count * 3
@@ -606,7 +706,354 @@ def _insert_table_cells(
         raise InvalidWordDocument("TInsertOperand makes the table too wide")
     widths[first_cell:first_cell] = [width] * cell_count
     definitions[first_cell:first_cell] = [TableCellDefinition()] * cell_count
-    return _replace_table_widths(row, start, widths, definitions)
+    updated = _replace_table_widths(row, start, widths, definitions)
+    optional_arrays = {
+        attribute: _insert_optional_cell_values(getattr(row, attribute), first_cell, cell_count)
+        for attribute in (
+            "cell_shadings",
+            "cell_top_border_colors",
+            "cell_left_border_colors",
+            "cell_bottom_border_colors",
+            "cell_right_border_colors",
+        )
+    }
+    return replace(
+        updated,
+        **optional_arrays,
+        cell_margin_overrides=_shift_cell_overrides_for_insert(
+            row.cell_margin_overrides,
+            first_cell,
+            cell_count,
+        ),
+        cell_width_overrides=_shift_cell_overrides_for_insert(
+            row.cell_width_overrides,
+            first_cell,
+            cell_count,
+        ),
+    )
+
+
+def _insert_optional_cell_values(
+    values: tuple[object | None, ...],
+    first_cell: int,
+    cell_count: int,
+) -> tuple[object | None, ...]:
+    if not values:
+        return ()
+    return (*values[:first_cell], *([None] * cell_count), *values[first_cell:])
+
+
+def _shift_cell_overrides_for_insert(
+    overrides: tuple[TableCellMarginOverride | TableCellWidthOverride, ...],
+    first_cell: int,
+    cell_count: int,
+) -> tuple[TableCellMarginOverride | TableCellWidthOverride, ...]:
+    shifted = []
+    for override in overrides:
+        if first_cell <= override.first_cell:
+            shifted.append(
+                replace(
+                    override,
+                    first_cell=override.first_cell + cell_count,
+                    limit_cell=override.limit_cell + cell_count,
+                )
+            )
+        elif first_cell < override.limit_cell:
+            shifted.append(
+                replace(override, limit_cell=override.limit_cell + cell_count)
+            )
+        else:
+            shifted.append(override)
+    return tuple(shifted)
+
+
+def _delete_table_cells(
+    row: TableRowProperties,
+    operand: bytes,
+) -> TableRowProperties:
+    if len(operand) != 2:
+        raise InvalidWordDocument("ItcFirstLim must contain exactly two bytes")
+    first_cell, limit_cell = operand
+    start, widths = _table_widths(row)
+    definitions = list(row.cell_definitions)
+    if (
+        first_cell >= limit_cell
+        or limit_cell > len(widths)
+        or limit_cell - first_cell >= len(widths)
+    ):
+        raise InvalidWordDocument("sprmTDelete has an invalid cell range")
+    del widths[first_cell:limit_cell]
+    del definitions[first_cell:limit_cell]
+    updated = _replace_table_widths(row, start, widths, definitions)
+    optional_arrays = {
+        attribute: _delete_optional_cell_values(
+            getattr(row, attribute), first_cell, limit_cell
+        )
+        for attribute in (
+            "cell_shadings",
+            "cell_top_border_colors",
+            "cell_left_border_colors",
+            "cell_bottom_border_colors",
+            "cell_right_border_colors",
+        )
+    }
+    return replace(
+        updated,
+        **optional_arrays,
+        cell_margin_overrides=_shift_cell_overrides_for_delete(
+            row.cell_margin_overrides,
+            first_cell,
+            limit_cell,
+        ),
+        cell_width_overrides=_shift_cell_overrides_for_delete(
+            row.cell_width_overrides,
+            first_cell,
+            limit_cell,
+        ),
+    )
+
+
+def _delete_optional_cell_values(
+    values: tuple[object | None, ...],
+    first_cell: int,
+    limit_cell: int,
+) -> tuple[object | None, ...]:
+    if not values:
+        return ()
+    return (*values[:first_cell], *values[limit_cell:])
+
+
+def _shift_cell_overrides_for_delete(
+    overrides: tuple[TableCellMarginOverride | TableCellWidthOverride, ...],
+    first_cell: int,
+    limit_cell: int,
+) -> tuple[TableCellMarginOverride | TableCellWidthOverride, ...]:
+    deleted_count = limit_cell - first_cell
+
+    def shifted_index(index: int) -> int:
+        if index <= first_cell:
+            return index
+        if index >= limit_cell:
+            return index - deleted_count
+        return first_cell
+
+    shifted = []
+    for override in overrides:
+        new_first = shifted_index(override.first_cell)
+        new_limit = shifted_index(override.limit_cell)
+        if new_first < new_limit:
+            shifted.append(
+                replace(
+                    override,
+                    first_cell=new_first,
+                    limit_cell=new_limit,
+                )
+            )
+    return tuple(shifted)
+
+
+def _replace_cell_definition_range(
+    row: TableRowProperties,
+    first_cell: int,
+    limit_cell: int,
+    **changes: object,
+) -> TableRowProperties:
+    definitions = list(row.cell_definitions)
+    if first_cell >= limit_cell or limit_cell > len(definitions):
+        raise InvalidWordDocument("table property has an invalid cell range")
+    for index in range(first_cell, limit_cell):
+        definitions[index] = replace(definitions[index], **changes)
+    return replace(row, cell_definitions=tuple(definitions))
+
+
+def _merge_table_cells(
+    row: TableRowProperties,
+    operand: bytes,
+    *,
+    merge: bool,
+) -> TableRowProperties:
+    if len(operand) != 2:
+        raise InvalidWordDocument("ItcFirstLim must contain exactly two bytes")
+    first_cell, limit_cell = operand
+    if not merge:
+        return _replace_cell_definition_range(
+            row,
+            first_cell,
+            limit_cell,
+            horizontal_merge=None,
+        )
+    updated = _replace_cell_definition_range(
+        row,
+        first_cell,
+        limit_cell,
+        horizontal_merge="continue",
+    )
+    definitions = list(updated.cell_definitions)
+    definitions[first_cell] = replace(
+        definitions[first_cell], horizontal_merge="restart"
+    )
+    return replace(updated, cell_definitions=tuple(definitions))
+
+
+def _set_table_text_flow(
+    row: TableRowProperties,
+    operand: bytes,
+) -> TableRowProperties:
+    if len(operand) != 4:
+        raise InvalidWordDocument(
+            "CellRangeTextFlow must contain exactly four bytes"
+        )
+    first_cell, limit_cell, text_flow = struct.unpack("<BBH", operand)
+    direction = _TABLE_TEXT_DIRECTIONS.get(text_flow)
+    if direction is None:
+        raise InvalidWordDocument(
+            f"CellRangeTextFlow has invalid text flow {text_flow}"
+        )
+    return _replace_cell_definition_range(
+        row,
+        first_cell,
+        limit_cell,
+        text_direction=direction,
+    )
+
+
+def _set_table_vertical_merge(
+    row: TableRowProperties,
+    operand: bytes,
+) -> TableRowProperties:
+    if len(operand) != 3 or operand[0] != 2:
+        raise InvalidWordDocument(
+            "sprmTVertMerge must contain a two-byte operand"
+        )
+    cell_index, merge_value = operand[1:]
+    if merge_value not in (0, 1, 3):
+        raise InvalidWordDocument(
+            f"sprmTVertMerge has invalid merge flag {merge_value}"
+        )
+    return _replace_cell_definition_range(
+        row,
+        cell_index,
+        cell_index + 1,
+        vertical_merge={1: "continue", 3: "restart"}.get(merge_value),
+    )
+
+
+def _set_table_vertical_alignment(
+    row: TableRowProperties,
+    operand: bytes,
+) -> TableRowProperties:
+    if len(operand) != 4 or operand[0] != 3:
+        raise InvalidWordDocument(
+            "sprmTVertAlign must contain a three-byte operand"
+        )
+    first_cell, limit_cell, alignment_value = operand[1:]
+    alignment = {0: None, 1: "center", 2: "bottom"}.get(alignment_value)
+    if alignment_value not in (0, 1, 2):
+        raise InvalidWordDocument(
+            f"sprmTVertAlign has invalid alignment {alignment_value}"
+        )
+    return _replace_cell_definition_range(
+        row,
+        first_cell,
+        limit_cell,
+        vertical_alignment=alignment,
+    )
+
+
+def _set_table_boolean_range(
+    row: TableRowProperties,
+    operand: bytes,
+    *,
+    attribute: str,
+    variable_length: bool,
+) -> TableRowProperties:
+    expected_length = 4 if variable_length else 3
+    if len(operand) != expected_length:
+        raise InvalidWordDocument(
+            f"table Boolean cell range must contain {expected_length} bytes"
+        )
+    value_offset = 1 if variable_length else 0
+    if variable_length and operand[0] != 3:
+        raise InvalidWordDocument(
+            "table Boolean cell range has an invalid length prefix"
+        )
+    first_cell, limit_cell, value = operand[value_offset : value_offset + 3]
+    if value not in (0, 1):
+        raise InvalidWordDocument(
+            f"table Boolean cell range has invalid value {value}"
+        )
+    return _replace_cell_definition_range(
+        row,
+        first_cell,
+        limit_cell,
+        **{attribute: bool(value)},
+    )
+
+
+def _set_table_cell_shading(
+    row: TableRowProperties,
+    operand: bytes,
+    *,
+    legacy: bool,
+    alternating: bool,
+) -> tuple[TableRowProperties, bool]:
+    expected_count = 4 if legacy else 13
+    expected_prefix = 12
+    if len(operand) != expected_count or (
+        not legacy and operand[0] != expected_prefix
+    ):
+        label = "TableShadeOperand" if not legacy else "legacy table shading"
+        raise InvalidWordDocument(f"{label} has an invalid byte count")
+    offset = 0 if legacy else 1
+    first_cell, limit_cell = operand[offset : offset + 2]
+    if first_cell >= limit_cell or limit_cell > len(row.cell_definitions):
+        raise InvalidWordDocument("table shading has an invalid cell range")
+    if legacy:
+        shading, approximated = _parse_shd80(operand[offset + 2 :])
+    else:
+        shading, approximated = _parse_shd(operand[offset + 2 :])
+    shadings = list(row.cell_shadings)
+    shadings.extend([None] * (len(row.cell_definitions) - len(shadings)))
+    step = 2 if alternating else 1
+    for index in range(first_cell, limit_cell, step):
+        shadings[index] = shading
+    return replace(row, cell_shadings=tuple(shadings)), approximated
+
+
+def _set_table_cell_borders(
+    row: TableRowProperties,
+    operand: bytes,
+    *,
+    legacy: bool,
+) -> TableRowProperties:
+    expected_count = 8 if legacy else 12
+    expected_prefix = 7 if legacy else 11
+    if len(operand) != expected_count or operand[0] != expected_prefix:
+        label = "TableBrc80Operand" if legacy else "TableBrcOperand"
+        raise InvalidWordDocument(f"{label} has an invalid byte count")
+    first_cell, limit_cell, sides = operand[1:4]
+    allowed_sides = 0x0F if legacy else 0x3F
+    if not sides or sides & ~allowed_sides:
+        raise InvalidWordDocument("table border operand has invalid border sides")
+    border = parse_brc80(operand[4:]) if legacy else _parse_brc(operand[4:])
+    side_names = (
+        (0x01, "top"),
+        (0x02, "left"),
+        (0x04, "bottom"),
+        (0x08, "right"),
+        (0x10, "diagonal_down"),
+        (0x20, "diagonal_up"),
+    )
+    definitions = list(row.cell_definitions)
+    if first_cell >= limit_cell or limit_cell > len(definitions):
+        raise InvalidWordDocument("table border operand has an invalid cell range")
+    changes = {name: border for mask, name in side_names if sides & mask}
+    for index in range(first_cell, limit_cell):
+        definitions[index] = replace(
+            definitions[index],
+            borders=replace(definitions[index].borders, **changes),
+        )
+    return replace(row, cell_definitions=tuple(definitions))
 
 
 def _set_table_column_widths(
@@ -667,6 +1114,46 @@ def _parse_cssa(
         raise InvalidWordDocument("CSSAOperand cell margin exceeds 22 inches")
     sides = tuple(name for mask, name in _CELL_MARGIN_SIDES if side_flags & mask)
     return first_cell, limit_cell, sides, width if width_type == 3 else None
+
+
+def _parse_cell_spacing(operand: bytes) -> int:
+    if len(operand) != 7 or operand[0] != 6:
+        raise InvalidWordDocument("cell spacing CSSA must contain six data bytes")
+    first_cell, limit_cell, side_flags, width_type, width = struct.unpack_from(
+        "<BBBBH",
+        operand,
+        1,
+    )
+    if (first_cell, limit_cell, side_flags) != (0, 1, 0x0F):
+        raise InvalidWordDocument("cell spacing CSSA has invalid scope or sides")
+    if width_type not in (0, 3, 0x13):
+        raise InvalidWordDocument("cell spacing CSSA has an invalid width type")
+    if width_type == 0 and width:
+        raise InvalidWordDocument("cell spacing ftsNil width must be zero")
+    if width > 15840:
+        raise InvalidWordDocument("cell spacing exceeds 11 inches")
+    return width
+
+
+def _frame_position(
+    operand: bytes,
+    *,
+    horizontal: bool,
+) -> tuple[int | None, str | None]:
+    raw = struct.unpack("<H", operand)[0]
+    alignments = (
+        _FRAME_HORIZONTAL_ALIGNMENTS
+        if horizontal
+        else _FRAME_VERTICAL_ALIGNMENTS
+    )
+    alignment = alignments.get(raw)
+    if alignment is not None:
+        return None, alignment
+    stored_position = struct.unpack("<h", operand)[0]
+    position = stored_position - 1
+    if not -31680 <= position <= 31680:
+        raise InvalidWordDocument("frame position is outside the MS-DOC range")
+    return position, None
 
 
 def _parse_shd80(data: bytes) -> tuple[ShadingProperties | None, bool]:
@@ -747,6 +1234,20 @@ def _parse_def_table_shd(
     return tuple(values), unsupported
 
 
+def _set_table_shading_segment(
+    row: TableRowProperties,
+    shadings: tuple[ShadingProperties | None, ...],
+    *,
+    first_cell: int,
+) -> TableRowProperties:
+    values = list(row.cell_shadings)
+    required = first_cell + len(shadings)
+    if len(values) < required:
+        values.extend([None] * (required - len(values)))
+    values[first_cell:required] = shadings
+    return replace(row, cell_shadings=tuple(values))
+
+
 def _parse_tdef_table(operand: bytes) -> TableRowProperties:
     if len(operand) < 3:
         raise InvalidWordDocument("sprmTDefTable operand is truncated")
@@ -776,9 +1277,15 @@ def _parse_tdef_table(operand: bytes) -> TableRowProperties:
         start = index * 20
         tcgrf, preferred_width = struct.unpack_from("<HH", descriptor_data, start)
         horizontal_value = tcgrf & 0x03
+        text_flow_value = (tcgrf >> 2) & 0x07
         vertical_value = (tcgrf >> 5) & 0x03
         alignment_value = (tcgrf >> 7) & 0x03
         width_type = (tcgrf >> 9) & 0x07
+        text_direction = _TABLE_TEXT_DIRECTIONS.get(text_flow_value)
+        if text_direction is None:
+            raise InvalidWordDocument(
+                f"sprmTDefTable has invalid text flow {text_flow_value}"
+            )
         definitions.append(
             TableCellDefinition(
                 preferred_width_twips=(
@@ -790,11 +1297,13 @@ def _parse_tdef_table(operand: bytes) -> TableRowProperties:
                     else "restart" if horizontal_value in (2, 3) else None
                 ),
                 vertical_merge={1: "continue", 3: "restart"}.get(vertical_value),
+                text_direction=text_direction,
                 vertical_alignment={1: "center", 2: "bottom"}.get(
                     alignment_value
                 ),
                 fit_text=True if tcgrf & 0x1000 else None,
                 no_wrap=True if tcgrf & 0x2000 else None,
+                hide_mark=True if tcgrf & 0x4000 else None,
                 borders=TableBorders(
                     top=parse_brc80(descriptor_data[start + 4 : start + 8]),
                     left=parse_brc80(descriptor_data[start + 8 : start + 12]),
@@ -830,12 +1339,25 @@ def apply_character_modifiers(
         opcode = modifier.opcode
         operand = modifier.operand
         if opcode == 0x2A33:  # sprmCPlain
+            if operand[0] != 0:
+                raise InvalidWordDocument("sprmCPlain operand must be zero")
             # sprmCPlain resets ordinary direct formatting but MS-DOC
-            # explicitly preserves the special-character state.
+            # explicitly preserves structural, revision, and script state.
             properties = CharacterProperties(
+                bidirectional=properties.bidirectional,
+                complex_script=properties.complex_script,
+                web_hidden=properties.web_hidden,
                 special=properties.special,
                 picture_location=properties.picture_location,
                 picture_is_binary=properties.picture_is_binary,
+                ole_object=properties.ole_object,
+                object_placeholder=properties.object_placeholder,
+                font_hint=properties.font_hint,
+                highlight=properties.highlight,
+                revision_format_id=properties.revision_format_id,
+                revision_text_id=properties.revision_text_id,
+                symbol_font=properties.symbol_font,
+                symbol_character_code=properties.symbol_character_code,
             )
             style_baseline = paragraph_style_properties
         elif opcode == 0x4A30:  # sprmCIstd
@@ -843,9 +1365,20 @@ def apply_character_modifiers(
             # sprmCIstd likewise preserves sprmCFSpec across the style reset.
             properties = CharacterProperties(
                 style_id=style_id,
+                bidirectional=properties.bidirectional,
+                complex_script=properties.complex_script,
+                web_hidden=properties.web_hidden,
                 special=properties.special,
                 picture_location=properties.picture_location,
                 picture_is_binary=properties.picture_is_binary,
+                ole_object=properties.ole_object,
+                object_placeholder=properties.object_placeholder,
+                font_hint=properties.font_hint,
+                highlight=properties.highlight,
+                revision_format_id=properties.revision_format_id,
+                revision_text_id=properties.revision_text_id,
+                symbol_font=properties.symbol_font,
+                symbol_character_code=properties.symbol_character_code,
             )
             style_baseline = paragraph_style_properties
             if style_properties_at is not None:
@@ -915,6 +1448,17 @@ def apply_character_modifiers(
                 )
             else:
                 unsupported.add(opcode)
+        elif opcode in (0x080A, 0x0856):  # sprmCFOle2 / sprmCFObj
+            if operand[0] not in (0, 1):
+                unsupported.add(opcode)
+            else:
+                attribute = (
+                    "ole_object" if opcode == 0x080A else "object_placeholder"
+                )
+                properties = replace(
+                    properties,
+                    **{attribute: bool(operand[0])},
+                )
         elif opcode == 0x2A3E:
             underline = _UNDERLINES.get(operand[0])
             if underline is None:
@@ -928,6 +1472,41 @@ def apply_character_modifiers(
                 properties = replace(properties, color=_ICO_RGB[operand[0]])
             else:
                 unsupported.add(opcode)
+        elif opcode == 0x6877:  # sprmCCvUl
+            if operand[3] == 0xFF:
+                underline_color = "auto"
+            else:
+                underline_color = (
+                    f"{operand[0]:02X}{operand[1]:02X}{operand[2]:02X}"
+                )
+            properties = replace(
+                properties,
+                underline_color=underline_color,
+            )
+        elif opcode == 0xCA71:  # sprmCShd
+            if len(operand) != 11 or operand[0] != 10:
+                raise InvalidWordDocument(
+                    "sprmCShd must contain a ten-byte SHDOperand"
+                )
+            shading, approximated = _parse_shd(operand[1:])
+            properties = replace(properties, shading=shading)
+            if approximated:
+                unsupported.add(opcode)
+        elif opcode == 0xCA72:  # sprmCBrc
+            properties = replace(
+                properties,
+                border=parse_brc_operand(operand),
+            )
+        elif opcode == 0x4866:  # sprmCShd80
+            shading, approximated = _parse_shd80(operand)
+            properties = replace(properties, shading=shading)
+            if approximated:
+                unsupported.add(opcode)
+        elif opcode == 0x6865:  # sprmCBrc80
+            properties = replace(
+                properties,
+                border=parse_brc80(operand),
+            )
         elif opcode == 0x8840:  # sprmCDxaSpace
             properties = replace(
                 properties,
@@ -940,12 +1519,71 @@ def apply_character_modifiers(
                     "character horizontal scale is outside [1, 600] percent"
                 )
             properties = replace(properties, scale_percent=scale)
+        elif opcode == 0xCA76:  # sprmCFitText
+            if len(operand) != 9 or operand[0] != 8:
+                raise InvalidWordDocument(
+                    "sprmCFitText must contain an eight-byte CFitTextOperand"
+                )
+            width, fit_text_id = struct.unpack("<ii", operand[1:])
+            if width == 0:
+                properties = replace(
+                    properties,
+                    fit_text_width_twips=None,
+                    fit_text_id=None,
+                )
+            elif 1 <= width <= 31680:
+                properties = replace(
+                    properties,
+                    fit_text_width_twips=width,
+                    fit_text_id=fit_text_id & 0xFFFFFFFF,
+                )
+            else:
+                unsupported.add(opcode)
+        elif opcode == 0xCA78:  # sprmCFELayout
+            if len(operand) != 7 or operand[0] != 6:
+                raise InvalidWordDocument(
+                    "sprmCFELayout must contain a six-byte FarEastLayoutOperand"
+                )
+            layout_flags, layout_id = struct.unpack("<Hi", operand[1:])
+            if layout_flags & 0x683C:
+                raise InvalidWordDocument(
+                    "sprmCFELayout has nonzero reserved layout flags"
+                )
+            bracket_value = (layout_flags >> 8) & 0x07
+            combine = bool(layout_flags & 0x0002)
+            bracket = _COMBINE_BRACKETS.get(bracket_value)
+            if combine and bracket is None:
+                raise InvalidWordDocument(
+                    "sprmCFELayout has an invalid combine-bracket value"
+                )
+            properties = replace(
+                properties,
+                east_asian_vertical=bool(layout_flags & 0x0001),
+                east_asian_combine=combine,
+                east_asian_combine_brackets=bracket if combine else None,
+                east_asian_vertical_compress=bool(layout_flags & 0x1000),
+                east_asian_layout_id=layout_id & 0xFFFFFFFF,
+            )
         elif opcode == 0x2A34:  # sprmCKcd
             emphasis = _EMPHASIS_MARKS.get(operand[0])
             if emphasis is None:
                 unsupported.add(opcode)
             else:
                 properties = replace(properties, emphasis=emphasis)
+        elif opcode == 0x2859:  # sprmCSfxText
+            if operand[0] not in _TEXT_EFFECTS:
+                unsupported.add(opcode)
+            else:
+                properties = replace(
+                    properties,
+                    text_effect=_TEXT_EFFECTS[operand[0]],
+                )
+        elif opcode == 0x2879:  # sprmCLbcCRJ
+            clear = _LINE_BREAK_CLEARS.get(operand[0])
+            if clear is None:
+                unsupported.add(opcode)
+            else:
+                properties = replace(properties, line_break_clear=clear)
         elif opcode == 0x6815:  # sprmCRsidProp
             properties = replace(
                 properties,
@@ -1157,6 +1795,72 @@ def apply_paragraph_modifiers(
                     properties,
                     table_row=replace(row, alignment=alignment),
                 )
+        elif opcode in (0x560B, 0x5664):  # sprmTFBiDi / sprmTFBiDi90
+            value = struct.unpack("<H", operand)[0]
+            if value not in (0, 1):
+                unsupported.add(opcode)
+            else:
+                row = properties.table_row or TableRowProperties()
+                properties = replace(
+                    properties,
+                    table_row=replace(row, bidirectional=bool(value)),
+                )
+        elif opcode == 0x3465:  # sprmTFNoAllowOverlap
+            if operand[0] not in (0, 1):
+                unsupported.add(opcode)
+            else:
+                row = properties.table_row or TableRowProperties()
+                properties = replace(
+                    properties,
+                    table_row=replace(row, no_overlap=bool(operand[0])),
+                )
+        elif opcode == 0x360D:  # sprmTPc
+            value = operand[0]
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    vertical_anchor=_FRAME_VERTICAL_ANCHORS[
+                        (value >> 4) & 0x03
+                    ],
+                    horizontal_anchor=_FRAME_HORIZONTAL_ANCHORS[
+                        (value >> 6) & 0x03
+                    ],
+                ),
+            )
+        elif opcode in (0x940E, 0x940F):  # sprmTDxaAbs / sprmTDyaAbs
+            position, alignment = _frame_position(
+                operand,
+                horizontal=opcode == 0x940E,
+            )
+            row = properties.table_row or TableRowProperties()
+            prefix = "horizontal" if opcode == 0x940E else "vertical"
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    **{
+                        f"{prefix}_position_twips": position,
+                        f"{prefix}_alignment": alignment,
+                    },
+                ),
+            )
+        elif opcode in (0x9410, 0x9411, 0x941E, 0x941F):
+            distance = struct.unpack("<h", operand)[0]
+            if not 0 <= distance <= 31680:
+                raise InvalidWordDocument("floating table distance is invalid")
+            attribute = {
+                0x9410: "distance_left_twips",
+                0x9411: "distance_top_twips",
+                0x941E: "distance_right_twips",
+                0x941F: "distance_bottom_twips",
+            }[opcode]
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(row, **{attribute: distance}),
+            )
         elif opcode == 0x9601:
             row = properties.table_row or TableRowProperties()
             properties = replace(
@@ -1247,11 +1951,23 @@ def apply_paragraph_modifiers(
                 table_row=replace(row, **_parse_table_look(operand)),
             )
         elif opcode in (0xF617, 0xF618):
-            # Zero leading/trailing width is the default and has no OOXML
-            # effect. A nonzero value also requires gridBefore/gridAfter
-            # reconstruction, which is intentionally left diagnostic for now.
-            _, width = _parse_table_part_width(operand)
-            if width:
+            width_type, width = _parse_table_part_width(operand)
+            if width_type == "dxa" and width:
+                row = properties.table_row or TableRowProperties()
+                prefix = "grid_before" if opcode == 0xF617 else "grid_after"
+                properties = replace(
+                    properties,
+                    table_row=replace(
+                        row,
+                        **{
+                            f"{prefix}_width": width,
+                            f"{prefix}_width_type": width_type,
+                        },
+                    ),
+                )
+            elif width:
+                # Percentage widths cannot be converted into the absolute
+                # shared table grid without knowing Word's laid-out width.
                 unsupported.add(opcode)
         elif opcode == 0xD608:
             definition = _parse_tdef_table(operand)
@@ -1270,11 +1986,67 @@ def apply_paragraph_modifiers(
                 properties,
                 table_row=_insert_table_cells(row, operand),
             )
+        elif opcode == 0x5622:  # sprmTDelete
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=_delete_table_cells(row, operand),
+            )
         elif opcode == 0x7623:  # sprmTDxaCol
             row = properties.table_row or TableRowProperties()
             properties = replace(
                 properties,
                 table_row=_set_table_column_widths(row, operand),
+            )
+        elif opcode in (0x5624, 0x5625):  # sprmTMerge / sprmTSplit
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=_merge_table_cells(
+                    row,
+                    operand,
+                    merge=opcode == 0x5624,
+                ),
+            )
+        elif opcode == 0x7629:  # sprmTTextFlow
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=_set_table_text_flow(row, operand),
+            )
+        elif opcode == 0xD62B:  # sprmTVertMerge
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=_set_table_vertical_merge(row, operand),
+            )
+        elif opcode == 0xD62C:  # sprmTVertAlign
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=_set_table_vertical_alignment(row, operand),
+            )
+        elif opcode == 0xF636:  # sprmTFitText
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=_set_table_boolean_range(
+                    row,
+                    operand,
+                    attribute="fit_text",
+                    variable_length=False,
+                ),
+            )
+        elif opcode == 0xD639:  # sprmTFCellNoWrap
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=_set_table_boolean_range(
+                    row,
+                    operand,
+                    attribute="no_wrap",
+                    variable_length=True,
+                ),
             )
         elif opcode == 0xD609:
             shadings, approximated = _parse_def_table_shd80(operand)
@@ -1285,12 +2057,77 @@ def apply_paragraph_modifiers(
             )
             if approximated:
                 unsupported.add(opcode)
-        elif opcode == 0xD670:  # sprmTDefTableShdRaw
-            shadings, approximated = _parse_def_table_shd(operand)
+        elif opcode in (0x7627, 0x7628, 0xD62D, 0xD62E):
+            row = properties.table_row or TableRowProperties()
+            row, approximated = _set_table_cell_shading(
+                row,
+                operand,
+                legacy=opcode in (0x7627, 0x7628),
+                alternating=opcode in (0x7628, 0xD62E),
+            )
+            properties = replace(properties, table_row=row)
+            if approximated:
+                unsupported.add(opcode)
+        elif opcode in (0xD620, 0xD62F):
             row = properties.table_row or TableRowProperties()
             properties = replace(
                 properties,
-                table_row=replace(row, cell_shadings=shadings),
+                table_row=_set_table_cell_borders(
+                    row,
+                    operand,
+                    legacy=opcode == 0xD620,
+                ),
+            )
+        elif opcode == 0xD642:  # sprmTCellFHideMark
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=_set_table_boolean_range(
+                    row,
+                    operand,
+                    attribute="hide_mark",
+                    variable_length=True,
+                ),
+            )
+        elif opcode in (
+            0xD60C,  # sprmTDefTableShd3rd
+            0xD616,  # sprmTDefTableShd2nd
+            0xD670,  # sprmTDefTableShdRaw
+            0xD671,  # sprmTDefTableShdRaw2nd
+            0xD672,  # sprmTDefTableShdRaw3rd
+        ):
+            shadings, approximated = _parse_def_table_shd(operand)
+            if opcode in (0xD60C, 0xD672) and len(shadings) > 19:
+                raise InvalidWordDocument(
+                    "third table-shading segment has more than 19 cells"
+                )
+            if opcode == 0xD670:
+                first_cell = 0
+            elif opcode in (0xD616, 0xD671):
+                first_cell = 22
+            else:
+                first_cell = 44
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=_set_table_shading_segment(
+                    row,
+                    shadings,
+                    first_cell=first_cell,
+                ),
+            )
+            if approximated:
+                unsupported.add(opcode)
+        elif opcode == 0xD660:  # sprmTSetShdTable
+            if len(operand) != 11 or operand[0] != 10:
+                raise InvalidWordDocument(
+                    "sprmTSetShdTable must contain a ten-byte SHDOperand"
+                )
+            shading, approximated = _parse_shd(operand[1:])
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(row, table_shading=shading),
             )
             if approximated:
                 unsupported.add(opcode)
@@ -1303,10 +2140,19 @@ def apply_paragraph_modifiers(
                     revision_save_id=struct.unpack("<I", operand)[0],
                 ),
             )
-        elif opcode in (0xD632, 0xD634):
+        elif opcode == 0xD633:  # sprmTCellSpacingDefault
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    cell_spacing_twips=_parse_cell_spacing(operand),
+                ),
+            )
+        elif opcode in (0xD632, 0xD634, 0xD63E):
             first_cell, limit_cell, sides, width = _parse_cssa(operand)
             row = properties.table_row or TableRowProperties()
-            if opcode == 0xD634:
+            if opcode in (0xD634, 0xD63E):
                 if (first_cell, limit_cell) != (0, 1):
                     unsupported.add(opcode)
                 else:
@@ -1334,6 +2180,89 @@ def apply_paragraph_modifiers(
                             override,
                         ),
                     ),
+                )
+        elif opcode in (
+            0xD47F,
+            0xD680,
+            0xD681,
+            0xD682,
+            0xD683,
+            0xD684,
+            0xD685,
+            0xD686,
+        ):
+            border = parse_brc_operand(operand)
+            row = properties.table_row or TableRowProperties()
+            attribute = {
+                0xD47F: "top",
+                0xD680: "bottom",
+                0xD681: "left",
+                0xD682: "right",
+                0xD683: "inside_horizontal",
+                0xD684: "inside_vertical",
+                0xD685: "diagonal_down",
+                0xD686: "diagonal_up",
+            }[opcode]
+            properties = replace(
+                properties,
+                table_row=replace(
+                    row,
+                    style_cell_borders=replace(
+                        row.style_cell_borders,
+                        **{attribute: border},
+                    ),
+                ),
+            )
+        elif opcode == 0xD687:  # sprmTCellShdStyle
+            if len(operand) != 11 or operand[0] != 10:
+                raise InvalidWordDocument(
+                    "sprmTCellShdStyle must contain a ten-byte SHDOperand"
+                )
+            shading, approximated = _parse_shd(operand[1:])
+            row = properties.table_row or TableRowProperties()
+            properties = replace(
+                properties,
+                table_row=replace(row, style_cell_shading=shading),
+            )
+            if approximated:
+                unsupported.add(opcode)
+        elif opcode == 0x347C:  # sprmTCellVertAlignStyle
+            alignment = {0: "top", 1: "center", 2: "bottom"}.get(operand[0])
+            if alignment is None:
+                unsupported.add(opcode)
+            else:
+                row = properties.table_row or TableRowProperties()
+                properties = replace(
+                    properties,
+                    table_row=replace(
+                        row,
+                        style_cell_vertical_alignment=alignment,
+                    ),
+                )
+        elif opcode == 0x347D:  # sprmTCellNoWrapStyle
+            if operand[0] not in (0, 1):
+                unsupported.add(opcode)
+            else:
+                row = properties.table_row or TableRowProperties()
+                properties = replace(
+                    properties,
+                    table_row=replace(
+                        row,
+                        style_cell_no_wrap=bool(operand[0]),
+                    ),
+                )
+        elif opcode in (0x3488, 0x3489):
+            band_size = operand[0]
+            if not 1 <= band_size <= 3:
+                unsupported.add(opcode)
+            else:
+                row = properties.table_row or TableRowProperties()
+                attribute = (
+                    "row_band_size" if opcode == 0x3488 else "column_band_size"
+                )
+                properties = replace(
+                    properties,
+                    table_row=replace(row, **{attribute: band_size}),
                 )
         elif opcode == 0xD635:
             override = _parse_cell_width(operand)
@@ -1372,6 +2301,21 @@ def apply_paragraph_modifiers(
                 unsupported.add(opcode)
             else:
                 properties = replace(properties, justification=justification)
+        elif opcode == 0x2602:  # sprmPIncLvl
+            delta = struct.unpack("<b", operand)[0]
+            if properties.style_id is not None and 1 <= properties.style_id <= 9:
+                properties = replace(
+                    properties,
+                    style_id=min(9, max(1, properties.style_id + delta)),
+                )
+            elif properties.outline_level not in (None, 9):
+                properties = replace(
+                    properties,
+                    outline_level=min(
+                        9,
+                        max(0, properties.outline_level + delta),
+                    ),
+                )
         elif opcode == 0x6467:  # sprmPRsid
             properties = replace(
                 properties,
@@ -1403,6 +2347,88 @@ def apply_paragraph_modifiers(
             else:
                 frame = properties.frame or ParagraphFrameProperties()
                 properties = replace(properties, frame=replace(frame, wrap=wrap))
+        elif opcode in (0x8418, 0x8419):  # sprmPDxaAbs / sprmPDyaAbs
+            position, alignment = _frame_position(
+                operand,
+                horizontal=opcode == 0x8418,
+            )
+            frame = properties.frame or ParagraphFrameProperties()
+            prefix = "horizontal" if opcode == 0x8418 else "vertical"
+            properties = replace(
+                properties,
+                frame=replace(
+                    frame,
+                    **{
+                        f"{prefix}_position_twips": position,
+                        f"{prefix}_alignment": alignment,
+                    },
+                ),
+            )
+        elif opcode == 0x841A:  # sprmPDxaWidth
+            width = struct.unpack("<h", operand)[0]
+            if not 0 <= width <= 31680:
+                raise InvalidWordDocument("frame width is outside [0, 31680]")
+            frame = properties.frame or ParagraphFrameProperties()
+            properties = replace(
+                properties,
+                frame=replace(frame, width_twips=width or None),
+            )
+        elif opcode == 0x442B:  # sprmPWHeightAbs
+            value = struct.unpack("<H", operand)[0]
+            height = value & 0x7FFF
+            minimum = bool(value & 0x8000)
+            if height > 31680 or (minimum and not height):
+                raise InvalidWordDocument("frame height has an invalid value")
+            frame = properties.frame or ParagraphFrameProperties()
+            properties = replace(
+                properties,
+                frame=replace(
+                    frame,
+                    height_twips=height or None,
+                    height_rule=(
+                        "atLeast" if minimum else "exact" if height else "auto"
+                    ),
+                ),
+            )
+        elif opcode in (0x842E, 0x842F):
+            distance = struct.unpack("<h", operand)[0]
+            if not 0 <= distance <= 31680:
+                raise InvalidWordDocument("frame text distance is invalid")
+            frame = properties.frame or ParagraphFrameProperties()
+            attribute = (
+                "vertical_space_twips"
+                if opcode == 0x842E
+                else "horizontal_space_twips"
+            )
+            properties = replace(
+                properties,
+                frame=replace(frame, **{attribute: distance}),
+            )
+        elif opcode == 0x2430:  # sprmPFLocked
+            if operand[0] not in (0, 1):
+                unsupported.add(opcode)
+            else:
+                frame = properties.frame or ParagraphFrameProperties()
+                properties = replace(
+                    properties,
+                    frame=replace(frame, anchor_locked=bool(operand[0])),
+                )
+        elif opcode == 0x443A:  # sprmPFrameTextFlow
+            value = struct.unpack("<H", operand)[0]
+            if value & ~0x0007 or (value & 0x0002 and not value & 0x0001):
+                raise InvalidWordDocument(
+                    "sprmPFrameTextFlow has invalid or reserved flags"
+                )
+            direction = _TABLE_TEXT_DIRECTIONS.get(value)
+            if direction is None:
+                raise InvalidWordDocument(
+                    "sprmPFrameTextFlow has an unsupported flag combination"
+                )
+            frame = properties.frame or ParagraphFrameProperties()
+            properties = replace(
+                properties,
+                frame=replace(frame, text_direction=direction),
+            )
         elif opcode == 0x442C:  # sprmPDcs
             value = struct.unpack("<H", operand)[0]
             drop_cap_type = value & 0x07
@@ -1435,6 +2461,39 @@ def apply_paragraph_modifiers(
             properties = replace(properties, shading=shading)
             if approximated:
                 unsupported.add(opcode)
+        elif opcode == 0xC64D:  # sprmPShd
+            if len(operand) != 11 or operand[0] != 10:
+                raise InvalidWordDocument(
+                    "sprmPShd must contain a ten-byte SHDOperand"
+                )
+            shading, approximated = _parse_shd(operand[1:])
+            properties = replace(properties, shading=shading)
+            if approximated:
+                unsupported.add(opcode)
+        elif opcode == 0x4439:  # sprmPWAlignFont
+            value = struct.unpack("<H", operand)[0]
+            alignment = _PARAGRAPH_TEXT_ALIGNMENTS.get(value)
+            if alignment is None:
+                unsupported.add(opcode)
+            else:
+                properties = replace(properties, text_alignment=alignment)
+        elif opcode == 0x2470:  # sprmPFMirrorIndents
+            if operand[0] not in (0, 1):
+                unsupported.add(opcode)
+            else:
+                properties = replace(
+                    properties,
+                    mirror_indents=bool(operand[0]),
+                )
+        elif opcode == 0x2471:  # sprmPTtwo
+            tight_wrap = _TEXTBOX_TIGHT_WRAPS.get(operand[0])
+            if tight_wrap is None:
+                unsupported.add(opcode)
+            else:
+                properties = replace(
+                    properties,
+                    textbox_tight_wrap=tight_wrap,
+                )
         elif opcode == 0x2640:
             if operand[0] > 9:
                 unsupported.add(opcode)
@@ -1473,7 +2532,10 @@ def apply_paragraph_modifiers(
                 properties,
                 tab_stops=(
                     *(properties.tab_stops or ()),
-                    *_parse_tab_changes(operand),
+                    *_parse_tab_changes(
+                        operand,
+                        deletion_ranges=opcode == 0xC615,
+                    ),
                 ),
             )
         elif opcode in _PARAGRAPH_TOGGLES:
@@ -1485,9 +2547,12 @@ def apply_paragraph_modifiers(
                     **{_PARAGRAPH_TOGGLES[opcode]: bool(operand[0])},
                 )
         elif opcode in (0x840F, 0x845E):
+            base_indent = struct.unpack("<h", operand)[0]
             properties = replace(
                 properties,
-                left_indent_twips=struct.unpack("<h", operand)[0],
+                left_indent_twips=(
+                    base_indent + (properties.nest_indent_twips or 0)
+                ),
             )
         elif opcode in (0x840E, 0x845D):
             properties = replace(
@@ -1498,6 +2563,32 @@ def apply_paragraph_modifiers(
             properties = replace(
                 properties,
                 first_line_indent_twips=struct.unpack("<h", operand)[0],
+            )
+        elif opcode in (0x4455, 0x4456, 0x4457):
+            attribute = {
+                0x4455: "right_indent_chars",
+                0x4456: "left_indent_chars",
+                0x4457: "first_line_indent_chars",
+            }[opcode]
+            properties = replace(
+                properties,
+                **{attribute: struct.unpack("<h", operand)[0]},
+            )
+        elif opcode in (0x4610, 0x465F):  # sprmPNest80 / sprmPNest
+            modern = opcode == 0x465F
+            if not modern and properties.nest_indent_modern:
+                continue
+            previous_nest = properties.nest_indent_twips or 0
+            nest_indent = struct.unpack("<h", operand)[0]
+            properties = replace(
+                properties,
+                left_indent_twips=(
+                    (properties.left_indent_twips or 0)
+                    - previous_nest
+                    + nest_indent
+                ),
+                nest_indent_twips=nest_indent,
+                nest_indent_modern=modern,
             )
         elif opcode == 0xA413:
             properties = replace(
@@ -1544,7 +2635,7 @@ def apply_paragraph_modifiers(
                 )
             else:
                 unsupported.add(opcode)
-        elif opcode in (0x6424, 0x6425, 0x6426, 0x6427):
+        elif opcode in (0x6424, 0x6425, 0x6426, 0x6427, 0x6428):
             border = parse_brc80(operand)
             borders = properties.borders or TableBorders()
             attribute = {
@@ -1552,12 +2643,13 @@ def apply_paragraph_modifiers(
                 0x6425: "left",
                 0x6426: "bottom",
                 0x6427: "right",
+                0x6428: "between",
             }[opcode]
             properties = replace(
                 properties,
                 borders=replace(borders, **{attribute: border}),
             )
-        elif opcode in (0xC64E, 0xC64F, 0xC650, 0xC651):
+        elif opcode in (0xC64E, 0xC64F, 0xC650, 0xC651, 0xC652):
             border = parse_brc_operand(operand)
             borders = properties.borders or TableBorders()
             attribute = {
@@ -1565,11 +2657,15 @@ def apply_paragraph_modifiers(
                 0xC64F: "left",
                 0xC650: "bottom",
                 0xC651: "right",
+                0xC652: "between",
             }[opcode]
             properties = replace(
                 properties,
                 borders=replace(borders, **{attribute: border}),
             )
+        elif opcode in (0x6629, 0xC653, 0xC669, 0xC66C):
+            # Published legacy compatibility operands with no display effect.
+            continue
         else:
             unsupported.add(opcode)
     return properties, unsupported

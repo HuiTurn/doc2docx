@@ -1,12 +1,88 @@
 import unittest
 
-from doc2docx.cfb import CompoundFile
+from doc2docx.cfb import CompoundFile, DirectoryEntry, ObjectType
+from doc2docx.cfb.constants import ENDOFCHAIN, NOSTREAM
+from doc2docx.cfb.writer import write_compound_storage
 from doc2docx.errors import InvalidCompoundFile, StreamNotFound
 
 from .fixtures import build_mini_stream_cfb, build_version4_cfb, build_word_cfb
 
 
 class CompoundFileTests(unittest.TestCase):
+    @staticmethod
+    def _entry(name: str, object_type: ObjectType, entry_id: int) -> DirectoryEntry:
+        return DirectoryEntry(
+            entry_id,
+            name,
+            object_type,
+            1,
+            NOSTREAM,
+            NOSTREAM,
+            NOSTREAM,
+            bytes((entry_id,)) + b"\0" * 15,
+            0,
+            0,
+            0,
+            ENDOFCHAIN,
+            0,
+        )
+
+    def test_exports_nested_storage_as_standalone_compound_file(self) -> None:
+        root = self._entry("Root Entry", ObjectType.ROOT_STORAGE, 0)
+        source = write_compound_storage(
+            root,
+            (
+                ("ObjectPool", self._entry("ObjectPool", ObjectType.STORAGE, 1), None),
+                ("ObjectPool/_123", self._entry("_123", ObjectType.STORAGE, 2), None),
+                (
+                    "ObjectPool/_123/\x03ObjInfo",
+                    self._entry("\x03ObjInfo", ObjectType.STREAM, 3),
+                    b"object-info",
+                ),
+                (
+                    "ObjectPool/_123/Contents",
+                    self._entry("Contents", ObjectType.STREAM, 4),
+                    b"A" * 5000,
+                ),
+                (
+                    "ObjectPool/_123/Nested",
+                    self._entry("Nested", ObjectType.STORAGE, 5),
+                    None,
+                ),
+                (
+                    "ObjectPool/_123/Nested/Small",
+                    self._entry("Small", ObjectType.STREAM, 6),
+                    b"nested-data",
+                ),
+            ),
+        )
+
+        compound = CompoundFile(source)
+        exported = CompoundFile(compound.export_storage("ObjectPool/_123"))
+
+        self.assertEqual(exported.get_entry("").clsid[0], 2)
+        self.assertEqual(exported.open_stream("\x03ObjInfo"), b"object-info")
+        self.assertEqual(exported.open_stream("Contents"), b"A" * 5000)
+        self.assertEqual(exported.open_stream("Nested/Small"), b"nested-data")
+
+    def test_writer_uses_difat_for_large_embedded_storage(self) -> None:
+        payload = b"large OLE payload" * 512 * 1024
+        source = write_compound_storage(
+            self._entry("Root Entry", ObjectType.ROOT_STORAGE, 0),
+            (
+                (
+                    "Contents",
+                    self._entry("Contents", ObjectType.STREAM, 1),
+                    payload,
+                ),
+            ),
+        )
+
+        compound = CompoundFile(source)
+
+        self.assertGreater(compound.header.number_of_difat_sectors, 0)
+        self.assertEqual(compound.open_stream("Contents"), payload)
+
     def test_reads_regular_streams_and_directory_tree(self) -> None:
         compound = CompoundFile(build_word_cfb())
         self.assertEqual(len(compound.open_stream("WordDocument")), 4096)

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 
-from ..diagnostics import ConversionReport, SourceLocation
+from ..diagnostics import ConversionReport
 from ..errors import InvalidWordDocument
 from ..model import (
     CharacterProperties,
+    BookmarkEnd,
+    BookmarkStart,
     Endnote,
     EndnoteReference,
     FieldEndProperties,
@@ -51,6 +53,9 @@ def read_endnotes(
         Callable[[int], FieldEndProperties | None] | None
     ) = None,
     bookmark_names: Collection[str] | None = None,
+    bookmark_boundaries_at: (
+        Callable[[int], Sequence[BookmarkStart | BookmarkEnd]] | None
+    ) = None,
     style_names: Collection[str] | None = None,
     list_names: Collection[str] | None = None,
 ) -> EndnoteCollection:
@@ -101,13 +106,18 @@ def read_endnotes(
             if character_properties_at is not None
             else CharacterProperties()
         )
-        if numbering_index:
-            units = piece_table.extract_characters(
-                reference_cp,
-                reference_cp + 1,
-                report,
-                story="main-endnote-reference",
+        units = piece_table.extract_characters(
+            reference_cp,
+            reference_cp + 1,
+            report,
+            story="main-endnote-reference",
+        )
+        if len(units) != 1:
+            raise InvalidWordDocument(
+                f"endnote reference at CP {reference_cp} is not one character"
             )
+        custom_mark = None
+        if numbering_index:
             if len(units) != 1 or units[0].text != "\x02":
                 raise InvalidWordDocument(
                     f"automatic endnote reference at CP {reference_cp} is not 0x02"
@@ -117,15 +127,16 @@ def read_endnotes(
                     f"automatic endnote reference at CP {reference_cp} has no sprmCFSpec"
                 )
         else:
+            custom_mark = units[0].text
+            if ord(custom_mark) < 0x20 or ord(custom_mark) in (0xFFFE, 0xFFFF):
+                raise InvalidWordDocument(
+                    f"custom endnote mark at CP {reference_cp} is not XML-safe"
+                )
             custom_mark_count += 1
-        reference_map[reference_cp] = EndnoteReference(endnote_id, properties)
-
-    if custom_mark_count:
-        report.warning(
-            "CUSTOM_ENDNOTE_MARK_APPROXIMATED",
-            "custom endnote symbols were converted to automatic numbering",
-            location=SourceLocation(story="main"),
-            reference_count=custom_mark_count,
+        reference_map[reference_cp] = EndnoteReference(
+            endnote_id,
+            custom_mark=custom_mark,
+            properties=properties,
         )
 
     endnotes: list[Endnote] = []
@@ -154,6 +165,7 @@ def read_endnotes(
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
             field_end_properties_at=field_end_properties_at,
+            bookmark_boundaries_at=bookmark_boundaries_at,
             bookmark_names=bookmark_names,
             style_names=style_names,
             list_names=list_names,

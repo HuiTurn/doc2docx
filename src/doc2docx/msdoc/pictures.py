@@ -22,8 +22,9 @@ _BLIP_PNG = 0xF01E
 _BLIP_DIB = 0xF01F
 _BLIP_EMF = 0xF01A
 _BLIP_WMF = 0xF01B
+_BLIP_PICT = 0xF01C
 _BLIP_TIFF = 0xF029
-_METAFILE_BLIP_TYPES = frozenset((_BLIP_EMF, _BLIP_WMF))
+_METAFILE_BLIP_TYPES = frozenset((_BLIP_EMF, _BLIP_WMF, _BLIP_PICT))
 _SUPPORTED_BLIP_TYPES = _BLIP_JPEG_TYPES | frozenset(
     (_BLIP_PNG, _BLIP_DIB, _BLIP_TIFF, *_METAFILE_BLIP_TYPES)
 )
@@ -193,6 +194,19 @@ def _validate_wmf(data: bytes) -> None:
         raise InvalidWordDocument("OfficeArt WMF size exceeds its BLIP data")
 
 
+def _validate_pict(data: bytes) -> None:
+    # Standalone PICT files can include a 512-byte application header, while
+    # OfficeArt commonly stores the picture stream directly.
+    header_offset = 512 if len(data) >= 522 and not any(data[:512]) else 0
+    if len(data) < header_offset + 10:
+        raise InvalidWordDocument("OfficeArt PICT data is truncated")
+    _size, top, left, bottom, right = struct.unpack_from(
+        ">Hhhhh", data, header_offset
+    )
+    if bottom < top or right < left:
+        raise InvalidWordDocument("OfficeArt PICT frame rectangle is invalid")
+
+
 def _decode_metafile_blip(
     data: bytes | memoryview,
     record: _OfficeArtRecord,
@@ -203,6 +217,9 @@ def _decode_metafile_blip(
     elif record.record_type == _BLIP_WMF:
         one_uid_instance, two_uid_instance = 0x216, 0x217
         extension, content_type = "wmf", "image/x-wmf"
+    elif record.record_type == _BLIP_PICT:
+        one_uid_instance, two_uid_instance = 0x542, 0x543
+        extension, content_type = "pct", "image/x-pict"
     else:
         raise UnsupportedBlipFormat(record.record_type)
     if record.instance == one_uid_instance:
@@ -242,8 +259,10 @@ def _decode_metafile_blip(
         )
     if record.record_type == _BLIP_EMF:
         _validate_emf(image_data)
-    else:
+    elif record.record_type == _BLIP_WMF:
         _validate_wmf(image_data)
+    else:
+        _validate_pict(image_data)
     return image_data, extension, content_type
 
 

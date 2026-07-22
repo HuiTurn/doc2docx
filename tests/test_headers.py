@@ -226,11 +226,18 @@ class HeaderFooterParsingTests(unittest.TestCase):
                 line_color="0000FF",
                 line_opacity=0x4000,
                 line_width_emu=12700,
+                line_style="thickBetweenThin",
+                line_dash="longdashdot",
+                line_join="bevel",
+                line_end_cap="square",
                 inset_left_emu=12700,
                 inset_top_emu=25400,
                 inset_right_emu=38100,
                 inset_bottom_emu=50800,
             ),
+            flip_horizontal=True,
+            flip_vertical=True,
+            rotation_degrees=30.0,
         )
         document = Document((Paragraph((textbox,)),))
         with tempfile.TemporaryDirectory() as directory:
@@ -246,6 +253,9 @@ class HeaderFooterParsingTests(unittest.TestCase):
         self.assertEqual(rectangle.get("stroked"), "t")
         self.assertEqual(rectangle.get("strokecolor"), "#0000FF")
         self.assertEqual(rectangle.get("strokeweight"), "1pt")
+        self.assertIn("flip:x", rectangle.get("style", ""))
+        self.assertIn("flip:y", rectangle.get("style", ""))
+        self.assertIn("rotation:30", rectangle.get("style", ""))
         fill = rectangle.find(f"{V}fill")
         stroke = rectangle.find(f"{V}stroke")
         textbox_element = rectangle.find(f"{V}textbox")
@@ -254,6 +264,10 @@ class HeaderFooterParsingTests(unittest.TestCase):
         assert textbox_element is not None
         self.assertEqual(fill.get("opacity"), "50%")
         self.assertEqual(stroke.get("opacity"), "25%")
+        self.assertEqual(stroke.get("linestyle"), "thickBetweenThin")
+        self.assertEqual(stroke.get("dashstyle"), "longdashdot")
+        self.assertEqual(stroke.get("joinstyle"), "bevel")
+        self.assertEqual(stroke.get("endcap"), "square")
         self.assertEqual(textbox_element.get("inset"), "1pt,2pt,3pt,4pt")
 
     def test_dop_facing_pages_flag_is_read(self) -> None:
@@ -476,6 +490,86 @@ class HeaderFooterParsingTests(unittest.TestCase):
 
         with self.assertRaises(InvalidWordDocument):
             read_document_settings(dop, offset=0, size=len(dop))
+
+    def test_dop_revision_and_forms_protection_are_read(self) -> None:
+        dop = bytearray(84)
+        struct.pack_into("<I", dop, 4, (1 << 15) | (1 << 25))
+        struct.pack_into("<I", dop, 78, 0x12345678)
+
+        settings = read_document_settings(dop, offset=0, size=len(dop))
+
+        self.assertTrue(settings.track_revisions)
+        self.assertEqual(settings.document_protection_edit, "forms")
+        self.assertEqual(settings.legacy_protection_key, 0x12345678)
+        self.assertFalse(settings.protection_mode_conflict)
+        self.assertFalse(settings.track_revisions_repaired)
+
+    def test_locked_revision_protection_enables_revision_tracking(self) -> None:
+        dop = bytearray(84)
+        struct.pack_into("<I", dop, 4, 1 << 30)
+
+        settings = read_document_settings(dop, offset=0, size=len(dop))
+
+        self.assertTrue(settings.track_revisions)
+        self.assertEqual(
+            settings.document_protection_edit,
+            "trackedChanges",
+        )
+        self.assertTrue(settings.track_revisions_repaired)
+
+    def test_dop2003_protection_mode_overrides_legacy_flags(self) -> None:
+        dop = bytearray(600)
+        struct.pack_into("<I", dop, 4, 1 << 25)
+        struct.pack_into("<H", dop, 598, (1 << 3) | (3 << 4))
+
+        settings = read_document_settings(
+            dop,
+            offset=0,
+            size=len(dop),
+            n_fib=0x010C,
+        )
+
+        self.assertEqual(settings.document_protection_edit, "readOnly")
+        self.assertFalse(settings.protection_mode_conflict)
+
+    def test_invalid_dop2003_protection_mode_is_rejected(self) -> None:
+        dop = bytearray(600)
+        struct.pack_into("<H", dop, 598, (1 << 3) | (4 << 4))
+
+        with self.assertRaises(InvalidWordDocument):
+            read_document_settings(
+                dop,
+                offset=0,
+                size=len(dop),
+                n_fib=0x010C,
+            )
+
+    def test_revision_tracking_and_document_protection_are_packaged(self) -> None:
+        document = Document(
+            (Paragraph((TextRun("Protected"),)),),
+            track_revisions=True,
+            document_protection_edit="forms",
+            default_tab_stop_twips=720,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "protected.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                settings = ET.fromstring(package.read("word/settings.xml"))
+
+        self.assertEqual(
+            [child.tag for child in settings],
+            [
+                f"{W}trackRevisions",
+                f"{W}documentProtection",
+                f"{W}defaultTabStop",
+            ],
+        )
+        protection = settings.find(f"{W}documentProtection")
+        assert protection is not None
+        self.assertEqual(protection.get(f"{W}edit"), "forms")
+        self.assertEqual(protection.get(f"{W}enforcement"), "1")
+        self.assertIsNone(protection.get(f"{W}hash"))
 
     def test_table_grid_line_height_compatibility_is_packaged(self) -> None:
         document = Document(

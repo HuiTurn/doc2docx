@@ -20,6 +20,29 @@ _FSP = 0xF00A
 _OPTION_RECORDS = (0xF00B, 0xF121, 0xF122)
 _MAX_RECORD_DEPTH = 32
 
+_LINE_STYLES = {
+    0: "single",
+    1: "thinThin",
+    2: "thickThin",
+    3: "thinThick",
+    4: "thickBetweenThin",
+}
+_LINE_DASH_STYLES = {
+    0: "solid",
+    1: "shortdash",
+    2: "shortdot",
+    3: "shortdashdot",
+    4: "shortdashdotdot",
+    5: "dot",
+    6: "dash",
+    7: "longdash",
+    8: "dashdot",
+    9: "longdashdot",
+    10: "longdashdotdot",
+}
+_LINE_JOIN_STYLES = {0: "bevel", 1: "miter", 2: "round"}
+_LINE_END_CAP_STYLES = {0: "round", 1: "square", 2: "flat"}
+
 
 @dataclass(slots=True, frozen=True)
 class OfficeArtImage:
@@ -42,6 +65,13 @@ class OfficeArtShapeCollection:
     unsupported_image_types_by_shape_id: Mapping[int, int] = field(
         default_factory=dict
     )
+    wrap_polygons_by_shape_id: Mapping[int, tuple[tuple[int, int], ...]] = field(
+        default_factory=dict
+    )
+    shape_types_by_shape_id: Mapping[int, int] = field(default_factory=dict)
+    horizontally_flipped_shape_ids: frozenset[int] = frozenset()
+    vertically_flipped_shape_ids: frozenset[int] = frozenset()
+    rotations_by_shape_id: Mapping[int, float] = field(default_factory=dict)
 
     def style_at(self, shape_id: int) -> ShapeStyle | None:
         return self.by_shape_id.get(shape_id)
@@ -49,8 +79,23 @@ class OfficeArtShapeCollection:
     def image_at(self, shape_id: int) -> OfficeArtImage | None:
         return self.images_by_shape_id.get(shape_id)
 
+    def shape_type_at(self, shape_id: int) -> int | None:
+        return self.shape_types_by_shape_id.get(shape_id)
+
+    def is_horizontally_flipped(self, shape_id: int) -> bool:
+        return shape_id in self.horizontally_flipped_shape_ids
+
+    def is_vertically_flipped(self, shape_id: int) -> bool:
+        return shape_id in self.vertically_flipped_shape_ids
+
+    def rotation_at(self, shape_id: int) -> float:
+        return self.rotations_by_shape_id.get(shape_id, 0.0)
+
     def unsupported_image_type_at(self, shape_id: int) -> int | None:
         return self.unsupported_image_types_by_shape_id.get(shape_id)
+
+    def wrap_polygon_at(self, shape_id: int) -> tuple[tuple[int, int], ...]:
+        return self.wrap_polygons_by_shape_id.get(shape_id, ())
 
 
 @dataclass(slots=True, frozen=True)
@@ -246,6 +291,62 @@ def _bounded_property(
     return value, approximated
 
 
+def _rotation_property(properties: Mapping[int, _Property]) -> float:
+    value, approximated = _simple_property(properties, 0x0004, 0)
+    if approximated:
+        raise InvalidWordDocument("OfficeArt rotation must be a simple property")
+    if value & 0x80000000:
+        value -= 0x100000000
+    return value / 0x10000
+
+
+def _wrap_polygon(
+    properties: Mapping[int, _Property],
+) -> tuple[tuple[int, int], ...]:
+    entry = properties.get(0x0383)
+    if entry is None:
+        return ()
+    if not entry.is_complex or entry.complex_data is None:
+        raise InvalidWordDocument(
+            "OfficeArt pWrapPolygonVertices has no complex point array"
+        )
+    payload = entry.complex_data
+    if len(payload) < 6:
+        raise InvalidWordDocument("OfficeArt wrap polygon IMsoArray is truncated")
+    count, allocated, element_size = struct.unpack_from("<HHH", payload)
+    if count < 3 or allocated < count or count > 4096:
+        raise InvalidWordDocument("OfficeArt wrap polygon has an invalid point count")
+    if element_size == 8:
+        stored_size = 8
+        point_format = "<ii"
+    elif element_size == 0xFFF0:
+        stored_size = 4
+        point_format = "<hh"
+    else:
+        raise InvalidWordDocument(
+            f"OfficeArt wrap polygon has unsupported point size 0x{element_size:04X}"
+        )
+    if len(payload) != 6 + count * stored_size:
+        raise InvalidWordDocument(
+            "OfficeArt wrap polygon point data does not match its IMsoArray header"
+        )
+
+    left, _ = _simple_property(properties, 0x0140, 0)
+    top, _ = _simple_property(properties, 0x0141, 0)
+    right, _ = _simple_property(properties, 0x0142, 21600)
+    bottom, _ = _simple_property(properties, 0x0143, 21600)
+    if right <= left or bottom <= top:
+        raise InvalidWordDocument("OfficeArt wrap polygon geometry bounds are invalid")
+
+    points: list[tuple[int, int]] = []
+    for index in range(count):
+        x, y = struct.unpack_from(point_format, payload, 6 + index * stored_size)
+        normalized_x = round((x - left) * 21600 / (right - left))
+        normalized_y = round((y - top) * 21600 / (bottom - top))
+        points.append((normalized_x, normalized_y))
+    return tuple(points)
+
+
 def _shape_style(properties: Mapping[int, _Property]) -> ShapeStyle:
     approximated = False
     fill_enabled, lossy = _boolean_property(properties, 0x01BF, 4, True)
@@ -286,10 +387,24 @@ def _shape_style(properties: Mapping[int, _Property]) -> ShapeStyle:
         "line width",
     )
     approximated |= line_enabled and lossy
-    line_style, lossy = _simple_property(properties, 0x01CD, 0)
-    approximated |= line_enabled and (lossy or line_style != 0)
-    line_dashing, lossy = _simple_property(properties, 0x01CE, 0)
-    approximated |= line_enabled and (lossy or line_dashing != 0)
+    line_style_value, lossy = _simple_property(properties, 0x01CD, 0)
+    line_style = _LINE_STYLES.get(line_style_value, "single")
+    approximated |= line_enabled and (lossy or line_style_value not in _LINE_STYLES)
+    line_dashing_value, lossy = _simple_property(properties, 0x01CE, 0)
+    line_dash = _LINE_DASH_STYLES.get(line_dashing_value, "solid")
+    approximated |= line_enabled and (
+        lossy or line_dashing_value not in _LINE_DASH_STYLES
+    )
+    line_join_value, lossy = _simple_property(properties, 0x01D6, 2)
+    line_join = _LINE_JOIN_STYLES.get(line_join_value, "round")
+    approximated |= line_enabled and (
+        lossy or line_join_value not in _LINE_JOIN_STYLES
+    )
+    line_end_cap_value, lossy = _simple_property(properties, 0x01D7, 2)
+    line_end_cap = _LINE_END_CAP_STYLES.get(line_end_cap_value, "flat")
+    approximated |= line_enabled and (
+        lossy or line_end_cap_value not in _LINE_END_CAP_STYLES
+    )
 
     margins: list[int] = []
     for identifier, default, label in (
@@ -316,6 +431,10 @@ def _shape_style(properties: Mapping[int, _Property]) -> ShapeStyle:
         line_color=line_color,
         line_opacity=line_opacity,
         line_width_emu=line_width,
+        line_style=line_style,
+        line_dash=line_dash,
+        line_join=line_join,
+        line_end_cap=line_end_cap,
         inset_left_emu=margins[0],
         inset_top_emu=margins[1],
         inset_right_emu=margins[2],
@@ -530,8 +649,13 @@ def read_officeart_shapes(
         drawings.append((drawing_label, drawing))
 
     by_shape_id: dict[int, ShapeStyle] = {}
+    shape_types_by_shape_id: dict[int, int] = {}
+    horizontally_flipped_shape_ids: set[int] = set()
+    vertically_flipped_shape_ids: set[int] = set()
+    rotations_by_shape_id: dict[int, float] = {}
     images_by_shape_id: dict[int, OfficeArtImage] = {}
     unsupported_image_types_by_shape_id: dict[int, int] = {}
+    wrap_polygons_by_shape_id: dict[int, tuple[tuple[int, int], ...]] = {}
     for drawing_label, drawing in drawings:
         for container in _shape_containers(drawing):
             shape_records = [
@@ -560,6 +684,17 @@ def read_officeart_shapes(
             properties = dict(defaults)
             properties.update(_option_properties(data, container.children))
             by_shape_id[shape_id] = _shape_style(properties)
+            shape_types_by_shape_id[shape_id] = shape_record.instance
+            if flags & 0x00000040:
+                horizontally_flipped_shape_ids.add(shape_id)
+            if flags & 0x00000080:
+                vertically_flipped_shape_ids.add(shape_id)
+            rotation = _rotation_property(properties)
+            if rotation:
+                rotations_by_shape_id[shape_id] = rotation
+            wrap_polygon = _wrap_polygon(properties)
+            if wrap_polygon:
+                wrap_polygons_by_shape_id[shape_id] = wrap_polygon
             image_entry = _shape_image(properties, blips)
             if image_entry.image is not None:
                 images_by_shape_id[shape_id] = image_entry.image
@@ -568,7 +703,18 @@ def read_officeart_shapes(
                     image_entry.unsupported_record_type
                 )
     return OfficeArtShapeCollection(
-        by_shape_id,
-        images_by_shape_id,
-        unsupported_image_types_by_shape_id,
+        by_shape_id=by_shape_id,
+        shape_types_by_shape_id=shape_types_by_shape_id,
+        horizontally_flipped_shape_ids=frozenset(
+            horizontally_flipped_shape_ids
+        ),
+        vertically_flipped_shape_ids=frozenset(
+            vertically_flipped_shape_ids
+        ),
+        rotations_by_shape_id=rotations_by_shape_id,
+        images_by_shape_id=images_by_shape_id,
+        unsupported_image_types_by_shape_id=(
+            unsupported_image_types_by_shape_id
+        ),
+        wrap_polygons_by_shape_id=wrap_polygons_by_shape_id,
     )

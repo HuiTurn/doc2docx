@@ -2,8 +2,10 @@ import unittest
 import struct
 
 from doc2docx.diagnostics import ConversionReport
+from doc2docx.model import ParagraphProperties
 from doc2docx.msdoc import Piece, PieceTable
 from doc2docx.msdoc import read_formatting, read_piece_table
+from doc2docx.msdoc.sprm import PropertyModifier, apply_paragraph_modifiers
 
 
 class PieceTableTests(unittest.TestCase):
@@ -27,6 +29,42 @@ class PieceTableTests(unittest.TestCase):
 
         self.assertTrue(formatting.character_properties_at(0).italic)
         self.assertFalse(report.warnings)
+
+    def test_compact_special_character_and_paragraph_sprms_are_mapped(self) -> None:
+        special = Piece(0, 1, 0, True, (1 << 8) | (0x75 << 1))
+        frame = Piece(1, 2, 1, True, (2 << 8) | (0x25 << 1))
+        table = PieceTable((special, frame), b"A\r")
+
+        self.assertEqual(
+            table.modifiers_for_piece(special, property_group=2),
+            (PropertyModifier(0x0855, b"\x01"),),
+        )
+        self.assertEqual(
+            table.modifiers_for_piece(frame, property_group=1),
+            (PropertyModifier(0x2423, b"\x02"),),
+        )
+
+    def test_compact_paragraph_level_increment_obeys_style_and_outline_bounds(self) -> None:
+        increment = (PropertyModifier(0x2602, b"\x02"),)
+        decrement = (PropertyModifier(0x2602, b"\xFD"),)
+
+        heading, unsupported = apply_paragraph_modifiers(
+            increment,
+            style_id=8,
+        )
+        outline, outline_unsupported = apply_paragraph_modifiers(
+            decrement,
+            style_id=20,
+            initial_properties=ParagraphProperties(
+                style_id=20,
+                outline_level=1,
+            ),
+        )
+
+        self.assertFalse(unsupported)
+        self.assertFalse(outline_unsupported)
+        self.assertEqual(heading.style_id, 9)
+        self.assertEqual(outline.outline_level, 0)
 
     def test_complex_piece_prm_is_applied_after_fkp_formatting(self) -> None:
         grpprl = struct.pack("<HB", 0x0835, 1)

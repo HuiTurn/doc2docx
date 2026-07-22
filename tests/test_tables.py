@@ -12,12 +12,14 @@ from doc2docx.model import (
     ParagraphProperties,
     ShadingProperties,
     Table,
+    TableCell,
     TableBorders,
     TableCellDefinition,
     TableCellMarginOverride,
     TableCellMargins,
     TableCellWidthOverride,
     TableRowProperties,
+    TableRow,
     TextRun,
     parse_main_story,
 )
@@ -28,6 +30,94 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class TableConversionTests(unittest.TestCase):
+    def test_grid_before_and_after_are_reconstructed(self) -> None:
+        paragraph = Paragraph((TextRun("Cell"),))
+        row = TableRow(
+            (
+                TableCell((paragraph,), width_twips=1000),
+                TableCell((paragraph,), width_twips=1200),
+            ),
+            TableRowProperties(
+                cell_boundaries_twips=(0, 1000, 2200),
+                cell_definitions=(TableCellDefinition(), TableCellDefinition()),
+                bidirectional=True,
+                no_overlap=True,
+                horizontal_anchor="page",
+                vertical_anchor="text",
+                horizontal_position_twips=719,
+                vertical_alignment="center",
+                distance_left_twips=120,
+                distance_right_twips=360,
+                distance_top_twips=240,
+                distance_bottom_twips=480,
+                table_shading=ShadingProperties("solid", "FF0000", "00FF00"),
+                cell_spacing_twips=72,
+                grid_before_width=240,
+                grid_before_width_type="dxa",
+                grid_after_width=360,
+                grid_after_width_type="dxa",
+            ),
+        )
+        document = Document((paragraph,), blocks=(Table((row,)),))
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "grid-before-after.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        table = root.find(f"./{W}body/{W}tbl")
+        assert table is not None
+        self.assertIsNotNone(table.find(f"{W}tblPr/{W}bidiVisual"))
+        self.assertEqual(
+            table.find(f"{W}tblPr/{W}tblOverlap").get(f"{W}val"),  # type: ignore[union-attr]
+            "never",
+        )
+        positioning = table.find(f"{W}tblPr/{W}tblpPr")
+        assert positioning is not None
+        self.assertEqual(
+            positioning.attrib,
+            {
+                f"{W}horzAnchor": "page",
+                f"{W}vertAnchor": "text",
+                f"{W}tblpX": "719",
+                f"{W}tblpYSpec": "center",
+                f"{W}leftFromText": "120",
+                f"{W}rightFromText": "360",
+                f"{W}topFromText": "240",
+                f"{W}bottomFromText": "480",
+            },
+        )
+        table_shading = table.find(f"{W}tblPr/{W}shd")
+        assert table_shading is not None
+        self.assertEqual(table_shading.get(f"{W}fill"), "00FF00")
+        self.assertEqual(
+            [column.get(f"{W}w") for column in table.findall(f"{W}tblGrid/{W}gridCol")],
+            ["240", "1000", "1200", "360"],
+        )
+        row_properties = table.find(f"{W}tr/{W}trPr")
+        assert row_properties is not None
+        self.assertEqual(
+            row_properties.find(f"{W}tblCellSpacing").get(f"{W}w"),  # type: ignore[union-attr]
+            "72",
+        )
+        self.assertEqual(
+            row_properties.find(f"{W}gridBefore").get(f"{W}val"),  # type: ignore[union-attr]
+            "1",
+        )
+        self.assertEqual(
+            row_properties.find(f"{W}wBefore").get(f"{W}w"),  # type: ignore[union-attr]
+            "240",
+        )
+        self.assertEqual(
+            row_properties.find(f"{W}gridAfter").get(f"{W}val"),  # type: ignore[union-attr]
+            "1",
+        )
+        self.assertEqual(
+            row_properties.find(f"{W}wAfter").get(f"{W}w"),  # type: ignore[union-attr]
+            "360",
+        )
+
     def test_preferred_table_and_cell_widths_and_border_colors_are_written(self) -> None:
         border = BorderProperties("single", 4, "auto")
         row = TableRowProperties(
@@ -247,6 +337,8 @@ class TableConversionTests(unittest.TestCase):
                     TableCellDefinition(
                         horizontal_merge="restart",
                         vertical_merge="restart",
+                        text_direction="tbRlV",
+                        hide_mark=True,
                     ),
                     TableCellDefinition(horizontal_merge="continue"),
                 ),
@@ -269,6 +361,8 @@ class TableConversionTests(unittest.TestCase):
         self.assertEqual(merged.grid_span, 2)
         self.assertEqual(merged.width_twips, 2200)
         self.assertEqual(merged.vertical_merge, "restart")
+        self.assertEqual(merged.text_direction, "tbRlV")
+        self.assertTrue(merged.hide_mark)
 
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "merged-table.docx"
@@ -280,6 +374,11 @@ class TableConversionTests(unittest.TestCase):
             f"./{W}body/{W}tbl/{W}tr/{W}tc/{W}tcPr"
         )
         assert cell_properties_xml is not None
+        self.assertEqual(
+            cell_properties_xml.find(f"{W}textDirection").get(f"{W}val"),  # type: ignore[union-attr]
+            "tbRlV",
+        )
+        self.assertIsNotNone(cell_properties_xml.find(f"{W}hideMark"))
         grid_span = cell_properties_xml.find(f"{W}gridSpan")
         vertical_merge = cell_properties_xml.find(f"{W}vMerge")
         assert grid_span is not None
