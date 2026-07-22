@@ -209,11 +209,17 @@ class InlinePictureTests(unittest.TestCase):
             picture_id=4,
         )
         self.assertEqual(padded_jpeg.data, jpeg)
+        trailing_jpeg = parse_inline_picture(
+            _picf_with_blip(0xF01D, 0x46A, jpeg + b"\0\x01\x97\x67"),
+            0,
+            picture_id=5,
+        )
+        self.assertEqual(trailing_jpeg.data, jpeg)
         with self.assertRaises(InvalidWordDocument):
             parse_inline_picture(
-                _picf_with_blip(0xF01D, 0x46A, jpeg + b"\0\x01"),
+                _picf_with_blip(0xF01D, 0x46A, b"\xFF\xD8missing-eoi"),
                 0,
-                picture_id=5,
+                picture_id=6,
             )
 
     def test_malformed_picf_is_rejected_and_collection_reports_unknown_blip(self) -> None:

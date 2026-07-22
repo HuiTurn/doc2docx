@@ -1032,7 +1032,9 @@ def _set_table_cell_borders(
         label = "TableBrc80Operand" if legacy else "TableBrcOperand"
         raise InvalidWordDocument(f"{label} has an invalid byte count")
     first_cell, limit_cell, sides = operand[1:4]
-    allowed_sides = 0x0F if legacy else 0x3F
+    # Legacy TableBrc80Operand and modern TableBrcOperand both encode the same
+    # six side bits, including diagonals. Older writers do emit 0x10/0x20.
+    allowed_sides = 0x3F
     if not sides or sides & ~allowed_sides:
         raise InvalidWordDocument("table border operand has invalid border sides")
     border = parse_brc80(operand[4:]) if legacy else _parse_brc(operand[4:])

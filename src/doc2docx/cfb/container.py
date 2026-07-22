@@ -53,11 +53,15 @@ class CompoundFile:
         self.header = CompoundFileHeader.parse(self._data)
         if len(self._data) < self.header.sector_size:
             raise InvalidCompoundFile("CFB file is shorter than one header sector")
+        # Real Word/WPS writers often omit the final sector's zero padding, so the
+        # file ends mid-sector even though FAT chains still address that sector.
+        # Pad with zeros to restore a complete trailing sector.
         payload_size = len(self._data) - self.header.sector_size
-        if payload_size % self.header.sector_size:
-            raise InvalidCompoundFile(
-                "CFB file length is not aligned to its declared sector size"
-            )
+        trailing = payload_size % self.header.sector_size
+        if trailing:
+            padding = self.header.sector_size - trailing
+            self._data = memoryview(bytes(self._data) + b"\x00" * padding)
+            payload_size += padding
         self._sector_count = payload_size // self.header.sector_size
         if self._sector_count == 0:
             raise InvalidCompoundFile("CFB file contains no sectors")
@@ -261,20 +265,22 @@ class CompoundFile:
         indexed: dict[str, DirectoryEntry] = {}
         visited: set[int] = set()
 
-        def validate_id(entry_id: int, relation: str) -> None:
+        def normalize_id(entry_id: int) -> int:
             if entry_id == NOSTREAM:
-                return
+                return NOSTREAM
+            # Some legacy writers leave stale sibling/child IDs that point past
+            # the directory sector contents. Treat them as absent links so the
+            # reachable storage tree remains usable.
             if entry_id >= len(entries):
-                raise InvalidCompoundFile(
-                    f"directory {relation} ID {entry_id} is out of range"
-                )
+                return NOSTREAM
+            return entry_id
 
         def walk_sibling_tree(entry_id: int, parent: str, depth: int = 0) -> None:
+            entry_id = normalize_id(entry_id)
             if entry_id == NOSTREAM:
                 return
             if depth > 128:
                 raise InvalidCompoundFile("directory tree exceeds safe nesting depth")
-            validate_id(entry_id, "entry")
             if entry_id in visited:
                 raise InvalidCompoundFile("cycle or duplicate detected in directory tree")
             visited.add(entry_id)
@@ -283,25 +289,24 @@ class CompoundFile:
                 raise InvalidCompoundFile(
                     "directory tree references an unallocated entry"
                 )
-            validate_id(entry.left_sibling_id, "left sibling")
-            validate_id(entry.right_sibling_id, "right sibling")
-            validate_id(entry.child_id, "child")
+            left_sibling_id = normalize_id(entry.left_sibling_id)
+            right_sibling_id = normalize_id(entry.right_sibling_id)
+            child_id = normalize_id(entry.child_id)
 
-            walk_sibling_tree(entry.left_sibling_id, parent, depth + 1)
+            walk_sibling_tree(left_sibling_id, parent, depth + 1)
             path = f"{parent}/{entry.name}" if parent else entry.name
             if path in indexed:
                 raise InvalidCompoundFile(f"duplicate directory path {path!r}")
             indexed[path] = replace(entry, path=path)
             if entry.object_type is ObjectType.STORAGE:
-                walk_sibling_tree(entry.child_id, path, depth + 1)
-            elif entry.child_id != NOSTREAM:
+                walk_sibling_tree(child_id, path, depth + 1)
+            elif child_id != NOSTREAM:
                 raise InvalidCompoundFile(
                     f"non-storage directory entry {path!r} has a child"
                 )
-            walk_sibling_tree(entry.right_sibling_id, parent, depth + 1)
+            walk_sibling_tree(right_sibling_id, parent, depth + 1)
 
         root = entries[0]
-        validate_id(root.child_id, "root child")
         indexed[""] = replace(root, path="")
         visited.add(0)
         walk_sibling_tree(root.child_id, "")

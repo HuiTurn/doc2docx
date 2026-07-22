@@ -104,13 +104,20 @@ def _batch_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _is_word_lock_file(path: Path) -> bool:
+    # Word creates ~$*.doc lock/owner files that are not compound documents.
+    return path.name.startswith("~$")
+
+
 def _batch_sources(root: Path, *, recursive: bool) -> list[Path]:
     iterator = root.rglob("*") if recursive else root.iterdir()
     return sorted(
         (
             path
             for path in iterator
-            if path.is_file() and path.suffix.casefold() == ".doc"
+            if path.is_file()
+            and path.suffix.casefold() == ".doc"
+            and not _is_word_lock_file(path)
         ),
         key=lambda path: path.relative_to(root).as_posix().casefold(),
     )

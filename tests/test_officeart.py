@@ -124,6 +124,59 @@ class OfficeArtParsingTests(unittest.TestCase):
             (100, 200, 600, 800),
         )
 
+    def test_keeps_first_duplicate_grouped_child_anchor(self) -> None:
+        group_shape = _record(
+            0xF004,
+            _record(
+                0xF00A,
+                struct.pack("<II", 2000, 0x00000001),
+                version=2,
+                instance=0,
+            )
+            + _record(
+                0xF009,
+                struct.pack("<4i", 0, 0, 1000, 1000),
+                version=1,
+            ),
+            version=0xF,
+        )
+
+        def child_shape(left: int) -> bytes:
+            return _record(
+                0xF004,
+                _record(
+                    0xF00A,
+                    struct.pack("<II", 2001, 0),
+                    version=2,
+                    instance=202,
+                )
+                + _record(
+                    0xF00F,
+                    struct.pack("<4i", left, 200, 600, 800),
+                    version=0,
+                ),
+                version=0xF,
+            )
+
+        container = _record(
+            0xF003,
+            group_shape + child_shape(100) + child_shape(300),
+            version=0xF,
+        )
+        from doc2docx.msdoc.officeart import (
+            _collect_group_child_anchors,
+            _read_record,
+        )
+
+        view = memoryview(container)
+        record, end = _read_record(view, 0, len(container))
+        self.assertEqual(end, len(container))
+        result: dict[int, object] = {}
+        _collect_group_child_anchors(view, record, result)
+
+        self.assertIn(2001, result)
+        self.assertEqual(result[2001].left, 100)
+
     def test_resolves_delayed_bstore_blip_through_shape_pib(self) -> None:
         data, delay_stream = _floating_picture_officeart()
 

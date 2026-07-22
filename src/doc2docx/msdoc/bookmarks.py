@@ -119,7 +119,15 @@ def _read_names(
     if position != len(data):
         raise InvalidWordDocument("SttbfBkmk has trailing bytes")
     if len(set(names)) != len(names):
-        raise InvalidWordDocument("SttbfBkmk contains duplicate bookmark names")
+        # Legacy editors can leave duplicate bookmark labels. Make them unique
+        # so the remaining ranges stay convertible.
+        seen: dict[str, int] = {}
+        unique: list[str] = []
+        for name in names:
+            count = seen.get(name, 0) + 1
+            seen[name] = count
+            unique.append(name if count == 1 else f"{name}_{count}")
+        names = unique
     return tuple(names)
 
 

@@ -235,10 +235,12 @@ def _read_properties(
             is_complex=is_complex,
             complex_data=complex_data,
         )
-    if complex_position != record.payload_end:
+    if complex_position > record.payload_end:
         raise InvalidWordDocument(
             "OfficeArt complex property data does not match its table"
         )
+    # Some Word/WPS writers pad or leave unused bytes after complex property
+    # data. Keep the parsed options and ignore the trailing remainder.
     return properties
 
 
@@ -429,7 +431,6 @@ def _shape_style(properties: Mapping[int, _Property]) -> ShapeStyle:
     approximated |= line_enabled and (
         lossy or line_end_cap_value not in _LINE_END_CAP_STYLES
     )
-
     margins: list[int] = []
     for identifier, default, label in (
         (0x0081, 0x16530, "left text inset"),
@@ -552,11 +553,10 @@ def _collect_group_child_anchors(
                     if child_rectangle is None:
                         continue
                     child_shape_id = _single_shape_id(data, child_shape_container)
+                    # Nested group walks can rediscover the same child anchor.
+                    # Keep the first geometry rather than aborting conversion.
                     if child_shape_id in result:
-                        raise InvalidWordDocument(
-                            "OfficeArt drawing repeats a grouped child anchor for "
-                            f"shape id {child_shape_id}"
-                        )
+                        continue
                     result[child_shape_id] = OfficeArtChildAnchor(
                         parent_shape_id=group_shape_id,
                         group_left=group_left,
@@ -805,10 +805,8 @@ def read_officeart_shapes(
             if flags & 0x00000008:
                 continue
             if shape_id in by_shape_id:
-                story_name = "header" if drawing_label else "main"
-                raise InvalidWordDocument(
-                    f"OfficeArt {story_name} drawing repeats shape id {shape_id}"
-                )
+                # Keep the first definition when a drawing rediscovers a shape id.
+                continue
             properties = dict(defaults)
             properties.update(_option_properties(data, container.children))
             by_shape_id[shape_id] = _shape_style(properties)

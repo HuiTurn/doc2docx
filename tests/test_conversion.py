@@ -359,7 +359,6 @@ class ConversionTests(unittest.TestCase):
         fixtures = (
             build_comment_word_cfb(missing_special=True),
             build_comment_word_cfb(malformed_reference_character=True),
-            build_comment_word_cfb(malformed_text_marker=True),
             build_comment_word_cfb(malformed_text_end=True),
             build_comment_word_cfb(invalid_author_index=True),
             build_comment_word_cfb(missing_bookmark_table=True),
@@ -372,6 +371,20 @@ class ConversionTests(unittest.TestCase):
                     source.write_bytes(payload)
                     with self.assertRaises(InvalidWordDocument):
                         convert(source)
+
+    def test_comment_body_without_marker_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "missing-comment-marker.doc"
+            destination = Path(directory) / "missing-comment-marker.docx"
+            source.write_bytes(build_comment_word_cfb(malformed_text_marker=True))
+
+            result = convert(source, destination)
+
+            self.assertIn(
+                "COMMENT_MARKER_MISSING_SKIPPED",
+                [warning.code for warning in result.report.warnings],
+            )
+            self.assertEqual(result.report.statistics.get("comment_count", 0), 0)
 
     def test_automatic_endnote_is_linked_and_packaged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

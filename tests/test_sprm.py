@@ -929,6 +929,29 @@ class SprmTests(unittest.TestCase):
         self.assertIsNotNone(second.borders.bottom)
         self.assertIsNotNone(third.borders.top)
 
+    def test_legacy_diagonal_table_border_sides_are_accepted(self) -> None:
+        remainder = bytes((2,)) + struct.pack("<3h", 0, 800, 1600)
+        tdef_operand = struct.pack("<H", len(remainder) + 1) + remainder
+        border80 = bytes((6, 1, 2, 0))
+        grpprl = b"".join(
+            (
+                struct.pack("<H", 0xD608) + tdef_operand,
+                struct.pack("<HBBBB", 0xD620, 7, 0, 1, 0x10) + border80,
+            )
+        )
+
+        properties, unsupported = apply_paragraph_modifiers(
+            parse_grpprl(grpprl, label="legacy-diagonal-border.grpprl"),
+            style_id=0,
+        )
+
+        self.assertFalse(unsupported)
+        assert properties.table_row is not None
+        cell = properties.table_row.cell_definitions[0]
+        self.assertIsNotNone(cell.borders.diagonal_down)
+        self.assertEqual(cell.borders.diagonal_down.color, "0000FF")
+        self.assertIsNone(cell.borders.top)
+
     def test_segmented_modern_cell_shading_reaches_cells_23_and_45(self) -> None:
         first = bytes((0xFF, 0, 0, 0)) + bytes((0, 0, 0xFF, 0)) + struct.pack("<H", 1)
         second = bytes((0, 0xFF, 0, 0)) + bytes((0xFF, 0, 0, 0)) + struct.pack("<H", 1)

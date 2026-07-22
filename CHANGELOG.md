@@ -5,6 +5,25 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.36.3 - 2026-07-22
+
+- Pad short CFB files that omit the final sector's zero padding so FAT chains
+  that address the incomplete trailing sector remain readable.
+- Treat stale directory sibling/child IDs past the directory entry count as
+  absent links instead of aborting.
+- Accept JPEG BLIPs that have valid SOI/EOI markers even when OfficeArt record
+  length includes non-zero trailing padding after EOI.
+- Accept legacy `TableBrc80Operand` diagonal border side bits (`0x10`/`0x20`).
+- Keep the first grouped OfficeArt child-anchor geometry when nested walks
+  rediscover the same shape id, and keep the first shape when a drawing
+  repeats a shape id.
+- Ignore trailing bytes after OfficeArt complex property data.
+- Deduplicate legacy bookmark names and skip empty/malformed annotation
+  comment ranges instead of aborting conversion.
+- Sanitize font names that contain non-XML control characters, preferring a
+  usable alternate name when the primary name is only controls.
+- Skip Word `~$*.doc` lock files in `doc2docx batch`.
+
 ## 0.36.2 - 2026-07-22
 
 - Accept complete legacy CFB DIFAT chains that use `FREESECT` as their final

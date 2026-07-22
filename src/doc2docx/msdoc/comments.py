@@ -318,9 +318,15 @@ def _read_annotation_ranges(
             )
         cp_end = ends[end_index]
         if cp_start >= cp_end:
-            raise InvalidWordDocument(
-                "annotation bookmark does not describe a non-empty main-story range"
+            report.warning(
+                "EMPTY_ANNOTATION_BOOKMARK_SKIPPED",
+                "an annotation bookmark with an empty main-story range was omitted",
+                location=SourceLocation(story="comments", stream="Table"),
+                tag=tag,
+                cp_start=cp_start,
+                cp_end=cp_end,
             )
+            continue
         ranges[tag] = (cp_start, cp_end)
     return ranges
 
@@ -474,22 +480,6 @@ def read_comments(
             raise InvalidWordDocument(
                 f"comment reference at CP {reference.cp} has no sprmCFSpec"
             )
-        reference_map[reference.cp] = CommentReference(
-            comment_id,
-            reference_properties,
-        )
-
-        if reference.bookmark_tag is not None:
-            try:
-                cp_start, cp_end = annotation_ranges[reference.bookmark_tag]
-            except KeyError as exc:
-                raise InvalidWordDocument(
-                    f"comment {comment_id} references a missing annotation bookmark"
-                ) from exc
-            boundary_lists.setdefault(cp_start, []).append(
-                CommentRangeStart(comment_id)
-            )
-            boundary_lists.setdefault(cp_end, []).append(CommentRangeEnd(comment_id))
 
         relative_start, relative_end = text_range
         cp_start = comment_story_cp_start + relative_start
@@ -505,9 +495,39 @@ def read_comments(
             index for index, unit in enumerate(units) if unit.text == "\x05"
         )
         if len(marker_indexes) != 1:
-            raise InvalidWordDocument(
-                f"PlcfandTxt comment {comment_id} does not contain one 0x05 marker"
+            report.warning(
+                "COMMENT_MARKER_MISSING_SKIPPED",
+                "a comment body without exactly one annotation marker was omitted",
+                location=SourceLocation(story=story_name, stream="WordDocument"),
+                comment_id=comment_id,
+                marker_count=len(marker_indexes),
             )
+            continue
+
+        reference_map[reference.cp] = CommentReference(
+            comment_id,
+            reference_properties,
+        )
+
+        if reference.bookmark_tag is not None:
+            annotation_range = annotation_ranges.get(reference.bookmark_tag)
+            if annotation_range is None:
+                report.warning(
+                    "MISSING_ANNOTATION_BOOKMARK_SKIPPED",
+                    "a comment referenced a missing or empty annotation bookmark",
+                    location=SourceLocation(story="comments", stream="Table"),
+                    comment_id=comment_id,
+                    bookmark_tag=reference.bookmark_tag,
+                )
+            else:
+                range_start, range_end = annotation_range
+                boundary_lists.setdefault(range_start, []).append(
+                    CommentRangeStart(comment_id)
+                )
+                boundary_lists.setdefault(range_end, []).append(
+                    CommentRangeEnd(comment_id)
+                )
+
         marker_index = marker_indexes[0]
         marker_cp = units[marker_index].cp_start
         marker_properties = (

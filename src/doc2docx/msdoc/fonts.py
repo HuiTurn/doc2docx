@@ -25,6 +25,26 @@ _FONT_PITCHES = {
 }
 
 
+def _is_xml_character(character: str) -> bool:
+    value = ord(character)
+    return (
+        value in (0x09, 0x0A, 0x0D)
+        or 0x20 <= value <= 0xD7FF
+        or 0xE000 <= value <= 0xFFFD
+        or 0x10000 <= value <= 0x10FFFF
+    ) and value not in (0xFFFE, 0xFFFF)
+
+
+def _sanitize_font_name(name: str) -> str:
+    # Font names appear in XML attributes, so strip controls and non-XML code
+    # points rather than emitting replacement characters into w:name values.
+    return "".join(
+        character
+        for character in name
+        if _is_xml_character(character) and ord(character) >= 0x20
+    )
+
+
 def _decode_xsz_ffn(data: bytes, *, label: str) -> tuple[str, ...]:
     if len(data) % 2:
         raise InvalidWordDocument(f"{label} font names have an odd byte count")
@@ -66,7 +86,7 @@ def _parse_ffn(index: int, data: bytes) -> tuple[FontDefinition, bool]:
         else:
             raise InvalidWordDocument(f"SttbfFfn font {index} has no primary name")
     else:
-        primary_name = names[0]
+        primary_name = _sanitize_font_name(names[0])
 
     alternate_name: str | None = None
     if alternate_index:
@@ -85,6 +105,17 @@ def _parse_ffn(index: int, data: bytes) -> tuple[FontDefinition, bool]:
             alternate_name = names[1] or None
     elif len(names) > 1:
         alternate_name = names[1] or None
+    if alternate_name is not None:
+        alternate_name = _sanitize_font_name(alternate_name) or None
+    if not primary_name:
+        # Some WPS/Word exports store only control bytes in xszFfn and keep a
+        # usable alternate name. Prefer that before synthesizing a placeholder.
+        if alternate_name:
+            primary_name = alternate_name
+            alternate_name = None
+        else:
+            primary_name = f"Unnamed DOC font {index}"
+        repaired_unnamed_slot = True
 
     return FontDefinition(
         index=index,
@@ -148,7 +179,7 @@ def read_font_table(
     if repaired_indices and report is not None:
         report.warning(
             "UNNAMED_FONT_SLOT_REPAIRED",
-            "empty LibreOffice-compatible font-table slots were preserved by index",
+            "empty or non-XML font-table names were repaired while preserving indices",
             font_indices=repaired_indices,
         )
     return tuple(fonts)

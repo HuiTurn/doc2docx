@@ -28,6 +28,25 @@ class CompoundFileTests(unittest.TestCase):
             0,
         )
 
+    def test_accepts_short_final_sector_by_padding(self) -> None:
+        source = bytearray(build_word_cfb())
+        # Drop part of the final sector's padding so the on-disk length is not
+        # sector-aligned, matching common Word/WPS exports.
+        truncated = bytes(source[:-17])
+        self.assertNotEqual(len(truncated) % 512, 0)
+        compound = CompoundFile(truncated)
+        self.assertEqual(len(compound.open_stream("WordDocument")), 4096)
+
+    def test_ignores_directory_sibling_ids_past_entry_count(self) -> None:
+        source = bytearray(build_word_cfb())
+        directory_offset = (16 + 1) * 512
+        # Entry 1 is typically WordDocument; point its left sibling past the
+        # directory contents so the tree must soft-ignore the stale link.
+        struct.pack_into("<I", source, directory_offset + 128 + 68, 999)
+        compound = CompoundFile(source)
+        self.assertEqual(len(compound.open_stream("WordDocument")), 4096)
+        self.assertIn("WordDocument", {entry.path for entry in compound.entries})
+
     def test_exports_nested_storage_as_standalone_compound_file(self) -> None:
         root = self._entry("Root Entry", ObjectType.ROOT_STORAGE, 0)
         source = write_compound_storage(

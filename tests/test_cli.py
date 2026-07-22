@@ -82,6 +82,37 @@ class CommandLineTests(unittest.TestCase):
             )
             self.assertIn("Batch complete: 2 converted, 1 failed", stderr.getvalue())
 
+    def test_batch_skips_word_lock_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source_root = temporary / "inputs"
+            output_root = temporary / "outputs"
+            summary_path = temporary / "batch-report.json"
+            source_root.mkdir()
+            (source_root / "good.doc").write_bytes(build_word_cfb())
+            (source_root / "~$locked.doc").write_bytes(b"\0" * 162)
+
+            stdout = StringIO()
+            with redirect_stdout(stdout), redirect_stderr(StringIO()):
+                status = main(
+                    [
+                        "batch",
+                        str(source_root),
+                        "-o",
+                        str(output_root),
+                        "--report",
+                        str(summary_path),
+                    ]
+                )
+
+            self.assertEqual(status, 0)
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                (summary["file_count"], summary["succeeded"], summary["failed"]),
+                (1, 1, 0),
+            )
+            self.assertFalse((output_root / "~$locked.docx").exists())
+
     def test_password_file_converts_xor_obfuscated_document(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)

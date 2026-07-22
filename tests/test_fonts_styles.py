@@ -331,6 +331,30 @@ class FontAndStyleTests(unittest.TestCase):
         self.assertEqual(fonts[0].name, "Unnamed DOC font 0")
         self.assertEqual(report.warnings[0].code, "UNNAMED_FONT_SLOT_REPAIRED")
 
+    def test_prefers_alternate_when_primary_font_name_is_non_xml(self) -> None:
+        primary = "\x0b\x0c\0".encode("utf-16le")
+        alternate = "Times New Roman\0".encode("utf-16le")
+        # ixchSzAlt indexes UTF-16 units into xszFfn; primary is two controls + NUL.
+        ffn = b"".join(
+            (
+                bytes((0x11,)),
+                struct.pack("<h", 400),
+                bytes((0, 3)),
+                bytes(range(10)),
+                struct.pack("<6I", 1, 2, 3, 4, 5, 6),
+                primary,
+                alternate,
+            )
+        )
+        table = struct.pack("<HHB", 1, 0, len(ffn)) + ffn
+        report = ConversionReport("control-font.doc")
+
+        fonts = read_font_table(table, offset=0, size=len(table), report=report)
+
+        self.assertEqual(fonts[0].name, "Times New Roman")
+        self.assertIsNone(fonts[0].alternate_name)
+        self.assertEqual(report.warnings[0].code, "UNNAMED_FONT_SLOT_REPAIRED")
+
     def test_writes_paragraph_outline_and_borders(self) -> None:
         document = Document(
             (
