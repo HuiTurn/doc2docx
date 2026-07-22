@@ -124,7 +124,18 @@ class CompoundFile:
             next_sector = values[-1]
 
         if self.header.number_of_difat_sectors and next_sector != ENDOFCHAIN:
-            raise InvalidCompoundFile("DIFAT chain does not end with ENDOFCHAIN")
+            # Some older Word/WPS writers use FREESECT as the final DIFAT link.
+            # Accept that variant only when the chain already contains exactly
+            # the declared number of FAT sectors, so a truncated chain remains
+            # an error rather than being silently repaired.
+            complete_free_terminated_chain = (
+                next_sector == FREESECT
+                and len(fat_sector_ids) == self.header.number_of_fat_sectors
+            )
+            if not complete_free_terminated_chain:
+                raise InvalidCompoundFile(
+                    "DIFAT chain does not end with ENDOFCHAIN"
+                )
         if len(fat_sector_ids) < self.header.number_of_fat_sectors:
             raise InvalidCompoundFile(
                 "DIFAT does not contain the declared number of FAT sectors"

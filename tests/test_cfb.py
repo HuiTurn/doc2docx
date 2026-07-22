@@ -1,7 +1,8 @@
+import struct
 import unittest
 
 from doc2docx.cfb import CompoundFile, DirectoryEntry, ObjectType
-from doc2docx.cfb.constants import ENDOFCHAIN, NOSTREAM
+from doc2docx.cfb.constants import ENDOFCHAIN, FREESECT, NOSTREAM
 from doc2docx.cfb.writer import write_compound_storage
 from doc2docx.errors import InvalidCompoundFile, StreamNotFound
 
@@ -82,6 +83,40 @@ class CompoundFileTests(unittest.TestCase):
 
         self.assertGreater(compound.header.number_of_difat_sectors, 0)
         self.assertEqual(compound.open_stream("Contents"), payload)
+
+    def test_accepts_complete_free_terminated_difat_chain(self) -> None:
+        payload = b"legacy DIFAT payload" * 512 * 1024
+        source = bytearray(
+            write_compound_storage(
+                self._entry("Root Entry", ObjectType.ROOT_STORAGE, 0),
+                (("Contents", self._entry("Contents", ObjectType.STREAM, 1), payload),),
+            )
+        )
+        first_difat_sector = struct.unpack_from("<I", source, 68)[0]
+        final_link_offset = (first_difat_sector + 1) * 512 + 508
+        struct.pack_into("<I", source, final_link_offset, FREESECT)
+
+        compound = CompoundFile(source)
+
+        self.assertGreater(compound.header.number_of_difat_sectors, 0)
+        self.assertEqual(compound.open_stream("Contents"), payload)
+
+    def test_rejects_incomplete_free_terminated_difat_chain(self) -> None:
+        payload = b"truncated DIFAT payload" * 512 * 1024
+        source = bytearray(
+            write_compound_storage(
+                self._entry("Root Entry", ObjectType.ROOT_STORAGE, 0),
+                (("Contents", self._entry("Contents", ObjectType.STREAM, 1), payload),),
+            )
+        )
+        first_difat_sector = struct.unpack_from("<I", source, 68)[0]
+        final_link_offset = (first_difat_sector + 1) * 512 + 508
+        struct.pack_into("<I", source, final_link_offset, FREESECT)
+        declared_fat_sectors = struct.unpack_from("<I", source, 44)[0]
+        struct.pack_into("<I", source, 44, declared_fat_sectors + 1)
+
+        with self.assertRaisesRegex(InvalidCompoundFile, "DIFAT chain"):
+            CompoundFile(source)
 
     def test_reads_regular_streams_and_directory_tree(self) -> None:
         compound = CompoundFile(build_word_cfb())

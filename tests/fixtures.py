@@ -685,17 +685,27 @@ def build_main_textbox_word_cfb(
     missing_break_table: bool = False,
     officeart_style: bool = False,
     page_field: bool = False,
+    embed_field: bool = False,
     grouped_child: bool = False,
+    reusable_textbox_count: int = 0,
 ) -> bytes:
     """A DOC whose main story contains one floating text box."""
+
+    if page_field and embed_field:
+        raise ValueError("page_field and embed_field are mutually exclusive")
 
     anchor = b"!" if malformed_anchor else b"\x08"
     main_text = b"Before" + anchor + b"After\r"
     anchor_cp = 6
-    field_text = b"\x13 PAGE \\* MERGEFORMAT \x141\x15"
-    textbox_content = field_text if page_field else b"Inside textbox"
+    field_text = (
+        b"\x13 EMBED Package \x14\x01\x15"
+        if embed_field
+        else b"\x13 PAGE \\* MERGEFORMAT \x141\x15"
+    )
+    textbox_content = field_text if page_field or embed_field else b"Inside textbox"
     textbox_range = textbox_content + b"\r\r"
-    textbox_document = textbox_range + b"\r"
+    reusable_text = b"\r" * reusable_textbox_count
+    textbox_document = reusable_text + textbox_range + b"\r"
     all_text = main_text + textbox_document
 
     text_fc = 1024
@@ -719,8 +729,21 @@ def build_main_textbox_word_cfb(
     )
     plcf_spa_offset = 128
 
-    textbox_cps = (0, len(textbox_range), len(textbox_document))
-    plcf_textboxes = struct.pack("<3I", *textbox_cps)
+    textbox_cps = tuple(range(reusable_textbox_count + 1)) + (
+        reusable_textbox_count + len(textbox_range),
+        len(textbox_document),
+    )
+    plcf_textboxes = struct.pack(f"<{len(textbox_cps)}I", *textbox_cps)
+    for _ in range(reusable_textbox_count):
+        plcf_textboxes += struct.pack(
+            "<iiHiII",
+            -1,
+            0,
+            1,
+            0,
+            0,
+            0,
+        )
     plcf_textboxes += struct.pack(
         "<iiHiII",
         1,
@@ -741,13 +764,16 @@ def build_main_textbox_word_cfb(
     )
     plcf_textboxes_offset = 200
 
-    plcf_breaks = struct.pack("<3I", *textbox_cps)
-    plcf_breaks += struct.pack("<hHH", 0, 0, 0)
+    plcf_breaks = struct.pack(f"<{len(textbox_cps)}I", *textbox_cps)
+    for index in range(reusable_textbox_count):
+        plcf_breaks += struct.pack("<hHH", index, 0, 0)
+    active_textbox_index = reusable_textbox_count
+    plcf_breaks += struct.pack("<hHH", active_textbox_index, 0, 0)
     plcf_breaks += struct.pack("<hHH", -1, 0, 0)
-    plcf_breaks_offset = 280
+    plcf_breaks_offset = 400
     plcf_fields = b""
-    plcf_fields_offset = 320
-    if page_field:
+    plcf_fields_offset = 480
+    if page_field or embed_field:
         separator_cp = field_text.index(b"\x14")
         end_cp = field_text.index(b"\x15")
         plcf_fields = struct.pack(
@@ -763,7 +789,7 @@ def build_main_textbox_word_cfb(
         if officeart_style
         else b""
     )
-    dgg_info_offset = 380
+    dgg_info_offset = 560
 
     word_document = bytearray(4096)
     word_document[:1024] = _build_fib(

@@ -12,6 +12,8 @@ from doc2docx.model import (
     CharacterProperties,
     Document,
     Field,
+    FloatingPicture,
+    InlinePicture,
     NoBreakHyphen,
     Paragraph,
     ParagraphFrameProperties,
@@ -115,6 +117,38 @@ class DocumentModelTests(unittest.TestCase):
         self.assertEqual(indentation.get(f"{W}leftChars"), "250")
         self.assertEqual(indentation.get(f"{W}rightChars"), "125")
         self.assertEqual(indentation.get(f"{W}hangingChars"), "75")
+
+    def test_twip_indents_take_precedence_over_character_indents(self) -> None:
+        document = Document(
+            (
+                Paragraph(
+                    (TextRun("Indented"),),
+                    ParagraphProperties(
+                        left_indent_twips=420,
+                        right_indent_twips=210,
+                        first_line_indent_twips=320,
+                        left_indent_chars=200,
+                        right_indent_chars=100,
+                        first_line_indent_chars=100,
+                    ),
+                ),
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "twip-indents.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        indentation = root.find(f"./{W}body/{W}p/{W}pPr/{W}ind")
+        assert indentation is not None
+        self.assertEqual(indentation.get(f"{W}left"), "420")
+        self.assertEqual(indentation.get(f"{W}right"), "210")
+        self.assertEqual(indentation.get(f"{W}firstLine"), "320")
+        self.assertIsNone(indentation.get(f"{W}leftChars"))
+        self.assertIsNone(indentation.get(f"{W}rightChars"))
+        self.assertIsNone(indentation.get(f"{W}firstLineChars"))
 
     def test_character_effects_scale_and_emphasis_are_written(self) -> None:
         character = CharacterProperties(
@@ -428,6 +462,107 @@ class DocumentModelTests(unittest.TestCase):
             ),
         )
         self.assertFalse(report.warnings)
+
+    def test_multiparagraph_table_of_contents_keeps_cached_layout(self) -> None:
+        report = ConversionReport("toc.doc")
+        document = parse_main_story(
+            (
+                "\x13 TOC \\o \"1-3\" \x14"
+                "First heading\t1\rSecond heading\t2\x15\r"
+            ),
+            report,
+        )
+
+        self.assertEqual(
+            document.paragraphs[0].inlines,
+            (TextRun("First heading"), Tab(), TextRun("1")),
+        )
+        self.assertEqual(
+            document.paragraphs[1].inlines,
+            (TextRun("Second heading"), Tab(), TextRun("2")),
+        )
+        self.assertEqual(
+            [warning.code for warning in report.warnings],
+            ["FIELDS_FLATTENED"],
+        )
+        self.assertEqual(report.warnings[0].details["field_types"], {"TOC": 1})
+
+    def test_multiparagraph_toc_flattens_nested_navigation_fields(self) -> None:
+        report = ConversionReport("toc.doc")
+        text = (
+            "\x13 TOC \\h \x14"
+            "\x13 HYPERLINK \\l \"target\" \x14"
+            "Heading\t\x13 PAGEREF target \\h \x141\x15\x15\r"
+            "Next\t2\x15\r"
+        )
+        heading_start = text.index("Heading")
+        heading_end = heading_start + len("Heading")
+        page_result_cp = text.index("1\x15\x15")
+
+        def properties_at(cp: int) -> CharacterProperties:
+            if heading_start <= cp < heading_end:
+                return CharacterProperties(style_id=43)
+            if text[cp] == "\t" or cp == page_result_cp:
+                return CharacterProperties(web_hidden=True)
+            return CharacterProperties()
+
+        document = parse_main_story(
+            text,
+            report,
+            bookmark_names={"target"},
+            character_properties_at=properties_at,
+        )
+
+        self.assertEqual(
+            document.paragraphs[0].inlines,
+            (TextRun("Heading"), Tab(), TextRun("1")),
+        )
+        self.assertEqual(
+            document.paragraphs[1].inlines,
+            (TextRun("Next"), Tab(), TextRun("2")),
+        )
+        self.assertEqual(
+            report.warnings[0].details["field_types"],
+            {"HYPERLINK": 1, "PAGEREF": 1, "TOC": 1},
+        )
+
+    def test_shape_field_picture_uses_inline_layout_and_drops_placeholder(self) -> None:
+        report = ConversionReport("shape-field.doc")
+        picture = FloatingPicture(
+            picture_id=7,
+            shape_id=1025,
+            anchor_cp=25,
+            data=b"jpeg",
+            extension="jpg",
+            content_type="image/jpeg",
+            left_twips=0,
+            top_twips=0,
+            width_twips=1440,
+            height_twips=720,
+            horizontal_relative="column",
+            vertical_relative="paragraph",
+            wrap_type="none",
+            wrap_side="both",
+            behind_text=False,
+            anchor_locked=True,
+        )
+        document = parse_main_story(
+            "\x13 SHAPE \\* MERGEFORMAT \x14\x08\x01\x15\r",
+            report,
+            floating_picture_at=lambda cp: picture if cp == 24 else None,
+        )
+
+        self.assertEqual(len(document.paragraphs[0].inlines), 1)
+        inline = document.paragraphs[0].inlines[0]
+        self.assertIsInstance(inline, InlinePicture)
+        assert isinstance(inline, InlinePicture)
+        self.assertEqual(inline.picture_id, 7)
+        self.assertEqual(inline.width_emu, 914400)
+        self.assertEqual(inline.height_emu, 457200)
+        self.assertEqual(
+            report.warnings[0].details["field_types"],
+            {"SHAPE": 1},
+        )
 
     def test_index_and_table_of_authorities_fields_remain_live(self) -> None:
         report = ConversionReport("indexes.doc")

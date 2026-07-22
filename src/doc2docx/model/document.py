@@ -78,6 +78,7 @@ _BOOKMARK_LIVE_FIELD_TYPES = frozenset(
 _SEQUENCE_LIVE_FIELD_TYPES = frozenset({"SEQ"})
 _STYLE_LIVE_FIELD_TYPES = frozenset({"STYLEREF"})
 _LIST_LIVE_FIELD_TYPES = frozenset({"LISTNUM"})
+_MULTIPARAGRAPH_CACHED_FIELD_TYPES = frozenset({"INDEX", "TOA", "TOC"})
 _HYPERLINK_LIVE_FIELD_TYPES = frozenset({"HYPERLINK"})
 _SAFE_HYPERLINK_SCHEMES = frozenset({"http", "https", "mailto"})
 
@@ -756,7 +757,7 @@ class InlinePicture:
 
 @dataclass(slots=True, frozen=True)
 class EmbeddedObject:
-    """One OLE storage anchored by an EMBED field in the main story."""
+    """One OLE storage anchored by an EMBED field in a supported story."""
 
     object_id: int
     storage_id: int
@@ -1157,6 +1158,9 @@ class _FieldContext:
     properties: CharacterProperties
     has_separator: bool = False
     embedded_object: EmbeddedObject | None = None
+    field_type: str = ""
+    end_properties: FieldEndProperties | None = None
+    flatten_result: bool = False
 
 
 def _replace_margin_sides(
@@ -1484,12 +1488,28 @@ def parse_main_story(
     }
     available_style_names = {name.casefold() for name in (style_names or ())}
     available_list_names = {name.casefold() for name in (list_names or ())}
+    field_end_properties_by_begin: dict[int, FieldEndProperties | None] = {}
+    if field_end_properties_at is not None:
+        open_field_cps: list[int] = []
+        for unit in characters:
+            value = ord(unit.text)
+            if value == 0x13:
+                open_field_cps.append(unit.cp_start)
+            elif value == 0x15 and open_field_cps:
+                begin_cp = open_field_cps.pop()
+                field_end_properties_by_begin[begin_cp] = field_end_properties_at(
+                    unit.cp_start
+                )
 
     def visible() -> bool:
         return all(context.has_separator for context in field_stack)
 
     def current_inlines() -> list[Inline]:
-        return field_stack[-1].result if field_stack else inlines
+        target = inlines
+        for context in field_stack:
+            if context.has_separator and not context.flatten_result:
+                target = context.result
+        return target
 
     def extend_visible_inlines(values: Sequence[Inline]) -> None:
         target = current_inlines()
@@ -1601,12 +1621,106 @@ def parse_main_story(
             append_bookmark_boundaries(cp)
             final_boundaries_emitted = True
 
+    def active_shape_field() -> _FieldContext | None:
+        """Return the innermost visible legacy SHAPE field, if any."""
+
+        return next(
+            (
+                context
+                for context in reversed(field_stack)
+                if context.has_separator and context.field_type == "SHAPE"
+            ),
+            None,
+        )
+
+    def shape_field_inline_picture(picture: FloatingPicture) -> InlinePicture:
+        """Represent a SHAPE-field picture with Word's inline layout semantics."""
+
+        return InlinePicture(
+            picture_id=picture.picture_id,
+            source_offset=picture.anchor_cp,
+            data=picture.data,
+            extension=picture.extension,
+            content_type=picture.content_type,
+            width_emu=picture.width_twips * 635,
+            height_emu=picture.height_twips * 635,
+            name=picture.name,
+            properties=picture.properties,
+        )
+
+    def flatten_cached_field_inlines(
+        values: Sequence[Inline],
+        *,
+        drop_character_style: bool = False,
+    ) -> list[Inline]:
+        nonlocal flattened_fields
+        flattened: list[Inline] = []
+        for value in values:
+            if not isinstance(value, Field):
+                if isinstance(value, TextRun):
+                    value = replace(
+                        value,
+                        properties=replace(
+                            value.properties,
+                            style_id=(
+                                None
+                                if drop_character_style
+                                else value.properties.style_id
+                            ),
+                            web_hidden=None,
+                        ),
+                    )
+                elif isinstance(value, Tab):
+                    value = replace(
+                        value,
+                        properties=replace(value.properties, web_hidden=None),
+                    )
+                flattened.append(value)
+                continue
+            instruction_tokens = value.instruction.lstrip().split(maxsplit=1)
+            field_type = instruction_tokens[0].upper() if instruction_tokens else ""
+            if field_type.startswith("="):
+                field_type = "="
+            normalized_type = field_type or "UNKNOWN"
+            flattened_fields += 1
+            flattened_field_types[normalized_type] = (
+                flattened_field_types.get(normalized_type, 0) + 1
+            )
+            flattened.extend(
+                flatten_cached_field_inlines(
+                    value.result,
+                    drop_character_style=(
+                        drop_character_style or field_type == "HYPERLINK"
+                    ),
+                )
+            )
+        return flattened
+
     def finish_paragraph(
         properties: ParagraphProperties,
         section_end: SectionProperties | None = None,
         mark_properties: CharacterProperties = default_character_properties,
     ) -> None:
         flush_text()
+        for index, context in enumerate(field_stack):
+            if (
+                context.has_separator
+                and not context.flatten_result
+                and context.field_type in _MULTIPARAGRAPH_CACHED_FIELD_TYPES
+                and not (
+                    context.end_properties is not None
+                    and context.end_properties.private_result
+                )
+            ):
+                target = inlines
+                for parent in field_stack[:index]:
+                    if parent.has_separator and not parent.flatten_result:
+                        target = parent.result
+                target.extend(flatten_cached_field_inlines(context.result))
+                context.result.clear()
+                context.flatten_result = True
+        if any(context.flatten_result for context in field_stack):
+            inlines[:] = flatten_cached_field_inlines(inlines)
         paragraph = Paragraph(
             tuple(inlines),
             properties,
@@ -1642,13 +1756,26 @@ def parse_main_story(
             if visible():
                 flush_text()
             field_stack.append(
-                _FieldContext([], [], character_properties)
+                _FieldContext(
+                    [],
+                    [],
+                    character_properties,
+                    end_properties=field_end_properties_by_begin.get(cp_offset),
+                )
             )
             continue
         if value == 0x14 and field_stack:  # field separator
             if visible():
                 flush_text()
             field_stack[-1].has_separator = True
+            instruction_tokens = "".join(
+                field_stack[-1].instruction
+            ).lstrip().split(maxsplit=1)
+            field_stack[-1].field_type = (
+                instruction_tokens[0].upper() if instruction_tokens else ""
+            )
+            if field_stack[-1].field_type.startswith("="):
+                field_stack[-1].field_type = "="
             if embedded_object_at is not None:
                 field_stack[-1].embedded_object = embedded_object_at(cp_offset)
             continue
@@ -1673,6 +1800,30 @@ def parse_main_story(
                 field_end_properties_at is None
                 or field_end_properties is not None
             )
+            if context.flatten_result or any(
+                parent.flatten_result for parent in field_stack
+            ):
+                if context.flatten_result:
+                    inlines[:] = flatten_cached_field_inlines(inlines)
+                if (
+                    parent_is_visible
+                    and not (
+                        field_end_properties is not None
+                        and field_end_properties.private_result
+                    )
+                ):
+                    extend_visible_inlines(
+                        flatten_cached_field_inlines(
+                            context.result,
+                            drop_character_style=field_type == "HYPERLINK",
+                        )
+                    )
+                flattened_fields += 1
+                normalized_type = field_type or "UNKNOWN"
+                flattened_field_types[normalized_type] = (
+                    flattened_field_types.get(normalized_type, 0) + 1
+                )
+                continue
             bookmark_target = (
                 _field_first_argument(instruction)
                 if field_type in _BOOKMARK_LIVE_FIELD_TYPES
@@ -1889,7 +2040,11 @@ def parse_main_story(
         )
         if floating_picture is not None:
             flush_text()
-            current_inlines().append(floating_picture)
+            current_inlines().append(
+                shape_field_inline_picture(floating_picture)
+                if active_shape_field() is not None
+                else floating_picture
+            )
             last_was_terminator = False
             continue
 
@@ -2000,6 +2155,20 @@ def parse_main_story(
                 append_text("\uFFFC", character_properties)
                 last_was_terminator = False
         elif value in (0x01, 0x02, 0x08):
+            shape_context = active_shape_field()
+            if (
+                value == 0x01
+                and shape_context is not None
+                and any(
+                    isinstance(item, InlinePicture)
+                    for item in shape_context.result
+                )
+            ):
+                # Binary DOC SHAPE fields commonly contain an OfficeArt anchor
+                # followed by a legacy object marker.  Once the anchor picture
+                # has been recovered, the marker is only a layout placeholder.
+                last_was_terminator = False
+                continue
             textbox_result = (
                 floating_textbox_at(cp_offset)
                 if value == 0x08 and floating_textbox_at is not None

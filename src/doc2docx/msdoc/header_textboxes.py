@@ -12,8 +12,10 @@ from ..model import (
     BookmarkEnd,
     BookmarkStart,
     CharacterProperties,
+    EmbeddedObject,
     FieldEndProperties,
     FloatingTextBox,
+    InlinePicture,
     Paragraph,
     ParagraphProperties,
     ShapeStyle,
@@ -93,6 +95,14 @@ class _TextBoxEntry:
     chain_length: int
     paragraphs: tuple[Paragraph, ...]
     blocks: tuple[Paragraph | Table, ...]
+
+
+@dataclass(slots=True, frozen=True)
+class _TextBoxDescriptorTarget:
+    index: int
+    cp_start: int
+    cp_end: int
+    descriptor_count: int
 
 
 def _checked_range(
@@ -228,7 +238,9 @@ def _read_textbox_entries(
     ),
     style_names: Collection[str] | None,
     list_names: Collection[str] | None,
-) -> tuple[_TextBoxEntry, ...]:
+    inline_picture_at: Callable[[int], InlinePicture | None] | None,
+    embedded_object_at: Callable[[int], EmbeddedObject | None] | None,
+) -> tuple[tuple[_TextBoxEntry, ...], tuple[_TextBoxDescriptorTarget, ...]]:
     raw = _checked_range(
         table_stream,
         offset=offset,
@@ -249,6 +261,7 @@ def _read_textbox_entries(
         )
     data_offset = 4 * (count + 1)
     entries: list[_TextBoxEntry] = []
+    descriptor_targets: list[_TextBoxDescriptorTarget] = []
     for index in range(count):
         entry_offset = data_offset + index * 22
         first_union, second_union = struct.unpack_from("<ii", raw, entry_offset)
@@ -266,6 +279,10 @@ def _read_textbox_entries(
             ):
                 raise InvalidWordDocument(
                     f"{text_structure} reusable entry {index} has invalid bounds or lid"
+                )
+            if not is_final:
+                descriptor_targets.append(
+                    _TextBoxDescriptorTarget(index, cps[index], cps[index + 1], 1)
                 )
             continue
         cp_start, cp_end = cps[index], cps[index + 1]
@@ -298,6 +315,8 @@ def _read_textbox_entries(
             character_properties_at=character_properties_at,
             paragraph_properties_at=paragraph_properties_at,
             field_end_properties_at=field_end_properties_at,
+            inline_picture_at=inline_picture_at,
+            embedded_object_at=embedded_object_at,
             bookmark_boundaries_at=bookmark_boundaries_at,
             bookmark_names=bookmark_names,
             style_names=style_names,
@@ -315,12 +334,15 @@ def _read_textbox_entries(
                 blocks=parsed.blocks,
             )
         )
-    return tuple(entries)
+        descriptor_targets.append(
+            _TextBoxDescriptorTarget(index, cp_start, cp_end, first_union)
+        )
+    return tuple(entries), tuple(descriptor_targets)
 
 
 def _validate_break_descriptors(
     table_stream: bytes,
-    entries: tuple[_TextBoxEntry, ...],
+    targets: tuple[_TextBoxDescriptorTarget, ...],
     *,
     offset: int,
     size: int,
@@ -344,24 +366,24 @@ def _validate_break_descriptors(
             f"{break_structure} CP points beyond the textbox document"
         )
     data_offset = 4 * (count + 1)
-    by_index = {entry.index: entry for entry in entries}
+    by_index = {target.index: target for target in targets}
     descriptor_counts: dict[int, int] = {}
     for index in range(count - 1):
         itxbxs = struct.unpack_from("<h", raw, data_offset + index * 6)[0]
-        entry = by_index.get(itxbxs)
-        if entry is None:
+        target = by_index.get(itxbxs)
+        if target is None:
             raise InvalidWordDocument(
                 f"{break_structure} descriptor {index} references textbox {itxbxs}"
             )
-        if cps[index] < entry.cp_start or cps[index + 1] > entry.cp_end:
+        if cps[index] < target.cp_start or cps[index + 1] > target.cp_end:
             raise InvalidWordDocument(
                 f"{break_structure} descriptor {index} falls outside its textbox range"
             )
         descriptor_counts[itxbxs] = descriptor_counts.get(itxbxs, 0) + 1
-    for entry in entries:
-        if descriptor_counts.get(entry.index, 0) != entry.chain_length:
+    for target in targets:
+        if descriptor_counts.get(target.index, 0) != target.descriptor_count:
             raise InvalidWordDocument(
-                f"{break_structure} textbox {entry.index} chain length does not "
+                f"{break_structure} textbox {target.index} chain length does not "
                 "match its descriptors"
             )
 
@@ -398,6 +420,8 @@ def _read_textboxes(
     ) = None,
     style_names: Collection[str] | None = None,
     list_names: Collection[str] | None = None,
+    inline_picture_at: Callable[[int], InlinePicture | None] | None = None,
+    embedded_object_at: Callable[[int], EmbeddedObject | None] | None = None,
     is_header: bool,
 ) -> TextBoxCollection:
     """Read one textbox story and associate its contents with shape anchors."""
@@ -452,7 +476,7 @@ def _read_textboxes(
         anchor_story_name=anchor_story_name,
         report=report,
     )
-    entries = _read_textbox_entries(
+    entries, descriptor_targets = _read_textbox_entries(
         table_stream,
         piece_table,
         offset=text_offset,
@@ -469,10 +493,12 @@ def _read_textboxes(
         bookmark_names=bookmark_names,
         style_names=style_names,
         list_names=list_names,
+        inline_picture_at=inline_picture_at,
+        embedded_object_at=embedded_object_at,
     )
     _validate_break_descriptors(
         table_stream,
-        entries,
+        descriptor_targets,
         offset=break_offset,
         size=break_size,
         ccp_textboxes=ccp_textboxes,
@@ -698,6 +724,8 @@ def read_header_textboxes(
     ) = None,
     style_names: Collection[str] | None = None,
     list_names: Collection[str] | None = None,
+    inline_picture_at: Callable[[int], InlinePicture | None] | None = None,
+    embedded_object_at: Callable[[int], EmbeddedObject | None] | None = None,
 ) -> TextBoxCollection:
     """Read header textbox contents and associate them with header anchors."""
 
@@ -728,6 +756,8 @@ def read_header_textboxes(
         bookmark_names=bookmark_names,
         style_names=style_names,
         list_names=list_names,
+        inline_picture_at=inline_picture_at,
+        embedded_object_at=embedded_object_at,
         is_header=True,
     )
 
@@ -763,6 +793,8 @@ def read_main_textboxes(
     ) = None,
     style_names: Collection[str] | None = None,
     list_names: Collection[str] | None = None,
+    inline_picture_at: Callable[[int], InlinePicture | None] | None = None,
+    embedded_object_at: Callable[[int], EmbeddedObject | None] | None = None,
 ) -> TextBoxCollection:
     """Read main-story textbox contents and associate them with main anchors."""
 
@@ -793,5 +825,7 @@ def read_main_textboxes(
         bookmark_names=bookmark_names,
         style_names=style_names,
         list_names=list_names,
+        inline_picture_at=inline_picture_at,
+        embedded_object_at=embedded_object_at,
         is_header=False,
     )

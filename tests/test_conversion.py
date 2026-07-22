@@ -6,10 +6,18 @@ import zipfile
 from xml.etree import ElementTree as ET
 
 from doc2docx import convert, inspect_doc
+from doc2docx.cfb import CompoundFile
+from doc2docx.diagnostics import ConversionReport
 from doc2docx.errors import (
     EncryptedDocumentError,
     InvalidWordDocument,
     UnsafeOutputPathError,
+)
+from doc2docx.model import EmbeddedObject, InlinePicture
+from doc2docx.msdoc import (
+    FileInformationBlock,
+    read_main_textboxes,
+    read_piece_table,
 )
 
 from .fixtures import (
@@ -102,6 +110,27 @@ class ConversionTests(unittest.TestCase):
             self.assertIn("margin-left:36pt", style)
             self.assertIn("width:144pt", style)
 
+    def test_reusable_textbox_records_are_validated_and_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            source = temporary / "reusable-main-textboxes.doc"
+            destination = temporary / "reusable-main-textboxes.docx"
+            source.write_bytes(
+                build_main_textbox_word_cfb(
+                    officeart_style=True,
+                    reusable_textbox_count=2,
+                )
+            )
+
+            result = convert(source, destination)
+
+            self.assertEqual(result.report.statistics["main_textbox_count"], 1)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            rectangles = root.findall(f".//{V}rect")
+            self.assertEqual(len(rectangles), 1)
+            self.assertEqual("".join(rectangles[0].itertext()), "Inside textbox")
+
     def test_malformed_main_story_textboxes_are_rejected(self) -> None:
         fixtures = (
             build_main_textbox_word_cfb(malformed_anchor=True),
@@ -170,6 +199,62 @@ class ConversionTests(unittest.TestCase):
                 " PAGE \\* MERGEFORMAT ",
             )
             self.assertIn("1", "".join(rectangle.itertext()))
+
+    def test_main_textbox_embed_field_receives_object_and_preview(self) -> None:
+        compound = CompoundFile(build_main_textbox_word_cfb(embed_field=True))
+        word_document = compound.open_stream("WordDocument")
+        fib = FileInformationBlock.parse(word_document)
+        table_stream = compound.open_stream(fib.base.table_stream_name)
+        report = ConversionReport("textbox-embed.doc")
+        piece_table = read_piece_table(
+            table_stream,
+            word_document,
+            fc_clx=fib.clx.fc,
+            lcb_clx=fib.clx.lcb,
+            report=report,
+        )
+        field_text = "\x13 EMBED Package \x14\x01\x15"
+        separator_cp = fib.textbox_story_cp_start + field_text.index("\x14")
+        preview_cp = fib.textbox_story_cp_start + field_text.index("\x01")
+        preview = InlinePicture(
+            1,
+            0,
+            b"preview",
+            "png",
+            "image/png",
+            914400,
+            457200,
+        )
+        embedded = EmbeddedObject(1, 123, b"ole")
+
+        textboxes = read_main_textboxes(
+            table_stream,
+            piece_table,
+            ccp_text=fib.ccp_text,
+            ccp_textboxes=fib.ccp_textboxes,
+            textbox_cp_start=fib.textbox_story_cp_start,
+            spa_offset=fib.plc_spa_mom.fc,
+            spa_size=fib.plc_spa_mom.lcb,
+            text_offset=fib.plcf_txbx_txt.fc,
+            text_size=fib.plcf_txbx_txt.lcb,
+            field_offset=fib.plcf_fld_txbx.fc,
+            field_size=fib.plcf_fld_txbx.lcb,
+            break_offset=fib.plcf_txbx_bkd.fc,
+            break_size=fib.plcf_txbx_bkd.lcb,
+            report=report,
+            inline_picture_at=lambda cp: preview if cp == preview_cp else None,
+            embedded_object_at=(
+                lambda cp: embedded if cp == separator_cp else None
+            ),
+        )
+
+        textbox = textboxes.textbox_at(6)
+        assert textbox is not None
+        value = textbox.paragraphs[0].inlines[0]
+        self.assertIsInstance(value, EmbeddedObject)
+        assert isinstance(value, EmbeddedObject)
+        self.assertIs(value.preview, preview)
+        self.assertEqual(value.prog_id, "Package")
 
     def test_ranged_comment_is_anchored_and_packaged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

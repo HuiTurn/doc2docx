@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 from ..cfb import CompoundFile, ObjectType
@@ -38,12 +38,12 @@ def _object_pool_storages(compound: CompoundFile) -> dict[int, str]:
 
 def read_embedded_objects(
     compound: CompoundFile,
-    characters: Sequence[StoryCharacter],
+    characters: Iterable[StoryCharacter],
     *,
     report: ConversionReport,
     character_properties_at: Callable[[int], CharacterProperties],
 ) -> EmbeddedObjectCollection:
-    """Match field separators to ObjectPool storages using sprmCPicLocation."""
+    """Match story field separators to ObjectPool storages by picture location."""
 
     storages = _object_pool_storages(compound)
     if not storages:

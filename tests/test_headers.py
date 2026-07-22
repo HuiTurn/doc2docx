@@ -15,6 +15,7 @@ from doc2docx.model import (
     FloatingTextBox,
     InlinePicture,
     Paragraph,
+    ParagraphProperties,
     SectionProperties,
     SeparatorMark,
     ShapeStyle,
@@ -609,6 +610,53 @@ class HeaderFooterParsingTests(unittest.TestCase):
             [warning.code for warning in report.warnings],
             ["EMPTY_HEADER_TABLE_REPAIRED"],
         )
+
+    def test_title_page_gets_implicit_empty_first_header_and_footer(self) -> None:
+        story_payloads = (b"",) * 6 + (
+            b"",
+            b"Default header\r\r",
+            b"",
+            b"Default footer\r\r",
+            b"",
+            b"",
+        )
+        payload = bytearray()
+        story_cps = [0]
+        for story in story_payloads:
+            payload.extend(story)
+            story_cps.append(len(payload))
+        header_document = bytes(payload) + b"\r"
+        piece_table = PieceTable(
+            (Piece(0, len(header_document), 0, True, 0),),
+            header_document,
+        )
+        table_stream = struct.pack(
+            f"<{len(story_cps) + 1}I",
+            *story_cps,
+            0,
+        )
+
+        collection = read_header_footer_stories(
+            table_stream,
+            piece_table,
+            (SectionProperties(0, 1, title_page=True),),
+            offset=0,
+            size=len(table_stream),
+            ccp_headers=len(header_document),
+            header_story_cp_start=0,
+            report=ConversionReport("implicit-first-header.doc"),
+            paragraph_properties_at=lambda _cp: ParagraphProperties(style_id=18),
+        )
+
+        section = collection.sections[0]
+        assert section.first_header is not None
+        assert section.first_footer is not None
+        self.assertEqual(section.first_header.paragraphs[0].inlines, ())
+        self.assertEqual(section.first_footer.paragraphs[0].inlines, ())
+        self.assertEqual(section.first_header.paragraphs[0].properties.style_id, 18)
+        self.assertEqual(section.first_footer.paragraphs[0].properties.style_id, 18)
+        self.assertEqual(collection.story_count, 4)
+        self.assertEqual(collection.paragraph_count, 4)
 
     def test_nonzero_plcf_hdd_without_header_story_is_rejected(self) -> None:
         table = bytearray(52)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from itertools import chain
 import os
 from pathlib import Path
 import stat
@@ -483,6 +484,81 @@ def convert(
         anchor_story_name="main",
         report=report,
     )
+    main_characters = piece_table.extract_characters(
+        0,
+        fib.ccp_text,
+        report,
+        story="main",
+    )
+    main_textbox_characters = piece_table.extract_characters(
+        fib.textbox_story_cp_start,
+        fib.textbox_story_cp_start + fib.ccp_textboxes,
+        report,
+        story="textboxes",
+    )
+    header_characters = piece_table.extract_characters(
+        fib.header_story_cp_start,
+        fib.header_story_cp_start + fib.ccp_headers,
+        report,
+        story="headers",
+    )
+    header_textbox_characters = piece_table.extract_characters(
+        fib.header_textbox_story_cp_start,
+        fib.header_textbox_story_cp_start + fib.ccp_header_textboxes,
+        report,
+        story="header-textboxes",
+    )
+    inline_pictures = read_inline_pictures(
+        data_stream,
+        main_characters,
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
+    main_textbox_inline_pictures = read_inline_pictures(
+        data_stream,
+        main_textbox_characters,
+        first_picture_id=len(inline_pictures.pictures) + 1,
+        story_name="textboxes",
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
+    header_inline_pictures = read_inline_pictures(
+        data_stream,
+        header_characters,
+        first_picture_id=(
+            len(inline_pictures.pictures)
+            + len(main_textbox_inline_pictures.pictures)
+            + 1
+        ),
+        story_name="headers",
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
+    header_textbox_inline_pictures = read_inline_pictures(
+        data_stream,
+        header_textbox_characters,
+        first_picture_id=(
+            len(inline_pictures.pictures)
+            + len(main_textbox_inline_pictures.pictures)
+            + len(header_inline_pictures.pictures)
+            + 1
+        ),
+        story_name="header-textboxes",
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
+    embedded_objects = read_embedded_objects(
+        compound,
+        chain(main_characters, main_textbox_characters),
+        report=report,
+        character_properties_at=formatting.character_properties_at,
+    )
+    inline_picture_count = (
+        len(inline_pictures.pictures)
+        + len(main_textbox_inline_pictures.pictures)
+        + len(header_inline_pictures.pictures)
+        + len(header_textbox_inline_pictures.pictures)
+    )
     main_textbox_table = fib.plcf_txbx_txt
     main_textbox_fields = fib.plcf_fld_txbx
     main_textbox_breaks = fib.plcf_txbx_bkd
@@ -512,6 +588,8 @@ def convert(
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
         list_names=available_list_names,
+        inline_picture_at=main_textbox_inline_pictures.picture_at,
+        embedded_object_at=embedded_objects.object_at,
     )
     header_textbox_table = fib.plcf_hdr_txbx_txt
     header_textbox_fields = fib.plcf_fld_hdr_txbx
@@ -543,36 +621,13 @@ def convert(
         bookmark_names=bookmarks.names,
         style_names=available_style_names,
         list_names=available_list_names,
-    )
-    main_characters = piece_table.extract_characters(
-        0,
-        fib.ccp_text,
-        report,
-        story="main",
-    )
-    embedded_objects = read_embedded_objects(
-        compound,
-        main_characters,
-        report=report,
-        character_properties_at=formatting.character_properties_at,
-    )
-    header_characters = piece_table.extract_characters(
-        fib.header_story_cp_start,
-        fib.header_story_cp_start + fib.ccp_headers,
-        report,
-        story="headers",
-    )
-    inline_pictures = read_inline_pictures(
-        data_stream,
-        main_characters,
-        report=report,
-        character_properties_at=formatting.character_properties_at,
+        inline_picture_at=header_textbox_inline_pictures.picture_at,
     )
     floating_pictures = read_main_floating_pictures(
         main_shape_anchors,
         officeart_shapes,
         excluded_shape_ids=main_textboxes.shape_ids,
-        first_picture_id=len(inline_pictures.pictures) + 1,
+        first_picture_id=inline_picture_count + 1,
         report=report,
         character_properties_at=formatting.character_properties_at,
     )
@@ -580,16 +635,6 @@ def convert(
         main_shape_anchors,
         officeart_shapes,
         excluded_shape_ids=main_textboxes.shape_ids,
-        report=report,
-        character_properties_at=formatting.character_properties_at,
-    )
-    header_inline_pictures = read_inline_pictures(
-        data_stream,
-        header_characters,
-        first_picture_id=(
-            len(inline_pictures.pictures) + len(floating_pictures.pictures) + 1
-        ),
-        story_name="headers",
         report=report,
         character_properties_at=formatting.character_properties_at,
     )
@@ -610,9 +655,8 @@ def convert(
         header_story_cp_start=fib.header_story_cp_start,
         excluded_shape_ids=header_textboxes.shape_ids,
         first_picture_id=(
-            len(inline_pictures.pictures)
+            inline_picture_count
             + len(floating_pictures.pictures)
-            + len(header_inline_pictures.pictures)
             + 1
         ),
         report=report,
@@ -701,8 +745,10 @@ def convert(
         numbering=numbering,
         pictures=(
             inline_pictures.pictures
-            + floating_pictures.pictures
+            + main_textbox_inline_pictures.pictures
             + header_inline_pictures.pictures
+            + header_textbox_inline_pictures.pictures
+            + floating_pictures.pictures
             + header_floating_pictures.pictures
         ),
         embedded_objects=tuple(
@@ -947,24 +993,39 @@ def convert(
             "comment_range_count": comments.range_count,
             "inline_picture_count": (
                 len(inline_pictures.pictures)
+                + len(main_textbox_inline_pictures.pictures)
                 + len(header_inline_pictures.pictures)
+                + len(header_textbox_inline_pictures.pictures)
             ),
             "main_inline_picture_count": len(inline_pictures.pictures),
+            "main_textbox_inline_picture_count": len(
+                main_textbox_inline_pictures.pictures
+            ),
             "header_inline_picture_count": len(header_inline_pictures.pictures),
+            "header_textbox_inline_picture_count": len(
+                header_textbox_inline_pictures.pictures
+            ),
             "deferred_inline_picture_count": (
                 inline_pictures.deferred_count
+                + main_textbox_inline_pictures.deferred_count
                 + header_inline_pictures.deferred_count
+                + header_textbox_inline_pictures.deferred_count
             ),
             "deferred_header_inline_picture_count": (
                 header_inline_pictures.deferred_count
+                + header_textbox_inline_pictures.deferred_count
             ),
             "inline_binary_data_count": (
                 inline_pictures.binary_data_count
+                + main_textbox_inline_pictures.binary_data_count
                 + header_inline_pictures.binary_data_count
+                + header_textbox_inline_pictures.binary_data_count
             ),
             "consumed_binary_field_data_count": (
                 len(inline_pictures.consumed_binary_data_cps)
+                + len(main_textbox_inline_pictures.consumed_binary_data_cps)
                 + len(header_inline_pictures.consumed_binary_data_cps)
+                + len(header_textbox_inline_pictures.consumed_binary_data_cps)
             ),
             "floating_picture_count": (
                 len(floating_pictures.pictures)

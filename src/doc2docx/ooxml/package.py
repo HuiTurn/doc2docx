@@ -1164,11 +1164,20 @@ def _append_paragraph_properties(
             indentation[_qn(W_NS, "firstLine")] = str(
                 properties.first_line_indent_twips
             )
-    if properties.left_indent_chars is not None:
+    if (
+        properties.left_indent_chars is not None
+        and properties.left_indent_twips is None
+    ):
         indentation[_qn(W_NS, "leftChars")] = str(properties.left_indent_chars)
-    if properties.right_indent_chars is not None:
+    if (
+        properties.right_indent_chars is not None
+        and properties.right_indent_twips is None
+    ):
         indentation[_qn(W_NS, "rightChars")] = str(properties.right_indent_chars)
-    if properties.first_line_indent_chars is not None:
+    if (
+        properties.first_line_indent_chars is not None
+        and properties.first_line_indent_twips is None
+    ):
         if properties.first_line_indent_chars < 0:
             indentation[_qn(W_NS, "hangingChars")] = str(
                 -properties.first_line_indent_chars

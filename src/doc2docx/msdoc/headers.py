@@ -230,6 +230,28 @@ def read_header_footer_stories(
     parsed_story_count = 0
     paragraph_count = 0
     resolved_sections: list[SectionProperties] = []
+
+    def empty_first_page_story(
+        source: HeaderFooterStory,
+    ) -> HeaderFooterStory:
+        """Create the implicit empty first-page story used by binary Word."""
+
+        source_paragraph = source.paragraphs[0]
+        paragraph = replace(
+            source_paragraph,
+            inlines=(),
+            properties=ParagraphProperties(
+                style_id=source_paragraph.properties.style_id,
+            ),
+            section_end=None,
+        )
+        return HeaderFooterStory(
+            cp_start=source.cp_start,
+            cp_end=source.cp_start,
+            paragraphs=(paragraph,),
+            blocks=(paragraph,),
+        )
+
     for section_index, section in enumerate(section_values):
         replacements: dict[str, HeaderFooterStory] = {}
         group_start = 6 + 6 * section_index
@@ -270,6 +292,22 @@ def read_header_footer_stories(
             )
             parsed_story_count += 1
             paragraph_count += len(parsed.paragraphs)
+        if section.title_page:
+            for first_name, default_name in (
+                ("first_header", "default_header"),
+                ("first_footer", "default_footer"),
+            ):
+                if first_name in replacements:
+                    continue
+                source_story = replacements.get(default_name) or getattr(
+                    section,
+                    default_name,
+                )
+                if source_story is None:
+                    continue
+                replacements[first_name] = empty_first_page_story(source_story)
+                parsed_story_count += 1
+                paragraph_count += 1
         resolved_sections.append(replace(section, **replacements))
 
     return HeaderFooterCollection(

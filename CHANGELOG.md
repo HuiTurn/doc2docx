@@ -5,6 +5,28 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.36.2 - 2026-07-22
+
+- Accept complete legacy CFB DIFAT chains that use `FREESECT` as their final
+  link, while continuing to reject truncated or count-mismatched chains.
+- Validate reusable Word textbox records and their break descriptors without
+  treating those non-content placeholders as dangling textboxes.
+- Recover inline pictures and embedded OLE previews from main and header
+  textbox stories. This restores legacy `EMBED` screenshots that were omitted
+  when ObjectPool anchors were scanned only in the main story.
+- Preserve cached multi-paragraph `TOC`, `INDEX`, and `TOA` results instead of
+  collapsing their paragraph layout, including nested navigation fields and
+  cached page numbers.
+- Render pictures inside legacy `SHAPE` fields with inline layout semantics,
+  synthesize the implicit empty first-page header/footer used by binary Word,
+  and prefer explicit twip indents when duplicate character indents would make
+  renderers position content inconsistently.
+- Validate with 261 passing standard-library regression tests and two real
+  Word 97-2003 documents whose 17- and 56-page renderings retain their original
+  pagination; the former restores its cover line, logo position, and complete
+  table of contents, while the latter preserves all 11 textbox-hosted OLE
+  previews.
+
 ## 0.36.1 - 2026-07-22
 
 - Accept bookmark PLC terminal CPs bounded by the Piece Table rather than only
