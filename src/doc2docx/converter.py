@@ -702,6 +702,9 @@ def convert(
             "column_separator_section_count": sum(
                 section.column_separator is True for section in sections
             ),
+            "unequal_column_section_count": sum(
+                section.column_widths_twips is not None for section in sections
+            ),
             "vertically_aligned_section_count": sum(
                 section.vertical_alignment not in (None, "top")
                 for section in sections

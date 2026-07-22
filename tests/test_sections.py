@@ -277,6 +277,101 @@ class SectionParsingTests(unittest.TestCase):
                 report=ConversionReport("different-duplicate-section.doc"),
             )
 
+    def test_unequal_column_widths_and_spacings_are_preserved(self) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<HH", 0x500B, 1),
+                struct.pack("<HB", 0x3005, 0),
+                struct.pack("<HBH", 0xF203, 0, 3000),
+                struct.pack("<HBH", 0xF203, 1, 5000),
+                struct.pack("<HBH", 0xF204, 0, 400),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(128)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+        report = ConversionReport("unequal-columns.doc")
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=report,
+        )
+
+        section = sections[0]
+        self.assertFalse(section.columns_evenly_spaced)
+        self.assertEqual(section.column_widths_twips, (3000, 5000))
+        self.assertEqual(section.column_spacings_twips, (400,))
+        self.assertFalse(report.warnings)
+
+        document = Document(
+            paragraphs=(Paragraph((TextRun("Body"),)),),
+            sections=sections,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "unequal-columns.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        columns = root.find(f"./{W}body/{W}sectPr/{W}cols")
+        assert columns is not None
+        self.assertEqual(columns.get(f"{W}num"), "2")
+        self.assertEqual(columns.get(f"{W}equalWidth"), "0")
+        column_elements = columns.findall(f"{W}col")
+        self.assertEqual(
+            [column.get(f"{W}w") for column in column_elements],
+            ["3000", "5000"],
+        )
+        self.assertEqual(column_elements[0].get(f"{W}space"), "400")
+        self.assertIsNone(column_elements[1].get(f"{W}space"))
+
+    def test_incomplete_unequal_columns_remain_deferred(self) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<HH", 0x500B, 1),
+                struct.pack("<HB", 0x3005, 0),
+                struct.pack("<HBH", 0xF203, 0, 3000),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(128)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+        report = ConversionReport("incomplete-unequal-columns.doc")
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=report,
+        )
+
+        self.assertIsNone(sections[0].column_widths_twips)
+        self.assertEqual(
+            [warning.code for warning in report.warnings],
+            ["UNSUPPORTED_SECTION_SPRMS"],
+        )
+        self.assertEqual(report.warnings[0].details["opcodes"], ["0x3005"])
+
     def test_continuous_note_number_offsets_are_preserved(self) -> None:
         grpprl = b"".join(
             (

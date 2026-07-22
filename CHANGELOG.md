@@ -30,6 +30,18 @@ current capabilities without release-by-release notes.
   The 38-file regression batch remains unchanged with all 36 in-scope files
   converting and no unsupported-property warnings.
 
+### M18c
+
+- Parse indexed `sprmSDxaColWidth` and `sprmSDxaColSpacing` operands for
+  complete non-even section layouts and emit native ordered `w:col` children.
+- Enforce MS-DOC column index, width, and spacing bounds; retain an explicit
+  deferred diagnostic for incomplete width sets, and ignore the equal-column
+  default spacing operand when the section uses explicit unequal columns.
+- Validate with 180 focused tests and a real Word 97 DOC whose normalized
+  2765/5040-twip columns and 500-twip gap survive conversion and render with the
+  separator at the narrower first-column boundary. The 38-file regression
+  batch remains at 36 in-scope successes with no unsupported warnings.
+
 ## 0.33.0 - 2026-07-22 (M17a-M17c)
 
 ### M17a

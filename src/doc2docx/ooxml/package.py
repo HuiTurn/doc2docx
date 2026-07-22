@@ -1772,12 +1772,20 @@ def _append_section_properties(
         column_attributes[_qn(W_NS, "sep")] = (
             "1" if section.column_separator else "0"
         )
-    if column_attributes:
-        ET.SubElement(
+    columns_element: ET.Element | None = None
+    if column_attributes or section.column_widths_twips is not None:
+        columns_element = ET.SubElement(
             section_properties,
             _qn(W_NS, "cols"),
             column_attributes,
         )
+    if columns_element is not None and section.column_widths_twips is not None:
+        spacings = section.column_spacings_twips or ()
+        for index, width in enumerate(section.column_widths_twips):
+            attributes = {_qn(W_NS, "w"): str(width)}
+            if index < len(spacings):
+                attributes[_qn(W_NS, "space")] = str(spacings[index])
+            ET.SubElement(columns_element, _qn(W_NS, "col"), attributes)
     if section.vertical_alignment is not None:
         ET.SubElement(
             section_properties,

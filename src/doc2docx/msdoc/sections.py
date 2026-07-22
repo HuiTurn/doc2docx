@@ -149,6 +149,9 @@ def _apply_section_modifiers(
     line_number_start = 0
     line_number_distance_twips = 0
     line_number_restart = "newPage"
+    columns_evenly_spaced: bool | None = None
+    column_widths: dict[int, int] = {}
+    column_spacings: dict[int, int] = {}
     footnote_number_start: int | None = None
     endnote_number_start: int | None = None
     for modifier in modifiers:
@@ -175,12 +178,26 @@ def _apply_section_modifiers(
                     suppress_endnotes=not bool(operand[0]),
                 )
         elif opcode == 0x3005:  # sprmSFEvenlySpaced
-            if operand[0] == 0x01:
-                section = replace(section, columns_evenly_spaced=True)
+            if operand[0] in (0x00, 0x01):
+                columns_evenly_spaced = bool(operand[0])
             else:
-                # Uneven columns also require the per-column width and
-                # spacing operands, which are not modeled yet.
                 unsupported.add(opcode)
+        elif opcode == 0xF203:  # sprmSDxaColWidth
+            column_index = operand[0]
+            width = _u16(operand[1:])
+            if column_index > 43 or not 718 <= width <= 31680:
+                raise InvalidWordDocument(
+                    "section column width operand is outside MS-DOC bounds"
+                )
+            column_widths[column_index] = width
+        elif opcode == 0xF204:  # sprmSDxaColSpacing
+            column_index = operand[0]
+            spacing = _u16(operand[1:])
+            if column_index > 43 or spacing > 31680:
+                raise InvalidWordDocument(
+                    "section column spacing operand is outside MS-DOC bounds"
+                )
+            column_spacings[column_index] = spacing
         elif opcode == 0x500B:  # sprmSCcolumns
             column_count_minus_one = _u16(operand)
             if column_count_minus_one > 43:
@@ -397,6 +414,30 @@ def _apply_section_modifiers(
                 0 if page_number_start is None else page_number_start
             ),
         )
+    if columns_evenly_spaced is True:
+        section = replace(section, columns_evenly_spaced=True)
+    elif columns_evenly_spaced is False:
+        column_count = section.column_count or 1
+        expected_width_indices = set(range(column_count))
+        if set(column_widths) != expected_width_indices:
+            unsupported.add(0x3005)
+        elif any(index >= column_count - 1 for index in column_spacings):
+            raise InvalidWordDocument(
+                "section column spacing references no following column"
+            )
+        else:
+            section = replace(
+                section,
+                column_spacing_twips=None,
+                columns_evenly_spaced=False,
+                column_widths_twips=tuple(
+                    column_widths[index] for index in range(column_count)
+                ),
+                column_spacings_twips=tuple(
+                    column_spacings.get(index, 0)
+                    for index in range(max(0, column_count - 1))
+                ),
+            )
     if line_number_count_by not in (None, 0):
         section = replace(
             section,
