@@ -123,6 +123,70 @@ class FloatingShapeTests(unittest.TestCase):
         )
         self.assertEqual(collection.deferred_count, 0)
 
+    def test_ungroups_grouped_line_connectors_onto_parent_anchor(self) -> None:
+        from doc2docx.msdoc.officeart import OfficeArtChildAnchor
+
+        parent_id = 1000
+        line_id = 1001
+        parent_anchor = ShapeAnchor(
+            anchor_cp=3,
+            shape_id=parent_id,
+            left=1000,
+            top=2000,
+            right=5000,
+            bottom=8000,
+            horizontal_relative="column",
+            vertical_relative="paragraph",
+            wrap_type="square",
+            wrap_side="both",
+            behind_text=False,
+            anchor_locked=True,
+        )
+        child = OfficeArtChildAnchor(
+            parent_shape_id=parent_id,
+            group_left=0,
+            group_top=0,
+            group_right=1000,
+            group_bottom=1000,
+            left=500,
+            top=100,
+            right=500,
+            bottom=400,
+        )
+        officeart = OfficeArtShapeCollection(
+            {
+                parent_id: ShapeStyle(fill_enabled=False, line_enabled=False),
+                line_id: ShapeStyle(
+                    fill_enabled=False,
+                    line_enabled=True,
+                    line_end_arrowhead="block",
+                ),
+            },
+            shape_types_by_shape_id={parent_id: 0, line_id: 20},
+            child_anchors_by_shape_id={line_id: child},
+        )
+        report = ConversionReport("grouped-lines.doc")
+
+        collection = read_main_floating_shapes(
+            {parent_id: parent_anchor},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual([shape.shape_id for shape in collection.shapes], [line_id])
+        line = collection.shapes[0]
+        self.assertEqual(line.shape_type, 20)
+        self.assertEqual(line.anchor_cp, 3)
+        self.assertEqual(line.left_twips, 3000)
+        self.assertEqual(line.width_twips, 1)
+        self.assertEqual(line.shape_style.line_end_arrowhead, "block")
+        self.assertEqual(len(collection.shapes_at(3)), 1)
+        self.assertIn(
+            "GROUPED_FLOATING_LINES_UNGROUPED",
+            [warning.code for warning in report.warnings],
+        )
+
     def test_unknown_geometry_uses_exact_wrap_contour_as_fallback(self) -> None:
         shape_id = 202
         polygon = ((0, 0), (21600, 0), (10800, 21600), (0, 0))
@@ -171,6 +235,7 @@ class FloatingShapeTests(unittest.TestCase):
                 fill_opacity=0x8000,
                 line_color="445566",
                 line_dash="dash",
+                line_end_arrowhead="block",
             ),
         )
         parsed = parse_main_story(
@@ -195,6 +260,7 @@ class FloatingShapeTests(unittest.TestCase):
         self.assertIn("m10800,0", element.get("path", ""))
         self.assertEqual(element.find(f"{V}fill").get("opacity"), "50%")  # type: ignore[union-attr]
         self.assertEqual(element.find(f"{V}stroke").get("dashstyle"), "dash")  # type: ignore[union-attr]
+        self.assertEqual(element.find(f"{V}stroke").get("endarrow"), "block")  # type: ignore[union-attr]
         self.assertEqual(element.find(f"{W10}wrap").get("type"), "square")  # type: ignore[union-attr]
         self.assertIsNotNone(root.find(f".//{W}pict"))
 

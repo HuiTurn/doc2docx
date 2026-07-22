@@ -1706,6 +1706,24 @@ def _append_floating_shape(
             stroke_attributes["joinstyle"] = shape_style.line_join
         if shape_style.line_end_cap != "flat":
             stroke_attributes["endcap"] = shape_style.line_end_cap
+        if shape_style.line_start_arrowhead != "none":
+            stroke_attributes["startarrow"] = shape_style.line_start_arrowhead
+            if shape_style.line_start_arrow_width != "medium":
+                stroke_attributes["startarrowwidth"] = (
+                    shape_style.line_start_arrow_width
+                )
+            if shape_style.line_start_arrow_length != "medium":
+                stroke_attributes["startarrowlength"] = (
+                    shape_style.line_start_arrow_length
+                )
+        if shape_style.line_end_arrowhead != "none":
+            stroke_attributes["endarrow"] = shape_style.line_end_arrowhead
+            if shape_style.line_end_arrow_width != "medium":
+                stroke_attributes["endarrowwidth"] = shape_style.line_end_arrow_width
+            if shape_style.line_end_arrow_length != "medium":
+                stroke_attributes["endarrowlength"] = (
+                    shape_style.line_end_arrow_length
+                )
     if stroke_attributes:
         ET.SubElement(shape, _qn(VML_NS, "stroke"), stroke_attributes)
     ET.SubElement(

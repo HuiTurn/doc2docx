@@ -45,6 +45,16 @@ _LINE_DASH_STYLES = {
 }
 _LINE_JOIN_STYLES = {0: "bevel", 1: "miter", 2: "round"}
 _LINE_END_CAP_STYLES = {0: "round", 1: "square", 2: "flat"}
+_LINE_ARROWHEAD_STYLES = {
+    0: "none",
+    1: "block",
+    2: "classic",
+    3: "diamond",
+    4: "oval",
+    5: "open",
+}
+_LINE_ARROW_WIDTHS = {0: "narrow", 1: "medium", 2: "wide"}
+_LINE_ARROW_LENGTHS = {0: "short", 1: "medium", 2: "long"}
 
 
 @dataclass(slots=True, frozen=True)
@@ -431,6 +441,39 @@ def _shape_style(properties: Mapping[int, _Property]) -> ShapeStyle:
     approximated |= line_enabled and (
         lossy or line_end_cap_value not in _LINE_END_CAP_STYLES
     )
+    start_arrow_value, lossy = _simple_property(properties, 0x01D0, 0)
+    line_start_arrowhead = _LINE_ARROWHEAD_STYLES.get(start_arrow_value, "block")
+    approximated |= line_enabled and (
+        lossy or start_arrow_value not in _LINE_ARROWHEAD_STYLES
+    )
+    end_arrow_value, lossy = _simple_property(properties, 0x01D1, 0)
+    line_end_arrowhead = _LINE_ARROWHEAD_STYLES.get(end_arrow_value, "block")
+    approximated |= line_enabled and (
+        lossy or end_arrow_value not in _LINE_ARROWHEAD_STYLES
+    )
+    start_arrow_width_value, lossy = _simple_property(properties, 0x01D2, 1)
+    line_start_arrow_width = _LINE_ARROW_WIDTHS.get(start_arrow_width_value, "medium")
+    approximated |= line_enabled and (
+        lossy or start_arrow_width_value not in _LINE_ARROW_WIDTHS
+    )
+    start_arrow_length_value, lossy = _simple_property(properties, 0x01D3, 1)
+    line_start_arrow_length = _LINE_ARROW_LENGTHS.get(
+        start_arrow_length_value, "medium"
+    )
+    approximated |= line_enabled and (
+        lossy or start_arrow_length_value not in _LINE_ARROW_LENGTHS
+    )
+    end_arrow_width_value, lossy = _simple_property(properties, 0x01D4, 1)
+    line_end_arrow_width = _LINE_ARROW_WIDTHS.get(end_arrow_width_value, "medium")
+    approximated |= line_enabled and (
+        lossy or end_arrow_width_value not in _LINE_ARROW_WIDTHS
+    )
+    end_arrow_length_value, lossy = _simple_property(properties, 0x01D5, 1)
+    line_end_arrow_length = _LINE_ARROW_LENGTHS.get(end_arrow_length_value, "medium")
+    approximated |= line_enabled and (
+        lossy or end_arrow_length_value not in _LINE_ARROW_LENGTHS
+    )
+
     margins: list[int] = []
     for identifier, default, label in (
         (0x0081, 0x16530, "left text inset"),
@@ -460,6 +503,12 @@ def _shape_style(properties: Mapping[int, _Property]) -> ShapeStyle:
         line_dash=line_dash,
         line_join=line_join,
         line_end_cap=line_end_cap,
+        line_start_arrowhead=line_start_arrowhead,
+        line_end_arrowhead=line_end_arrowhead,
+        line_start_arrow_width=line_start_arrow_width,
+        line_start_arrow_length=line_start_arrow_length,
+        line_end_arrow_width=line_end_arrow_width,
+        line_end_arrow_length=line_end_arrow_length,
         inset_left_emu=margins[0],
         inset_top_emu=margins[1],
         inset_right_emu=margins[2],

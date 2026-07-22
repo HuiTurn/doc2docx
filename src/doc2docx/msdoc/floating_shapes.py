@@ -9,21 +9,98 @@ from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
 from ..model import CharacterProperties, FloatingShape
 from .header_textboxes import ShapeAnchor
-from .officeart import OfficeArtShapeCollection
+from .officeart import OfficeArtChildAnchor, OfficeArtShapeCollection
 
 
 # These OfficeArt presets have stable VML equivalents or bounded paths.
 _SUPPORTED_SHAPE_TYPES = frozenset((*range(1, 16), 20, 21))
+# Straight lines and line-like NotPrimitive connectors from grouped diagrams.
+_GROUPED_LINE_SHAPE_TYPES = frozenset((20,))
 
 
 @dataclass(slots=True, frozen=True)
 class FloatingShapeCollection:
     shapes: tuple[FloatingShape, ...] = ()
-    by_anchor_cp: Mapping[int, FloatingShape] | None = None
+    by_anchor_cp: Mapping[int, tuple[FloatingShape, ...]] | None = None
     deferred_count: int = 0
 
     def shape_at(self, cp: int) -> FloatingShape | None:
-        return (self.by_anchor_cp or {}).get(cp)
+        shapes = (self.by_anchor_cp or {}).get(cp, ())
+        return shapes[0] if shapes else None
+
+    def shapes_at(self, cp: int) -> tuple[FloatingShape, ...]:
+        return (self.by_anchor_cp or {}).get(cp, ())
+
+
+def _is_line_like(
+    shape_type: int,
+    *,
+    style_line_enabled: bool,
+    style_fill_enabled: bool,
+) -> bool:
+    if shape_type in _GROUPED_LINE_SHAPE_TYPES:
+        return True
+    # Grouped flowchart connectors are often stored as NotPrimitive with stroke
+    # enabled and fill disabled.
+    return shape_type == 0 and style_line_enabled and not style_fill_enabled
+
+
+def _resolve_grouped_anchor(
+    shape_id: int,
+    anchors_by_shape_id: Mapping[int, ShapeAnchor],
+    child_anchor_at: Callable[[int], OfficeArtChildAnchor | None],
+    *,
+    seen: frozenset[int] = frozenset(),
+) -> ShapeAnchor | None:
+    direct = anchors_by_shape_id.get(shape_id)
+    if direct is not None:
+        return direct
+    if shape_id in seen:
+        return None
+    child = child_anchor_at(shape_id)
+    if child is None:
+        return None
+    parent = _resolve_grouped_anchor(
+        child.parent_shape_id,
+        anchors_by_shape_id,
+        child_anchor_at,
+        seen=seen | {shape_id},
+    )
+    if parent is None:
+        return None
+    group_width = child.group_right - child.group_left
+    group_height = child.group_bottom - child.group_top
+    if group_width == 0 or group_height == 0:
+        return None
+    parent_width = parent.right - parent.left
+    parent_height = parent.bottom - parent.top
+
+    def scale_x(value: int) -> int:
+        return parent.left + round(
+            (value - child.group_left) * parent_width / group_width
+        )
+
+    def scale_y(value: int) -> int:
+        return parent.top + round(
+            (value - child.group_top) * parent_height / group_height
+        )
+
+    left, right = sorted((scale_x(child.left), scale_x(child.right)))
+    top, bottom = sorted((scale_y(child.top), scale_y(child.bottom)))
+    return ShapeAnchor(
+        anchor_cp=parent.anchor_cp,
+        shape_id=shape_id,
+        left=left,
+        top=top,
+        right=right,
+        bottom=bottom,
+        horizontal_relative=parent.horizontal_relative,
+        vertical_relative=parent.vertical_relative,
+        wrap_type=parent.wrap_type,
+        wrap_side=parent.wrap_side,
+        behind_text=parent.behind_text,
+        anchor_locked=parent.anchor_locked,
+    )
 
 
 def _read_floating_shapes(
@@ -38,22 +115,62 @@ def _read_floating_shapes(
     character_properties_at: Callable[[int], CharacterProperties],
 ) -> FloatingShapeCollection:
     shapes: list[FloatingShape] = []
-    by_anchor_cp: dict[int, FloatingShape] = {}
+    by_anchor_cp_lists: dict[int, list[FloatingShape]] = {}
     deferred_types: dict[int, int] = {}
     approximated_style_count = 0
     approximated_geometry_count = 0
+    ungrouped_line_count = 0
+    emitted_shape_ids: set[int] = set()
+    resolved_anchors: dict[int, ShapeAnchor] = dict(anchors_by_shape_id)
+
+    def emit(shape: FloatingShape) -> None:
+        shapes.append(shape)
+        by_anchor_cp_lists.setdefault(shape.anchor_cp, []).append(shape)
+        emitted_shape_ids.add(shape.shape_id)
+
+    for shape_id, child in officeart.child_anchors_by_shape_id.items():
+        if shape_id in excluded_shape_ids or shape_id in resolved_anchors:
+            continue
+        shape_type = officeart.shape_type_at(shape_id) or 0
+        style = officeart.style_at(shape_id)
+        if style is None:
+            continue
+        if not _is_line_like(
+            shape_type,
+            style_line_enabled=style.line_enabled,
+            style_fill_enabled=style.fill_enabled,
+        ):
+            continue
+        if officeart.image_at(shape_id) is not None:
+            continue
+        resolved = _resolve_grouped_anchor(
+            shape_id,
+            resolved_anchors,
+            officeart.child_anchor_at,
+        )
+        if resolved is None:
+            continue
+        resolved_anchors[shape_id] = resolved
+        ungrouped_line_count += 1
+
     for anchor in sorted(
-        anchors_by_shape_id.values(),
-        key=lambda value: value.anchor_cp,
+        resolved_anchors.values(),
+        key=lambda value: (value.anchor_cp, value.shape_id),
     ):
-        if anchor.shape_id in excluded_shape_ids:
+        if anchor.shape_id in excluded_shape_ids or anchor.shape_id in emitted_shape_ids:
             continue
         if officeart.image_at(anchor.shape_id) is not None:
             continue
         absolute_cp = anchor_story_cp_start + anchor.anchor_cp
         shape_type = officeart.shape_type_at(anchor.shape_id) or 0
         geometry_path = None
-        if shape_type not in _SUPPORTED_SHAPE_TYPES:
+        style = officeart.style_at(anchor.shape_id)
+        line_like = style is not None and _is_line_like(
+            shape_type,
+            style_line_enabled=style.line_enabled,
+            style_fill_enabled=style.fill_enabled,
+        )
+        if shape_type not in _SUPPORTED_SHAPE_TYPES and not line_like:
             polygon = officeart.wrap_polygon_at(anchor.shape_id)
             if len(polygon) < 3:
                 deferred_types[shape_type or 0] = (
@@ -66,18 +183,19 @@ def _read_floating_shapes(
                 + "xe"
             )
             approximated_geometry_count += 1
+        elif line_like and shape_type not in _SUPPORTED_SHAPE_TYPES:
+            # Emit NotPrimitive stroke-only connectors with the straight-line path.
+            shape_type = 20
         properties = character_properties_at(absolute_cp)
         if properties.special is not True:
-            raise InvalidWordDocument(
-                f"{spa_structure} shape anchor at CP {anchor.anchor_cp} "
-                "has no sprmCFSpec"
-            )
-        if absolute_cp in by_anchor_cp:
-            raise InvalidWordDocument(
-                f"multiple floating shapes use {anchor_story_name} CP "
-                f"{anchor.anchor_cp}"
-            )
-        shape_style = officeart.style_at(anchor.shape_id)
+            # Grouped children inherit the parent group's shape-character CP; the
+            # character may already be validated for the parent Spa entry.
+            if anchor.shape_id not in officeart.child_anchors_by_shape_id:
+                raise InvalidWordDocument(
+                    f"{spa_structure} shape anchor at CP {anchor.anchor_cp} "
+                    "has no sprmCFSpec"
+                )
+        shape_style = style
         if shape_style is not None and shape_style.approximated:
             approximated_style_count += 1
         shape = FloatingShape(
@@ -106,8 +224,7 @@ def _read_floating_shapes(
                 picture_is_binary=None,
             ),
         )
-        shapes.append(shape)
-        by_anchor_cp[absolute_cp] = shape
+        emit(shape)
 
     if deferred_types:
         report.warning(
@@ -118,6 +235,13 @@ def _read_floating_shapes(
             shape_types=[
                 f"0x{value:03X}" for value in sorted(deferred_types)
             ],
+        )
+    if ungrouped_line_count:
+        report.warning(
+            "GROUPED_FLOATING_LINES_UNGROUPED",
+            "grouped OfficeArt line connectors were positioned as independent shapes",
+            location=SourceLocation(story=anchor_story_name),
+            shape_count=ungrouped_line_count,
         )
     if approximated_style_count:
         report.warning(
@@ -135,7 +259,10 @@ def _read_floating_shapes(
         )
     return FloatingShapeCollection(
         tuple(shapes),
-        by_anchor_cp,
+        {
+            cp: tuple(items)
+            for cp, items in by_anchor_cp_lists.items()
+        },
         sum(deferred_types.values()),
     )
 

@@ -835,6 +835,12 @@ class ShapeStyle:
     line_dash: str = "solid"
     line_join: str = "round"
     line_end_cap: str = "flat"
+    line_start_arrowhead: str = "none"
+    line_end_arrowhead: str = "none"
+    line_start_arrow_width: str = "medium"
+    line_start_arrow_length: str = "medium"
+    line_end_arrow_width: str = "medium"
+    line_end_arrow_length: str = "medium"
     inset_left_emu: int = 0x16530
     inset_top_emu: int = 0xB298
     inset_right_emu: int = 0x16530
@@ -1426,7 +1432,10 @@ def parse_main_story(
     inline_picture_at: Callable[[int], InlinePicture | None] | None = None,
     embedded_object_at: Callable[[int], EmbeddedObject | None] | None = None,
     floating_picture_at: Callable[[int], FloatingPicture | None] | None = None,
-    floating_shape_at: Callable[[int], FloatingShape | None] | None = None,
+    floating_shape_at: Callable[
+        [int],
+        FloatingShape | Sequence[FloatingShape] | None,
+    ] | None = None,
     field_end_properties_at: (
         Callable[[int], FieldEndProperties | None] | None
     ) = None,
@@ -2183,16 +2192,30 @@ def parse_main_story(
             if textboxes:
                 flush_text()
                 current_inlines().extend(textboxes)
+                shape_result = (
+                    floating_shape_at(cp_offset)
+                    if floating_shape_at is not None
+                    else None
+                )
+                if isinstance(shape_result, FloatingShape):
+                    current_inlines().append(shape_result)
+                elif shape_result:
+                    current_inlines().extend(shape_result)
                 last_was_terminator = False
                 continue
-            shape = (
+            shape_result = (
                 floating_shape_at(cp_offset)
                 if value == 0x08 and floating_shape_at is not None
                 else None
             )
-            if shape is not None:
+            if isinstance(shape_result, FloatingShape):
                 flush_text()
-                current_inlines().append(shape)
+                current_inlines().append(shape_result)
+                last_was_terminator = False
+                continue
+            if shape_result:
+                flush_text()
+                current_inlines().extend(shape_result)
                 last_was_terminator = False
                 continue
             marker_code = {

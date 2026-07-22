@@ -5,6 +5,13 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.36.4 - 2026-07-22
+
+- Reconstruct grouped OfficeArt line connectors (flowchart arrows) from child
+  anchors onto the parent Spa position, including line end arrowheads in VML.
+- Emit multiple floating shapes that share one document shape character, so
+  ungrouped diagram lines are not dropped when textboxes already claim that CP.
+
 ## 0.36.3 - 2026-07-22
 
 - Pad short CFB files that omit the final sector's zero padding so FAT chains

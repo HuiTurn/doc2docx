@@ -117,7 +117,10 @@ def read_header_footer_stories(
     floating_textbox_at: Callable[[int], FloatingTextBox | None] | None = None,
     inline_picture_at: Callable[[int], InlinePicture | None] | None = None,
     floating_picture_at: Callable[[int], FloatingPicture | None] | None = None,
-    floating_shape_at: Callable[[int], FloatingShape | None] | None = None,
+    floating_shape_at: Callable[
+        [int],
+        FloatingShape | Sequence[FloatingShape] | None,
+    ] | None = None,
     field_end_properties_at: (
         Callable[[int], FieldEndProperties | None] | None
     ) = None,
