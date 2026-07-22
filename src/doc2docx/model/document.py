@@ -710,6 +710,10 @@ class SectionProperties:
     header_distance_twips: int = 720
     footer_distance_twips: int = 720
     gutter_twips: int = 0
+    page_borders: TableBorders | None = None
+    page_border_display: str | None = None
+    page_border_offset_from: str | None = None
+    page_border_z_order: str | None = None
     title_page: bool = False
     revision_save_id: int | None = None
     column_count: int | None = None

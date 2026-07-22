@@ -7,9 +7,19 @@ import struct
 
 from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
-from ..model import SectionBreakType, SectionProperties
+from ..model import (
+    BorderProperties,
+    SectionBreakType,
+    SectionProperties,
+    TableBorders,
+)
 from .number_formats import NUMBER_FORMATS
-from .sprm import PropertyModifier, parse_grpprl
+from .sprm import (
+    PropertyModifier,
+    parse_brc80,
+    parse_brc_operand,
+    parse_grpprl,
+)
 
 
 _BREAK_TYPES = {
@@ -57,6 +67,33 @@ _VERTICAL_ALIGNMENTS = {
     0x01: "center",
     0x02: "both",
     0x03: "bottom",
+}
+
+_PAGE_BORDER_DISPLAYS = {
+    0x00: "allPages",
+    0x01: "firstPage",
+    0x02: "notFirstPage",
+}
+
+_PAGE_BORDER_Z_ORDERS = {
+    0x00: "front",
+    0x01: "back",
+}
+
+_PAGE_BORDER_OFFSETS = {
+    0x00: "text",
+    0x01: "page",
+}
+
+_PAGE_BORDER_SIDES = {
+    0x702B: ("top", False),
+    0x702C: ("left", False),
+    0x702D: ("bottom", False),
+    0x702E: ("right", False),
+    0xD234: ("top", True),
+    0xD235: ("left", True),
+    0xD236: ("bottom", True),
+    0xD237: ("right", True),
 }
 
 # MSOTXFL values 0, 1, 3, and 5 have direct section-level equivalents.
@@ -162,6 +199,10 @@ def _apply_section_modifiers(
     columns_evenly_spaced: bool | None = None
     column_widths: dict[int, int] = {}
     column_spacings: dict[int, int] = {}
+    page_borders: dict[str, BorderProperties | None] = {}
+    page_border_display = "allPages"
+    page_border_z_order = "front"
+    page_border_offset_from = "text"
     footnote_number_start: int | None = None
     endnote_number_start: int | None = None
     for modifier in modifiers:
@@ -338,6 +379,30 @@ def _apply_section_modifiers(
                 unsupported.add(opcode)
             else:
                 section = replace(section, bidirectional=bool(operand[0]))
+        elif opcode in _PAGE_BORDER_SIDES:
+            side, modern = _PAGE_BORDER_SIDES[opcode]
+            page_borders[side] = (
+                parse_brc_operand(operand)
+                if modern
+                else parse_brc80(operand)
+            )
+        elif opcode == 0x522F:  # sprmSPgbProp
+            flags, reserved = operand
+            display = _PAGE_BORDER_DISPLAYS.get(flags & 0x07)
+            z_order = _PAGE_BORDER_Z_ORDERS.get((flags >> 3) & 0x03)
+            offset_from = _PAGE_BORDER_OFFSETS.get((flags >> 5) & 0x07)
+            if (
+                reserved != 0
+                or display is None
+                or z_order is None
+                or offset_from is None
+            ):
+                raise InvalidWordDocument(
+                    "section page-border properties are invalid"
+                )
+            page_border_display = display
+            page_border_z_order = z_order
+            page_border_offset_from = offset_from
         elif opcode == 0xB01F:  # sprmSXaPage
             width = _u16(operand)
             if not 144 <= width <= 31680:
@@ -441,6 +506,19 @@ def _apply_section_modifiers(
             section,
             page_number_chapter_style=page_number_chapter_style,
             page_number_chapter_separator=page_number_chapter_separator,
+        )
+    if any(border is not None for border in page_borders.values()):
+        section = replace(
+            section,
+            page_borders=TableBorders(
+                top=page_borders.get("top"),
+                left=page_borders.get("left"),
+                bottom=page_borders.get("bottom"),
+                right=page_borders.get("right"),
+            ),
+            page_border_display=page_border_display,
+            page_border_offset_from=page_border_offset_from,
+            page_border_z_order=page_border_z_order,
         )
     if columns_evenly_spaced is True:
         section = replace(section, columns_evenly_spaced=True)

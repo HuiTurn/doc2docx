@@ -348,7 +348,7 @@ _CELL_MARGIN_SIDES = (
 )
 
 
-def _parse_brc80(data: bytes) -> BorderProperties | None:
+def parse_brc80(data: bytes) -> BorderProperties | None:
     if len(data) != 4:
         raise InvalidWordDocument("Brc80 must contain exactly four bytes")
     if data == b"\xFF\xFF\xFF\xFF" or data[1] in (0x00, 0xFF):
@@ -397,7 +397,7 @@ def _parse_brc(data: bytes) -> BorderProperties | None:
     )
 
 
-def _parse_brc_operand(operand: bytes) -> BorderProperties | None:
+def parse_brc_operand(operand: bytes) -> BorderProperties | None:
     if len(operand) != 9 or operand[0] != 8:
         raise InvalidWordDocument("BrcOperand must contain exactly eight data bytes")
     return _parse_brc(operand[1:])
@@ -407,7 +407,7 @@ def _parse_table_borders80(operand: bytes) -> TableBorders:
     if len(operand) != 25 or operand[0] != 0x18:
         raise InvalidWordDocument("sprmTTableBorders80 operand must contain 24 bytes")
     values = [
-        _parse_brc80(operand[1 + index * 4 : 5 + index * 4])
+        parse_brc80(operand[1 + index * 4 : 5 + index * 4])
         for index in range(6)
     ]
     return TableBorders(*values)
@@ -796,10 +796,10 @@ def _parse_tdef_table(operand: bytes) -> TableRowProperties:
                 fit_text=True if tcgrf & 0x1000 else None,
                 no_wrap=True if tcgrf & 0x2000 else None,
                 borders=TableBorders(
-                    top=_parse_brc80(descriptor_data[start + 4 : start + 8]),
-                    left=_parse_brc80(descriptor_data[start + 8 : start + 12]),
-                    bottom=_parse_brc80(descriptor_data[start + 12 : start + 16]),
-                    right=_parse_brc80(descriptor_data[start + 16 : start + 20]),
+                    top=parse_brc80(descriptor_data[start + 4 : start + 8]),
+                    left=parse_brc80(descriptor_data[start + 8 : start + 12]),
+                    bottom=parse_brc80(descriptor_data[start + 12 : start + 16]),
+                    right=parse_brc80(descriptor_data[start + 16 : start + 20]),
                 ),
             )
         )
@@ -1545,7 +1545,7 @@ def apply_paragraph_modifiers(
             else:
                 unsupported.add(opcode)
         elif opcode in (0x6424, 0x6425, 0x6426, 0x6427):
-            border = _parse_brc80(operand)
+            border = parse_brc80(operand)
             borders = properties.borders or TableBorders()
             attribute = {
                 0x6424: "top",
@@ -1558,7 +1558,7 @@ def apply_paragraph_modifiers(
                 borders=replace(borders, **{attribute: border}),
             )
         elif opcode in (0xC64E, 0xC64F, 0xC650, 0xC651):
-            border = _parse_brc_operand(operand)
+            border = parse_brc_operand(operand)
             borders = properties.borders or TableBorders()
             attribute = {
                 0xC64E: "top",

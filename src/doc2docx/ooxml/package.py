@@ -1718,6 +1718,37 @@ def _append_section_properties(
             _qn(W_NS, "gutter"): str(section.gutter_twips),
         },
     )
+    if section.page_borders is not None:
+        page_border_attributes = {}
+        if section.page_border_display is not None:
+            page_border_attributes[_qn(W_NS, "display")] = (
+                section.page_border_display
+            )
+        if section.page_border_offset_from is not None:
+            page_border_attributes[_qn(W_NS, "offsetFrom")] = (
+                section.page_border_offset_from
+            )
+        if section.page_border_z_order is not None:
+            page_border_attributes[_qn(W_NS, "zOrder")] = (
+                section.page_border_z_order
+            )
+        page_borders = ET.SubElement(
+            section_properties,
+            _qn(W_NS, "pgBorders"),
+            page_border_attributes,
+        )
+        for name, border in (
+            ("top", section.page_borders.top),
+            ("left", section.page_borders.left),
+            ("bottom", section.page_borders.bottom),
+            ("right", section.page_borders.right),
+        ):
+            if border is not None:
+                ET.SubElement(
+                    page_borders,
+                    _qn(W_NS, name),
+                    _border_attributes(border),
+                )
     if (
         section.page_number_format is not None
         or section.page_number_start is not None

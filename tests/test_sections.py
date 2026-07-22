@@ -384,6 +384,107 @@ class SectionParsingTests(unittest.TestCase):
         )
         self.assertEqual(report.warnings[0].details["opcodes"], ["0x3005"])
 
+    def test_modern_page_borders_and_properties_are_preserved(self) -> None:
+        def border(color: bytes, space: int) -> bytes:
+            return color + bytes((8, 1)) + struct.pack("<H", space)
+
+        grpprl = b"".join(
+            (
+                struct.pack("<HBB", 0x522F, 0x29, 0),
+                struct.pack("<HB", 0xD234, 8)
+                + border(b"\x11\x22\x33\x00", 2),
+                struct.pack("<HB", 0xD235, 8)
+                + border(b"\x44\x55\x66\x00", 3),
+                struct.pack("<HB", 0xD236, 8)
+                + border(b"\x77\x88\x99\x00", 4),
+                struct.pack("<HB", 0xD237, 8)
+                + border(b"\xAA\xBB\xCC\x00", 5),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(192)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=ConversionReport("page-borders.doc"),
+        )
+
+        section = sections[0]
+        assert section.page_borders is not None
+        self.assertEqual(section.page_borders.top.color, "112233")  # type: ignore[union-attr]
+        self.assertEqual(section.page_borders.left.color, "445566")  # type: ignore[union-attr]
+        self.assertEqual(section.page_borders.bottom.color, "778899")  # type: ignore[union-attr]
+        self.assertEqual(section.page_borders.right.color, "AABBCC")  # type: ignore[union-attr]
+        self.assertEqual(section.page_border_display, "firstPage")
+        self.assertEqual(section.page_border_offset_from, "page")
+        self.assertEqual(section.page_border_z_order, "back")
+
+        document = Document(
+            paragraphs=(Paragraph((TextRun("Body"),)),),
+            sections=sections,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "page-borders.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        page_borders = root.find(f"./{W}body/{W}sectPr/{W}pgBorders")
+        assert page_borders is not None
+        self.assertEqual(page_borders.get(f"{W}display"), "firstPage")
+        self.assertEqual(page_borders.get(f"{W}offsetFrom"), "page")
+        self.assertEqual(page_borders.get(f"{W}zOrder"), "back")
+        self.assertEqual(
+            [child.tag for child in page_borders],
+            [f"{W}top", f"{W}left", f"{W}bottom", f"{W}right"],
+        )
+        self.assertEqual(page_borders.find(f"{W}top").get(f"{W}space"), "2")  # type: ignore[union-attr]
+
+    def test_legacy_page_border_is_preserved(self) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<H4B", 0x702B, 8, 1, 0, 3),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(96)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=ConversionReport("legacy-page-border.doc"),
+        )
+
+        assert sections[0].page_borders is not None
+        top = sections[0].page_borders.top
+        assert top is not None
+        self.assertEqual(top.style, "single")
+        self.assertEqual(top.size_eighth_points, 8)
+        self.assertEqual(top.space_points, 3)
+
     def test_continuous_note_number_offsets_are_preserved(self) -> None:
         grpprl = b"".join(
             (

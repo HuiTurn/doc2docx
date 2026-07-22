@@ -700,6 +700,9 @@ def convert(
                 section.page_number_chapter_style is not None
                 for section in sections
             ),
+            "page_bordered_section_count": sum(
+                section.page_borders is not None for section in sections
+            ),
             "line_numbered_section_count": sum(
                 section.line_number_count_by is not None for section in sections
             ),

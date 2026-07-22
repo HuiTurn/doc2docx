@@ -17,6 +17,17 @@ current capabilities without release-by-release notes.
   drops these attributes when exporting DOCX to DOC, so no unsupported real
   round-trip claim is made for this property.
 
+### M19b
+
+- Preserve legacy `Brc80` and modern `BrcOperand` top/left/bottom/right page
+  borders, including style, width, color, spacing, shadow, and frame settings.
+- Parse `sprmSPgbProp` page selection, offset origin, and front/back depth and
+  emit the complete native `w:pgBorders` structure in section schema order.
+- Validate with 184 focused tests and a real Word 97 DOC whose four red
+  16-eighth-point borders, 24-point page offsets, and all-pages/front settings
+  survive exactly and render identically. The 38-file regression batch remains
+  at 36 in-scope successes with no unsupported warnings.
+
 ## 0.34.0 - 2026-07-22 (M18a-M18c)
 
 ### M18a
