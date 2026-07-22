@@ -33,6 +33,14 @@ _NUMBER_RESTARTS = {
     0x02: "eachPage",
 }
 
+_CHAPTER_SEPARATORS = {
+    0x00: "hyphen",
+    0x01: "period",
+    0x02: "colon",
+    0x03: "emDash",
+    0x04: "enDash",
+}
+
 _FOOTNOTE_POSITIONS = {
     0x01: "pageBottom",
     0x02: "beneathText",
@@ -145,6 +153,8 @@ def _apply_section_modifiers(
     seen: set[int] = set()
     page_number_restart: bool | None = None
     page_number_start: int | None = None
+    page_number_chapter_style: int | None = None
+    page_number_chapter_separator = "hyphen"
     line_number_count_by: int | None = None
     line_number_start = 0
     line_number_distance_twips = 0
@@ -158,7 +168,19 @@ def _apply_section_modifiers(
         opcode = modifier.opcode
         operand = modifier.operand
         seen.add(opcode)
-        if opcode == 0x3009:  # sprmSBkc
+        if opcode == 0x3000:  # sprmScnsPgn
+            separator = _CHAPTER_SEPARATORS.get(operand[0])
+            if separator is None:
+                unsupported.add(opcode)
+            else:
+                page_number_chapter_separator = separator
+        elif opcode == 0x3001:  # sprmSiHeadingPgn
+            if operand[0] > 9:
+                raise InvalidWordDocument(
+                    "section chapter heading level exceeds 9"
+                )
+            page_number_chapter_style = operand[0]
+        elif opcode == 0x3009:  # sprmSBkc
             break_type = _BREAK_TYPES.get(operand[0])
             if break_type is None:
                 unsupported.add(opcode)
@@ -413,6 +435,12 @@ def _apply_section_modifiers(
             page_number_start=(
                 0 if page_number_start is None else page_number_start
             ),
+        )
+    if page_number_chapter_style not in (None, 0):
+        section = replace(
+            section,
+            page_number_chapter_style=page_number_chapter_style,
+            page_number_chapter_separator=page_number_chapter_separator,
         )
     if columns_evenly_spaced is True:
         section = replace(section, columns_evenly_spaced=True)

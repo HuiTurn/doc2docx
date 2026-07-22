@@ -57,6 +57,8 @@ class SectionParsingTests(unittest.TestCase):
     def test_section_numbering_direction_and_bidi_are_preserved(self) -> None:
         grpprl = b"".join(
             (
+                struct.pack("<HB", 0x3000, 3),
+                struct.pack("<HB", 0x3001, 2),
                 struct.pack("<HB", 0x300E, 1),
                 struct.pack("<HB", 0x3011, 1),
                 struct.pack("<HH", 0x501C, 7),
@@ -107,6 +109,8 @@ class SectionParsingTests(unittest.TestCase):
         section = sections[0]
         self.assertEqual(section.page_number_format, "upperRoman")
         self.assertEqual(section.page_number_start, 123456)
+        self.assertEqual(section.page_number_chapter_style, 2)
+        self.assertEqual(section.page_number_chapter_separator, "emDash")
         self.assertEqual(section.line_number_count_by, 3)
         self.assertEqual(section.line_number_start, 4)
         self.assertEqual(section.line_number_distance_twips, 720)
@@ -183,6 +187,14 @@ class SectionParsingTests(unittest.TestCase):
         self.assertEqual(
             section_element.find(f"{W}pgNumType").get(f"{W}start"),  # type: ignore[union-attr]
             "123456",
+        )
+        self.assertEqual(
+            section_element.find(f"{W}pgNumType").get(f"{W}chapStyle"),  # type: ignore[union-attr]
+            "2",
+        )
+        self.assertEqual(
+            section_element.find(f"{W}pgNumType").get(f"{W}chapSep"),  # type: ignore[union-attr]
+            "emDash",
         )
         line_numbers = section_element.find(f"{W}lnNumType")
         assert line_numbers is not None
@@ -488,6 +500,57 @@ class SectionParsingTests(unittest.TestCase):
         )
 
         self.assertIsNone(sections[0].page_number_start)
+
+    def test_chapter_separator_is_ignored_when_chapter_numbering_is_disabled(
+        self,
+    ) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<HB", 0x3000, 2),
+                struct.pack("<HB", 0x3001, 0),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(96)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=ConversionReport("chapter-numbering-disabled.doc"),
+        )
+
+        self.assertIsNone(sections[0].page_number_chapter_style)
+        self.assertIsNone(sections[0].page_number_chapter_separator)
+
+    def test_out_of_range_chapter_heading_level_is_rejected(self) -> None:
+        grpprl = struct.pack("<HB", 0x3001, 10)
+        word_document = bytearray(64)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+
+        with self.assertRaises(InvalidWordDocument):
+            read_sections(
+                plcf_sed,
+                bytes(word_document),
+                offset=0,
+                size=len(plcf_sed),
+                main_story_cp_count=5,
+                document_lid=1033,
+                report=ConversionReport("invalid-chapter-heading.doc"),
+            )
 
     def test_out_of_range_modern_page_number_start_is_rejected(self) -> None:
         grpprl = b"".join(

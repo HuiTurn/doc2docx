@@ -5,6 +5,18 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+### M19a
+
+- Preserve section chapter-based page numbering, including heading levels 1–9
+  and all five MS-DOC separator characters, as native `w:pgNumType`
+  `chapStyle`/`chapSep` attributes alongside page format and restart settings.
+- Ignore stored separators when chapter numbering is disabled and reject
+  heading levels outside the MS-DOC range.
+- Validate with 182 focused tests and the unchanged 38-file regression batch:
+  all 36 in-scope files convert without unsupported warnings. LibreOffice
+  drops these attributes when exporting DOCX to DOC, so no unsupported real
+  round-trip claim is made for this property.
+
 ## 0.34.0 - 2026-07-22 (M18a-M18c)
 
 ### M18a

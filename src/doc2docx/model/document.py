@@ -721,6 +721,8 @@ class SectionProperties:
     vertical_alignment: str | None = None
     page_number_format: str | None = None
     page_number_start: int | None = None
+    page_number_chapter_style: int | None = None
+    page_number_chapter_separator: str | None = None
     line_number_count_by: int | None = None
     line_number_start: int | None = None
     line_number_distance_twips: int | None = None

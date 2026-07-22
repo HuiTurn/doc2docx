@@ -696,6 +696,10 @@ def convert(
             "section_page_number_start_count": sum(
                 section.page_number_start is not None for section in sections
             ),
+            "chapter_numbered_section_count": sum(
+                section.page_number_chapter_style is not None
+                for section in sections
+            ),
             "line_numbered_section_count": sum(
                 section.line_number_count_by is not None for section in sections
             ),

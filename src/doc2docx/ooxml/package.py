@@ -1721,6 +1721,7 @@ def _append_section_properties(
     if (
         section.page_number_format is not None
         or section.page_number_start is not None
+        or section.page_number_chapter_style is not None
     ):
         page_number_attributes = {}
         if section.page_number_format is not None:
@@ -1730,6 +1731,14 @@ def _append_section_properties(
         if section.page_number_start is not None:
             page_number_attributes[_qn(W_NS, "start")] = str(
                 section.page_number_start
+            )
+        if section.page_number_chapter_style is not None:
+            page_number_attributes[_qn(W_NS, "chapStyle")] = str(
+                section.page_number_chapter_style
+            )
+        if section.page_number_chapter_separator is not None:
+            page_number_attributes[_qn(W_NS, "chapSep")] = (
+                section.page_number_chapter_separator
             )
         ET.SubElement(
             section_properties,
