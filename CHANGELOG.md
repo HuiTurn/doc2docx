@@ -15,6 +15,16 @@ current capabilities without release-by-release notes.
   batch: all seven numbering-style documents emit native styles, the deferred
   style-kind diagnostic is eliminated, and all 36 in-scope files still convert.
 
+### M17b
+
+- Preserve section page-number restarts and both legacy 16-bit and modern
+  32-bit starting values as native `w:pgNumType w:start` properties.
+- Ignore stored start values when page numbering continues, honor later start
+  modifiers, and reject values outside the MS-DOC 32-bit bound.
+- Validate with 172 focused tests, a real DOC round trip whose live `PAGE`
+  field renders as `VII` from an upper-Roman start value of 7, and the unchanged
+  38-file regression batch with all 36 in-scope files converting.
+
 ## 0.32.0 - 2026-07-22 (M16a-M16c)
 
 ### M16c

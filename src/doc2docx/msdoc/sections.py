@@ -121,6 +121,8 @@ def _apply_section_modifiers(
 ) -> tuple[SectionProperties, set[int], set[int]]:
     unsupported: set[int] = set()
     seen: set[int] = set()
+    page_number_restart: bool | None = None
+    page_number_start: int | None = None
     footnote_number_start: int | None = None
     endnote_number_start: int | None = None
     for modifier in modifiers:
@@ -171,6 +173,20 @@ def _apply_section_modifiers(
                 unsupported.add(opcode)
             else:
                 section = replace(section, page_number_format=number_format)
+        elif opcode == 0x3011:  # sprmSFPgnRestart
+            if operand[0] not in (0x00, 0x01):
+                unsupported.add(opcode)
+            else:
+                page_number_restart = bool(operand[0])
+        elif opcode == 0x501C:  # sprmSPgnStart97
+            page_number_start = _u16(operand)
+        elif opcode == 0x7044:  # sprmSPgnStart
+            value = _u32(operand)
+            if value > 2147483646:
+                raise InvalidWordDocument(
+                    f"section page-number start {value} exceeds 2147483646"
+                )
+            page_number_start = value
         elif opcode == 0x303C:  # sprmSRncFtn
             restart = _NUMBER_RESTARTS.get(operand[0])
             if restart is None:
@@ -307,6 +323,13 @@ def _apply_section_modifiers(
             section = replace(section, revision_save_id=_u32(operand))
         else:
             unsupported.add(opcode)
+    if page_number_restart is True:
+        section = replace(
+            section,
+            page_number_start=(
+                0 if page_number_start is None else page_number_start
+            ),
+        )
     if (
         footnote_number_start is not None
         and section.footnote_number_restart in (None, "continuous")

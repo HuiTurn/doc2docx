@@ -58,6 +58,9 @@ class SectionParsingTests(unittest.TestCase):
         grpprl = b"".join(
             (
                 struct.pack("<HB", 0x300E, 1),
+                struct.pack("<HB", 0x3011, 1),
+                struct.pack("<HH", 0x501C, 7),
+                struct.pack("<HI", 0x7044, 123456),
                 struct.pack("<HB", 0x3005, 1),
                 struct.pack("<HB", 0x303C, 1),
                 struct.pack("<HB", 0x303E, 1),
@@ -97,6 +100,7 @@ class SectionParsingTests(unittest.TestCase):
 
         section = sections[0]
         self.assertEqual(section.page_number_format, "upperRoman")
+        self.assertEqual(section.page_number_start, 123456)
         self.assertEqual(section.column_count, 3)
         self.assertEqual(section.column_spacing_twips, 720)
         self.assertTrue(section.columns_evenly_spaced)
@@ -161,6 +165,10 @@ class SectionParsingTests(unittest.TestCase):
         self.assertEqual(
             section_element.find(f"{W}pgNumType").get(f"{W}fmt"),  # type: ignore[union-attr]
             "upperRoman",
+        )
+        self.assertEqual(
+            section_element.find(f"{W}pgNumType").get(f"{W}start"),  # type: ignore[union-attr]
+            "123456",
         )
         self.assertEqual(
             section_element.find(f"{W}textDirection").get(f"{W}val"),  # type: ignore[union-attr]
@@ -261,6 +269,59 @@ class SectionParsingTests(unittest.TestCase):
 
         self.assertIsNone(sections[0].footnote_number_start)
         self.assertIsNone(sections[0].endnote_number_start)
+
+    def test_page_number_start_is_ignored_without_restart(self) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<HB", 0x3011, 0),
+                struct.pack("<HH", 0x501C, 7),
+                struct.pack("<HH", 0xB021, 1000),
+                struct.pack("<HH", 0xB022, 1000),
+                struct.pack("<Hh", 0x9023, 1000),
+                struct.pack("<Hh", 0x9024, 1000),
+            )
+        )
+        word_document = bytearray(128)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+
+        sections = read_sections(
+            plcf_sed,
+            bytes(word_document),
+            offset=0,
+            size=len(plcf_sed),
+            main_story_cp_count=5,
+            document_lid=1033,
+            report=ConversionReport("continued-page-number.doc"),
+        )
+
+        self.assertIsNone(sections[0].page_number_start)
+
+    def test_out_of_range_modern_page_number_start_is_rejected(self) -> None:
+        grpprl = b"".join(
+            (
+                struct.pack("<HB", 0x3011, 1),
+                struct.pack("<HI", 0x7044, 0xFFFFFFFF),
+            )
+        )
+        word_document = bytearray(64)
+        struct.pack_into("<h", word_document, 32, len(grpprl))
+        word_document[34 : 34 + len(grpprl)] = grpprl
+        plcf_sed = struct.pack("<2I", 0, 5)
+        plcf_sed += struct.pack("<HiHI", 0, 32, 0, 0)
+
+        with self.assertRaises(InvalidWordDocument):
+            read_sections(
+                plcf_sed,
+                bytes(word_document),
+                offset=0,
+                size=len(plcf_sed),
+                main_story_cp_count=5,
+                document_lid=1033,
+                report=ConversionReport("invalid-page-number.doc"),
+            )
 
     def test_incomplete_document_grid_is_reported_and_omitted(self) -> None:
         grpprl = b"".join(

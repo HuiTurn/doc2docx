@@ -689,6 +689,9 @@ def convert(
             "section_page_number_format_count": sum(
                 section.page_number_format is not None for section in sections
             ),
+            "section_page_number_start_count": sum(
+                section.page_number_start is not None for section in sections
+            ),
             "section_note_numbering_override_count": sum(
                 any(
                     value is not None

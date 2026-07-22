@@ -1718,11 +1718,23 @@ def _append_section_properties(
             _qn(W_NS, "gutter"): str(section.gutter_twips),
         },
     )
-    if section.page_number_format is not None:
+    if (
+        section.page_number_format is not None
+        or section.page_number_start is not None
+    ):
+        page_number_attributes = {}
+        if section.page_number_format is not None:
+            page_number_attributes[_qn(W_NS, "fmt")] = (
+                section.page_number_format
+            )
+        if section.page_number_start is not None:
+            page_number_attributes[_qn(W_NS, "start")] = str(
+                section.page_number_start
+            )
         ET.SubElement(
             section_properties,
             _qn(W_NS, "pgNumType"),
-            {_qn(W_NS, "fmt"): section.page_number_format},
+            page_number_attributes,
         )
     column_attributes: dict[str, str] = {}
     if section.column_count is not None:

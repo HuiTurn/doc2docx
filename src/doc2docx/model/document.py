@@ -716,6 +716,7 @@ class SectionProperties:
     column_spacing_twips: int | None = None
     columns_evenly_spaced: bool | None = None
     page_number_format: str | None = None
+    page_number_start: int | None = None
     footnote_position: str | None = None
     footnote_number_format: str | None = None
     footnote_number_start: int | None = None
