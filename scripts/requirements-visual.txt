@@ -1,0 +1,5 @@
+# Optional dependencies for scripts/word_bilateral_compare.py only.
+# The conversion engine itself remains Python standard-library only.
+pywin32>=306
+Pillow>=10.0.0
+PyMuPDF>=1.24.0
