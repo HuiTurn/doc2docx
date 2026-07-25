@@ -28,7 +28,11 @@ faithful conversion.
 - Restores inline and floating PNG, JPEG, BMP/DIB, TIFF, EMF, and WMF pictures
   in the main document and header/footer stories, including rotation, flips,
   tight/through wrap polygons, and common floating preset shapes such as
-  polygons, stars, arrows, lines, and plaques.
+  polygons, stars (5/8/16-point), arrows (left/up/down/left-right, striped,
+  notched), chevrons, bevels, waves, lightning bolts, suns, moons,
+  cubes/cans/donuts, flowchart process/decision/data/document shapes, lines,
+  and plaques. Adjustment-formula presets are emitted from Word's authoritative
+  VML geometry so curves and star points render exactly.
 - Preserves confirmed embedded OLE ObjectPool storages as native DOCX embedded
   objects, and retains Macintosh PICT payloads for consumers that can render
   them.
@@ -97,8 +101,9 @@ destination in batch mode.
 ## Current limitations
 
 Grouped/custom OfficeArt geometry and advanced drawing effects remain
-incomplete. Unsupported geometry with a reliable wrap contour is retained as
-an explicitly diagnosed contour approximation; geometry without such evidence
+incomplete. Unsupported geometry with reliable OfficeArt vertices is emitted
+as an exact VML path; geometry with only a wrap contour is retained as an
+explicitly diagnosed contour approximation; geometry without such evidence
 is deferred. Linked or unanchored OLE storages are not activated or guessed;
 only confirmed embedded-object anchors are packaged. Macintosh PICT images are
 retained as original media, although rendering them depends on support in the
@@ -125,6 +130,27 @@ python -m build
 
 Real-document regression tests may use LibreOffice to create or render test
 artifacts, but LibreOffice is not used by the converter itself.
+
+### Word bilateral visual compare (Windows)
+
+Authoritative page-image regression uses Microsoft Word COM only from
+`scripts/` and optional tests. Install the optional visual stack into a local
+venv, then compare a source `.doc` against the converter's `.docx`:
+
+```console
+python -m venv .venv
+.venv\Scripts\python -m pip install -r scripts/requirements-visual.txt
+$env:PYTHONPATH = (Resolve-Path .\src)
+.venv\Scripts\python scripts\word_bilateral_compare.py input.doc -o evidence\case
+```
+
+The tool opens independent read-only temporary copies of the source DOC and
+output DOCX, exports both to PDF with the same Word instance, rasterizes at a
+fixed DPI, and writes per-page reference/actual/diff/overlay images plus a
+`manifest.json` that includes SHA-256 hashes, page metrics (MAE/RMSE/changed
+pixel ratio/SSIM), structure counts, and the conversion report diagnostics.
+LibreOffice rendering remains a development aid only and is not treated as
+release-level fidelity proof.
 
 ## Specifications
 

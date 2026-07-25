@@ -13,7 +13,41 @@ from .officeart import OfficeArtChildAnchor, OfficeArtShapeCollection
 
 
 # These OfficeArt presets have stable VML equivalents or bounded paths.
-_SUPPORTED_SHAPE_TYPES = frozenset((*range(1, 16), 20, 21))
+# 66-69 are the cardinal / left-right arrow family commonly emitted by Word
+# AutoShapes beyond the classic msosptArrow (13) preset.
+# 55 is the chevron AutoShape; 16/22/23 are can/cube/donut; 109-111 and 114
+# are common flowchart shapes.
+# 59/64/73/84/92/93/94/183/184 are star_8, wave, lightning, bevel, star_16,
+# striped_right_arrow, notched_right_arrow, sun and moon respectively; their
+# geometry is emitted from Word's authoritative <v:shapetype> path + formulas.
+_SUPPORTED_SHAPE_TYPES = frozenset(
+    (
+        *range(1, 16),
+        16,
+        20,
+        21,
+        22,
+        23,
+        55,
+        59,
+        64,
+        66,
+        67,
+        68,
+        69,
+        73,
+        84,
+        92,
+        93,
+        94,
+        109,
+        110,
+        111,
+        114,
+        183,
+        184,
+    )
+)
 # Straight lines and line-like NotPrimitive connectors from grouped diagrams.
 _GROUPED_LINE_SHAPE_TYPES = frozenset((20,))
 
@@ -171,18 +205,20 @@ def _read_floating_shapes(
             style_fill_enabled=style.fill_enabled,
         )
         if shape_type not in _SUPPORTED_SHAPE_TYPES and not line_like:
-            polygon = officeart.wrap_polygon_at(anchor.shape_id)
-            if len(polygon) < 3:
-                deferred_types[shape_type or 0] = (
-                    deferred_types.get(shape_type or 0, 0) + 1
+            geometry_path = officeart.geometry_path_at(anchor.shape_id)
+            if geometry_path is None:
+                polygon = officeart.wrap_polygon_at(anchor.shape_id)
+                if len(polygon) < 3:
+                    deferred_types[shape_type or 0] = (
+                        deferred_types.get(shape_type or 0, 0) + 1
+                    )
+                    continue
+                geometry_path = (
+                    f"m{polygon[0][0]},{polygon[0][1]}l"
+                    + ",".join(f"{x},{y}" for x, y in polygon[1:])
+                    + "xe"
                 )
-                continue
-            geometry_path = (
-                f"m{polygon[0][0]},{polygon[0][1]}l"
-                + ",".join(f"{x},{y}" for x, y in polygon[1:])
-                + "xe"
-            )
-            approximated_geometry_count += 1
+                approximated_geometry_count += 1
         elif line_like and shape_type not in _SUPPORTED_SHAPE_TYPES:
             # Emit NotPrimitive stroke-only connectors with the straight-line path.
             shape_type = 20

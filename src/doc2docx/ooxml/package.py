@@ -9,6 +9,7 @@ import zipfile
 from xml.etree import ElementTree as ET
 
 from ..errors import PackageWriteError
+from ._vml_preset_formulas import VML_PRESET_FORMULA_PATHS, VML_PRESET_FORMULAS
 from ..model import (
     BookmarkEnd,
     BookmarkStart,
@@ -190,6 +191,13 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
         "shape",
         "m0,0l16200,0,21600,10800,16200,21600,0,21600xe",
     ),
+    # Cube / can / donut with Word shapetype default adj=5400 baked in.
+    16: (
+        "shape",
+        "m5400,0l0,5400,0,21600,16200,21600,21600,5400,21600,0xe"
+        "m0,5400nfl16200,5400,21600,0e"
+        "m16200,5400nfl16200,21600e",
+    ),
     20: ("shape", "m0,0l21600,21600e"),
     21: (
         "shape",
@@ -197,6 +205,52 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
         "c19620,18000,18000,19620,18000,21600l3600,21600"
         "c3600,19620,1980,18000,0,18000l0,3600"
         "c1980,3600,3600,1980,3600,0xe",
+    ),
+    22: (
+        "shape",
+        "m10800,0qx0,5400l0,16200qy10800,21600,21600,16200l21600,5400qy10800,0xe"
+        "m0,5400qy10800,0,21600,5400nfe",
+    ),
+    23: (
+        "shape",
+        "m0,10800qy10800,0,21600,10800,10800,21600,0,10800xe"
+        "m5400,10800qy10800,5400,16200,10800,10800,16200,5400,10800xe",
+    ),
+    # Cardinal arrows derived by mirroring/rotating the baked type-13 path.
+    66: (
+        "shape",
+        "m21600,8100l8640,8100,8640,0,0,10800,8640,21600,8640,13500,21600,13500xe",
+    ),
+    67: (
+        "shape",
+        "m13500,0l13500,12960,21600,12960,10800,21600,0,12960,8100,12960,8100,0xe",
+    ),
+    68: (
+        "shape",
+        "m8100,21600l8100,8640,0,8640,10800,0,21600,8640,13500,8640,13500,21600xe",
+    ),
+    69: (
+        "shape",
+        "m0,10800l5400,0,5400,8100,16200,8100,16200,0,21600,10800,"
+        "16200,21600,16200,13500,5400,13500,5400,21600xe",
+    ),
+    # Chevron (Word shapetype default adj=16200 -> @0=16200, @1=5400).
+    55: (
+        "shape",
+        "m16200,0l0,0,5400,10800,0,21600,16200,21600,21600,10800xe",
+    ),
+    # Flowchart presets (paths taken from Word's own VML shapetype defaults).
+    109: ("shape", "m0,0l0,21600,21600,21600,21600,0xe"),
+    110: ("shape", "m10800,0l0,10800,10800,21600,21600,10800xe"),
+    111: ("shape", "m4321,0l21600,0,17204,21600,0,21600xe"),
+    114: (
+        "shape",
+        "m0,20172v945,400,1887,628,2795,913c3587,21312,4342,21370,5060,21597"
+        "v2037,0,2567,-227,3095,-285c8722,21197,9325,20970,9855,20800"
+        "v490,-228,945,-400,1472,-740c11817,19887,12347,19660,12875,19375"
+        "v567,-228,1095,-513,1700,-740c15177,18462,15782,18122,16537,17950"
+        "v718,-113,1398,-398,2228,-513c19635,17437,20577,17322,21597,17322"
+        "l21597,0,0,0xe",
     ),
 }
 
@@ -1672,6 +1726,8 @@ def _append_floating_shape(
         )
     if floating_shape.geometry_path is not None:
         element_name, path = "shape", floating_shape.geometry_path
+    elif floating_shape.shape_type in VML_PRESET_FORMULA_PATHS:
+        element_name, path = "shape", VML_PRESET_FORMULA_PATHS[floating_shape.shape_type]
     else:
         element_name, path = _VML_PRESET_SHAPES[floating_shape.shape_type]
     if path is not None:
@@ -1686,6 +1742,17 @@ def _append_floating_shape(
         _qn(VML_NS, element_name),
         shape_attributes,
     )
+    # Presets whose path references formula variables (@0..@N) carry Word's
+    # authoritative adjustment + <v:f eqn> formulas so the consumer evaluates
+    # exact geometry instead of an approximated literal path.
+    if floating_shape.shape_type in VML_PRESET_FORMULAS:
+        adj, formulas = VML_PRESET_FORMULAS[floating_shape.shape_type]
+        if adj is not None:
+            shape.set("adj", adj)
+        if formulas:
+            formulas_el = ET.SubElement(shape, _qn(VML_NS, "formulas"))
+            for eqn in formulas:
+                ET.SubElement(formulas_el, _qn(VML_NS, "f"), {"eqn": eqn})
     if shape_style.fill_enabled and shape_style.fill_opacity < 0x10000:
         ET.SubElement(
             shape,

@@ -123,6 +123,208 @@ class FloatingShapeTests(unittest.TestCase):
         )
         self.assertEqual(collection.deferred_count, 0)
 
+    def test_recovers_cardinal_and_left_right_arrow_presets(self) -> None:
+        shape_types = (66, 67, 68, 69)
+        officeart = OfficeArtShapeCollection(
+            {shape_type: ShapeStyle() for shape_type in shape_types},
+            shape_types_by_shape_id={
+                shape_type: shape_type for shape_type in shape_types
+            },
+        )
+        anchors = {
+            shape_type: replace(
+                _anchor(shape_type),
+                anchor_cp=index,
+            )
+            for index, shape_type in enumerate(shape_types)
+        }
+        report = ConversionReport("cardinal-arrows.doc")
+        collection = read_main_floating_shapes(
+            anchors,
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(
+            [shape.shape_type for shape in collection.shapes],
+            list(shape_types),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+
+        office_ns = "{urn:schemas-microsoft-com:office:office}"
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "cardinal-arrows.docx"
+            write_docx(
+                Document(tuple(Paragraph((shape,)) for shape in collection.shapes)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            emitted = [
+                (element.get(f"{office_ns}spt"), element.get("path"))
+                for element in root.findall(f".//{V}shape")
+            ]
+            self.assertEqual(
+                [shape_type for shape_type, _path in emitted],
+                ["66", "67", "68", "69"],
+            )
+            self.assertTrue(all(path for _shape_type, path in emitted))
+
+    def test_recovers_flowchart_preset_shapes(self) -> None:
+        shape_types = (109, 110, 111, 114)
+        officeart = OfficeArtShapeCollection(
+            {shape_type: ShapeStyle() for shape_type in shape_types},
+            shape_types_by_shape_id={
+                shape_type: shape_type for shape_type in shape_types
+            },
+        )
+        anchors = {
+            shape_type: replace(
+                _anchor(shape_type),
+                anchor_cp=index,
+            )
+            for index, shape_type in enumerate(shape_types)
+        }
+        report = ConversionReport("flowchart-shapes.doc")
+        collection = read_main_floating_shapes(
+            anchors,
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(
+            [shape.shape_type for shape in collection.shapes],
+            list(shape_types),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+
+        office_ns = "{urn:schemas-microsoft-com:office:office}"
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "flowchart-shapes.docx"
+            write_docx(
+                Document(tuple(Paragraph((shape,)) for shape in collection.shapes)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            emitted = [
+                element.get(f"{office_ns}spt")
+                for element in root.findall(f".//{V}shape")
+            ]
+            self.assertEqual(emitted, ["109", "110", "111", "114"])
+
+    def test_recovers_chevron_preset_shape(self) -> None:
+        shape_id = 55
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle(fill_color="3366ff", line_color="003399")},
+            shape_types_by_shape_id={shape_id: 55},
+        )
+        report = ConversionReport("chevron.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertEqual(collection.shapes[0].shape_type, 55)
+        self.assertFalse(report.warnings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "chevron.docx"
+            write_docx(Document((Paragraph((collection.shapes[0],)),)), destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            shape = root.find(f".//{V}shape")
+            assert shape is not None
+            self.assertEqual(
+                shape.get("{urn:schemas-microsoft-com:office:office}spt"),
+                "55",
+            )
+            self.assertIn("16200,0", shape.get("path", ""))
+
+    def test_recovers_adjustment_formula_preset_shapes_without_deferral(self) -> None:
+        from doc2docx.ooxml._vml_preset_formulas import (
+            VML_PRESET_FORMULA_PATHS,
+            VML_PRESET_FORMULAS,
+        )
+
+        target_types = (59, 64, 73, 84, 92, 93, 94, 183, 184)
+        for shape_type in target_types:
+            with self.subTest(shape_type=shape_type):
+                shape_id = 100 + shape_type
+                officeart = OfficeArtShapeCollection(
+                    {shape_id: ShapeStyle(fill_color="3366ff", line_color="003399")},
+                    shape_types_by_shape_id={shape_id: shape_type},
+                )
+                report = ConversionReport(f"preset-{shape_type}.doc")
+                collection = read_main_floating_shapes(
+                    {shape_id: replace(_anchor(shape_id))},
+                    officeart,
+                    report=report,
+                    character_properties_at=lambda _cp: CharacterProperties(special=True),
+                )
+                self.assertEqual(collection.deferred_count, 0)
+                self.assertFalse(report.warnings)
+                self.assertEqual(collection.shapes[0].shape_type, shape_type)
+
+                with tempfile.TemporaryDirectory() as directory:
+                    destination = Path(directory) / f"preset-{shape_type}.docx"
+                    write_docx(
+                        Document((Paragraph((collection.shapes[0],)),)), destination
+                    )
+                    with zipfile.ZipFile(destination) as package:
+                        root = ET.fromstring(package.read("word/document.xml"))
+                    shape = root.find(f".//{V}shape")
+                    assert shape is not None
+                    self.assertEqual(
+                        shape.get("{urn:schemas-microsoft-com:office:office}spt"),
+                        str(shape_type),
+                    )
+                    self.assertEqual(
+                        shape.get("path"), VML_PRESET_FORMULA_PATHS[shape_type]
+                    )
+                    if shape_type in VML_PRESET_FORMULAS:
+                        adj, formulas = VML_PRESET_FORMULAS[shape_type]
+                        self.assertEqual(shape.get("adj"), adj)
+                        formulas_el = shape.find(f"{V}formulas")
+                        assert formulas_el is not None
+                        self.assertEqual(len(formulas_el.findall(f"{V}f")), len(formulas))
+                    else:
+                        self.assertIsNone(shape.get("adj"))
+                        self.assertIsNone(shape.find(f"{V}formulas"))
+
+    def test_recovers_can_cube_and_donut_presets(self) -> None:
+        shape_types = (16, 22, 23)
+        officeart = OfficeArtShapeCollection(
+            {shape_type: ShapeStyle() for shape_type in shape_types},
+            shape_types_by_shape_id={
+                shape_type: shape_type for shape_type in shape_types
+            },
+        )
+        anchors = {
+            shape_type: replace(_anchor(shape_type), anchor_cp=index)
+            for index, shape_type in enumerate(shape_types)
+        }
+        report = ConversionReport("can-cube-donut.doc")
+        collection = read_main_floating_shapes(
+            anchors,
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(
+            [shape.shape_type for shape in collection.shapes],
+            list(shape_types),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+
     def test_ungroups_grouped_line_connectors_onto_parent_anchor(self) -> None:
         from doc2docx.msdoc.officeart import OfficeArtChildAnchor
 
@@ -213,6 +415,27 @@ class FloatingShapeTests(unittest.TestCase):
             report.warnings[0].code,
             "FLOATING_SHAPE_GEOMETRY_APPROXIMATED",
         )
+
+    def test_notprimitive_geometry_path_is_emitted_without_deferral(self) -> None:
+        shape_id = 1026
+        path = "m10800,4050c15300,-5400,32850,4050,10800,16200c-11250,4050,6300,-5400,10800,4050xe"
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle()},
+            geometry_paths_by_shape_id={shape_id: path},
+            shape_types_by_shape_id={shape_id: 0},
+        )
+        report = ConversionReport("notprimitive.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertEqual(collection.shapes[0].geometry_path, path)
+        self.assertEqual(collection.shapes[0].shape_type, 0)
+        self.assertFalse(report.warnings)
 
     def test_parser_and_docx_writer_emit_positioned_vml_geometry(self) -> None:
         shape = FloatingShape(

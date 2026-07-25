@@ -5,6 +5,39 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+- Add a Windows Word COM bilateral visual compare pipeline under
+  `scripts/word_bilateral_compare.py` for source `.doc` versus converted
+  `.docx` page images, including PDF export, fixed-DPI rasterization,
+  MAE/RMSE/SSIM metrics, structure counts, conversion-report linkage, single
+  file and small corpus modes, and a Word-authored fixture helper. Optional
+  dependencies stay outside the converter runtime.
+- Truncate SummaryInformation `VT_LPSTR`/`VT_LPWSTR` values at the first NUL
+  and omit illegal/replacement characters from core properties so Word-authored
+  documents with 4-byte string padding no longer emit `U+FFFD` into
+  `docProps/core.xml` (report code `SUMMARY_INFORMATION_TEXT_REPAIRED`).
+- Preserve Word AutoShape left/down/up/left-right arrows (OfficeArt presets
+  66–69) as native VML floating shapes instead of
+  `FLOATING_SHAPE_TYPES_DEFERRED` / `OBJECT_ANCHOR_DEFERRED`.
+- Preserve common flowchart AutoShapes (process/decision/data/document;
+  OfficeArt presets 109–111 and 114) as native VML floating shapes.
+- Preserve the Word AutoShape chevron (OfficeArt preset 55) as a native VML
+  floating shape instead of deferring it.
+- Reconstruct NotPrimitive OfficeArt freeforms from `pVertices` and
+  `pSegmentInfo` into exact VML paths, clearing
+  `FLOATING_SHAPE_TYPES_DEFERRED` for shapes such as hearts and multi-point
+  stars that Word stores without a preset id.
+- Preserve Word AutoShape cube/can/donut presets (OfficeArt 16/22/23) as native
+  VML floating shapes.
+- Preserve nine more Word AutoShape presets that carry adjustment formulas —
+  star_8 (59), wave (64), lightning (73), bevel (84), star_16 (92),
+  striped_right_arrow (93), notched_right_arrow (94), sun (183) and moon (184) —
+  as native VML floating shapes. Geometry is emitted from Word's authoritative
+  `<v:shapetype>` path together with the default `adj` and the ordered
+  `<v:f eqn>` formulas, so the consuming application evaluates exact geometry
+  instead of an approximated literal path. This clears
+  `FLOATING_SHAPE_TYPES_DEFERRED` (and the accompanying dropped shape) for
+  these presets.
+
 ## 0.36.4 - 2026-07-22
 
 - Reconstruct grouped OfficeArt line connectors (flowchart arrows) from child
