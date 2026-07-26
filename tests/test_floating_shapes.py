@@ -489,6 +489,60 @@ class FloatingShapeTests(unittest.TestCase):
         self.assertEqual(path.get(f"{O}connecttype"), "rect")
         self.assertEqual(path.get("textboxrect"), "4236,4236,21600,21600")
 
+    def test_recovers_flowchart_multidocument_preset(self) -> None:
+        shape_id = 115
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
+            shape_types_by_shape_id={shape_id: shape_id},
+        )
+        report = ConversionReport("flowchart-multidocument.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertEqual(collection.shapes[0].shape_type, shape_id)
+        self.assertFalse(report.warnings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "flowchart-multidocument.docx"
+            write_docx(
+                Document((Paragraph((collection.shapes[0],)),)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        shapetype = root.find(f".//{V}shapetype")
+        shape = root.find(f".//{V}shape")
+        assert shapetype is not None and shape is not None
+        self.assertEqual(shapetype.get(f"{O}spt"), "115")
+        self.assertEqual(
+            shapetype.get("path"),
+            "m,20465v810,317,1620,452,2397,725c3077,21325,3790,21417,4405,21597"
+            "v1620,,2202,-180,2657,-272c7580,21280,8002,21010,8455,20917"
+            "v422,-135,810,-405,1327,-542c10205,20150,10657,19967,11080,19742"
+            "v517,-182,970,-407,1425,-590c13087,19017,13605,18745,14255,18610"
+            "v615,-180,1262,-318,1942,-408c16975,18202,17785,18022,18595,18022"
+            "r,-1670l19192,16252r808,l20000,14467r722,-75l21597,14392,21597,,2972,"
+            "r,1815l1532,1815r,1860l,3675,,20465xem1532,3675nfl18595,3675r,12677"
+            "em2972,1815nfl20000,1815r,12652e",
+        )
+        self.assertEqual(shape.get("type"), "#_x0000_t115")
+        path = shapetype.find(f"{V}path")
+        assert path is not None
+        self.assertEqual(path.get(f"{O}extrusionok"), "f")
+        self.assertEqual(path.get(f"{O}connecttype"), "custom")
+        self.assertEqual(
+            path.get(f"{O}connectlocs"),
+            "10800,0;0,10800;10800,19890;21600,10800",
+        )
+        self.assertEqual(path.get("textboxrect"), "0,3675,18595,18022")
+        self.assertIsNone(path.get("gradientshapeok"))
+
     def test_recovers_chevron_preset_shape(self) -> None:
         shape_id = 55
         officeart = OfficeArtShapeCollection(

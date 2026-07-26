@@ -264,6 +264,18 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
         "v718,-113,1398,-398,2228,-513c19635,17437,20577,17322,21597,17322"
         "l21597,0,0,0xe",
     ),
+    # MS-ODRAW msosptFlowChartMultidocument (0x73), from Word SaveAs VML.
+    115: (
+        "shape",
+        "m,20465v810,317,1620,452,2397,725c3077,21325,3790,21417,4405,21597"
+        "v1620,,2202,-180,2657,-272c7580,21280,8002,21010,8455,20917"
+        "v422,-135,810,-405,1327,-542c10205,20150,10657,19967,11080,19742"
+        "v517,-182,970,-407,1425,-590c13087,19017,13605,18745,14255,18610"
+        "v615,-180,1262,-318,1942,-408c16975,18202,17785,18022,18595,18022"
+        "r,-1670l19192,16252r808,l20000,14467r722,-75l21597,14392,21597,,2972,"
+        "r,1815l1532,1815r,1860l,3675,,20465xem1532,3675nfl18595,3675r,12677"
+        "em2972,1815nfl20000,1815r,12652e",
+    ),
     # MS-ODRAW msosptFlowChartTerminator (0x74), from Word SaveAs VML.
     116: (
         "shape",
@@ -272,11 +284,27 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
 }
 
 # Word emits these verified multi-subpath presets through an independent
-# <v:shapetype>. Keeping that structure avoids edge-pixel changes from inlining
-# their path directly on <v:shape>.
-_VML_NATIVE_RECT_SHAPETYPE_TEXTBOX_RECTS: dict[int, str] = {
-    112: "2610,0,18990,21600",
-    113: "4236,4236,21600,21600",
+# <v:shapetype>. Keeping the exact per-preset <v:path> metadata avoids
+# edge-pixel changes from inlining their geometry directly on <v:shape>.
+_VML_NATIVE_SHAPETYPE_PATH_ATTRIBUTES: dict[int, dict[str, str]] = {
+    112: {
+        "o:extrusionok": "f",
+        "gradientshapeok": "t",
+        "o:connecttype": "rect",
+        "textboxrect": "2610,0,18990,21600",
+    },
+    113: {
+        "o:extrusionok": "f",
+        "gradientshapeok": "t",
+        "o:connecttype": "rect",
+        "textboxrect": "4236,4236,21600,21600",
+    },
+    115: {
+        "o:extrusionok": "f",
+        "o:connecttype": "custom",
+        "o:connectlocs": "10800,0;0,10800;10800,19890;21600,10800",
+        "textboxrect": "0,3675,18595,18022",
+    },
 }
 
 ET.register_namespace("w", W_NS)
@@ -1753,12 +1781,12 @@ def _append_floating_shape(
         shape_attributes["strokeweight"] = (
             f"{_emus_as_points(shape_style.line_width_emu)}pt"
         )
-    native_shapetype_textbox_rect = (
-        _VML_NATIVE_RECT_SHAPETYPE_TEXTBOX_RECTS.get(floating_shape.shape_type)
+    native_shapetype_path_attributes = (
+        _VML_NATIVE_SHAPETYPE_PATH_ATTRIBUTES.get(floating_shape.shape_type)
         if floating_shape.geometry_path is None
         else None
     )
-    use_native_shapetype = native_shapetype_textbox_rect is not None
+    use_native_shapetype = native_shapetype_path_attributes is not None
     if use_native_shapetype:
         element_name, path = _VML_PRESET_SHAPES[floating_shape.shape_type]
         assert element_name == "shape" and path is not None
@@ -1774,15 +1802,19 @@ def _append_floating_shape(
             },
         )
         ET.SubElement(shapetype, _qn(VML_NS, "stroke"), {"joinstyle": "miter"})
+        assert native_shapetype_path_attributes is not None
+        path_attributes = {
+            (
+                _qn(OFFICE_NS, name.removeprefix("o:"))
+                if name.startswith("o:")
+                else name
+            ): value
+            for name, value in native_shapetype_path_attributes.items()
+        }
         ET.SubElement(
             shapetype,
             _qn(VML_NS, "path"),
-            {
-                _qn(OFFICE_NS, "extrusionok"): "f",
-                "gradientshapeok": "t",
-                _qn(OFFICE_NS, "connecttype"): "rect",
-                "textboxrect": native_shapetype_textbox_rect,
-            },
+            path_attributes,
         )
         shape_attributes["type"] = f"#{shapetype_id}"
     elif floating_shape.geometry_path is not None:

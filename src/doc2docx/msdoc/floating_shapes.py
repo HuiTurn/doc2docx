@@ -15,9 +15,9 @@ from .officeart import OfficeArtChildAnchor, OfficeArtShapeCollection
 # These OfficeArt presets have stable VML equivalents or bounded paths.
 # 66-69 are the cardinal / left-right arrow family commonly emitted by Word
 # AutoShapes beyond the classic msosptArrow (13) preset.
-# 55 is the chevron AutoShape; 16/22/23 are can/cube/donut; 109-114 and 116
-# are common flowchart shapes (112/113/116 are MS-ODRAW predefined-process /
-# internal-storage / terminator presets).
+# 55 is the chevron AutoShape; 16/22/23 are can/cube/donut; 109-116 are common
+# flowchart shapes (112/113/115/116 are MS-ODRAW predefined-process /
+# internal-storage / multidocument / terminator presets).
 # 75 is PictureFrame: when OfficeArt omits its BLIP, retain the empty frame as
 # an unfilled rectangle so wrap geometry stays.
 # 59/64/73/84/92/93/94/183/184 are star_8, wave, lightning, bevel, star_16,
@@ -50,6 +50,7 @@ _SUPPORTED_SHAPE_TYPES = frozenset(
         112,
         113,
         114,
+        115,
         116,
         183,
         184,

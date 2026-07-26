@@ -56,6 +56,10 @@ current capabilities without release-by-release notes.
 - Preserve the MS-ODRAW internal-storage flowchart preset
   (`msosptFlowChartInternalStorage`, `0x71` / 113) through its Word-native
   multi-subpath VML shapetype instead of deferring and dropping its object anchor.
+- Preserve the MS-ODRAW multidocument flowchart preset
+  (`msosptFlowChartMultidocument`, `0x73` / 115) through its Word-native
+  multi-subpath VML shapetype and custom connection locations instead of
+  deferring and dropping its object anchor.
 
 ## 0.36.4 - 2026-07-22
 
