@@ -239,6 +239,8 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
         "shape",
         "m16200,0l0,0,5400,10800,0,21600,16200,21600,21600,10800xe",
     ),
+    # Empty PictureFrame (no BLIP) keeps its Spa wrap geometry as a rectangle.
+    75: ("rect", None),
     # Flowchart presets (paths taken from Word's own VML shapetype defaults).
     109: ("shape", "m0,0l0,21600,21600,21600,21600,0xe"),
     110: ("shape", "m10800,0l0,10800,10800,21600,21600,10800xe"),

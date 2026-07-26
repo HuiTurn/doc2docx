@@ -40,6 +40,9 @@ current capabilities without release-by-release notes.
 - Preserve OfficeArt wrap distances (`dxWrapDist*` / `dyWrapDist*`) on floating
   pictures, and when they are absent apply Word's UI default of 9pt left/right
   (0 top/bottom) for square/tight/through wraps instead of emitting `dist*=0`.
+- Emit empty OfficeArt PictureFrame shapes (preset 75, no BLIP) as unfilled
+  VML `<v:rect>` elements so Spa tight/through wrap geometry is preserved
+  instead of triggering `FLOATING_SHAPE_TYPES_DEFERRED` and dropping the anchor.
 
 ## 0.36.4 - 2026-07-22
 

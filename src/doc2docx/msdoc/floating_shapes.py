@@ -16,7 +16,8 @@ from .officeart import OfficeArtChildAnchor, OfficeArtShapeCollection
 # 66-69 are the cardinal / left-right arrow family commonly emitted by Word
 # AutoShapes beyond the classic msosptArrow (13) preset.
 # 55 is the chevron AutoShape; 16/22/23 are can/cube/donut; 109-111 and 114
-# are common flowchart shapes.
+# are common flowchart shapes. 75 is PictureFrame: when OfficeArt omits its
+# BLIP, retain the empty frame as an unfilled rectangle so wrap geometry stays.
 # 59/64/73/84/92/93/94/183/184 are star_8, wave, lightning, bevel, star_16,
 # striped_right_arrow, notched_right_arrow, sun and moon respectively; their
 # geometry is emitted from Word's authoritative <v:shapetype> path + formulas.
@@ -36,6 +37,7 @@ _SUPPORTED_SHAPE_TYPES = frozenset(
         68,
         69,
         73,
+        75,
         84,
         92,
         93,

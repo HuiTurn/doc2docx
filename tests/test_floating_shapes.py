@@ -95,6 +95,46 @@ class FloatingShapeTests(unittest.TestCase):
         self.assertEqual(collection.deferred_count, 1)
         self.assertEqual(report.warnings[0].code, "FLOATING_SHAPE_TYPES_DEFERRED")
 
+    def test_emits_empty_picture_frame_as_unfilled_rect_for_tight_wrap(self) -> None:
+        """PictureFrame without a BLIP still carries Spa wrap geometry."""
+
+        shape_id = 1026
+        style = ShapeStyle(fill_enabled=False, line_enabled=False)
+        officeart = OfficeArtShapeCollection(
+            {shape_id: style},
+            shape_types_by_shape_id={shape_id: 75},
+        )
+        anchor = replace(_anchor(shape_id), wrap_type="tight", behind_text=False)
+        report = ConversionReport("empty-picture-frame.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: anchor},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(len(collection.shapes), 1)
+        self.assertEqual(collection.shapes[0].shape_type, 75)
+        self.assertEqual(collection.shapes[0].wrap_type, "tight")
+        self.assertFalse(report.warnings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "empty-frame.docx"
+            write_docx(
+                Document((Paragraph((collection.shapes[0],)),)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        rect = root.find(f".//{V}rect")
+        assert rect is not None
+        self.assertEqual(rect.get("filled"), "f")
+        self.assertEqual(rect.get("stroked"), "f")
+        wrap = root.find(f".//{W10}wrap")
+        assert wrap is not None
+        self.assertEqual(wrap.get("type"), "tight")
+
     def test_recovers_arrow_line_and_plaque_presets(self) -> None:
         shape_types = (13, 14, 15, 20, 21)
         officeart = OfficeArtShapeCollection(
