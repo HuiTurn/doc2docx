@@ -254,6 +254,11 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
         "v718,-113,1398,-398,2228,-513c19635,17437,20577,17322,21597,17322"
         "l21597,0,0,0xe",
     ),
+    # MS-ODRAW msosptFlowChartTerminator (0x74), from Word SaveAs VML.
+    116: (
+        "shape",
+        "m3475,qx,10800,3475,21600l18125,21600qx21600,10800,18125,xe",
+    ),
 }
 
 ET.register_namespace("w", W_NS)

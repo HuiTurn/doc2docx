@@ -47,6 +47,9 @@ current capabilities without release-by-release notes.
   at `z-index:0`, reporting `GROUPED_FLOATING_FRAME_FLATTENED`, so independently
   positioned children retain their visible canvas underlay; unfilled Spa
   textboxes covered by that canvas are kept behind it to preserve source z-order.
+- Preserve the MS-ODRAW flowchart terminator preset (`msosptFlowChartTerminator`,
+  `0x74` / 116) as an editable native VML shape instead of deferring and
+  dropping its object anchor.
 
 ## 0.36.4 - 2026-07-22
 

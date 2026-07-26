@@ -363,6 +363,44 @@ class FloatingShapeTests(unittest.TestCase):
             ]
             self.assertEqual(emitted, ["109", "110", "111", "114"])
 
+    def test_recovers_flowchart_terminator_preset(self) -> None:
+        shape_id = 116
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
+            shape_types_by_shape_id={shape_id: shape_id},
+        )
+        report = ConversionReport("flowchart-terminator.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertEqual(collection.shapes[0].shape_type, shape_id)
+        self.assertFalse(report.warnings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "flowchart-terminator.docx"
+            write_docx(
+                Document((Paragraph((collection.shapes[0],)),)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        shape = root.find(f".//{V}shape")
+        assert shape is not None
+        self.assertEqual(
+            shape.get("{urn:schemas-microsoft-com:office:office}spt"),
+            "116",
+        )
+        self.assertEqual(
+            shape.get("path"),
+            "m3475,qx,10800,3475,21600l18125,21600qx21600,10800,18125,xe",
+        )
+
     def test_recovers_chevron_preset_shape(self) -> None:
         shape_id = 55
         officeart = OfficeArtShapeCollection(
