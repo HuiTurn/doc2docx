@@ -1693,7 +1693,11 @@ def _append_floating_shape(
         f"margin-top:{_twips_as_points(floating_shape.top_twips)}pt",
         f"width:{_twips_as_points(floating_shape.width_twips)}pt",
         f"height:{_twips_as_points(floating_shape.height_twips)}pt",
-        f"z-index:{-1 if floating_shape.behind_text else 1}",
+        (
+            f"z-index:{floating_shape.vml_z_index}"
+            if floating_shape.vml_z_index is not None
+            else f"z-index:{-1 if floating_shape.behind_text else 1}"
+        ),
         f"mso-position-horizontal-relative:{horizontal_relative}",
         f"mso-position-vertical-relative:{vertical_relative}",
     ]

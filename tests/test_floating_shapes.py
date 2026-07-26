@@ -135,6 +135,112 @@ class FloatingShapeTests(unittest.TestCase):
         assert wrap is not None
         self.assertEqual(wrap.get("type"), "tight")
 
+    def test_flattens_notprimitive_group_frame_as_unstroked_rect(self) -> None:
+        from doc2docx.msdoc.officeart import OfficeArtChildAnchor
+
+        parent_id = 1026
+        child_id = 1028
+        officeart = OfficeArtShapeCollection(
+            {
+                parent_id: ShapeStyle(
+                    fill_enabled=True,
+                    fill_color="FFFFFF",
+                    line_enabled=True,
+                ),
+                child_id: ShapeStyle(),
+            },
+            shape_types_by_shape_id={parent_id: 0, child_id: 202},
+            child_anchors_by_shape_id={
+                child_id: OfficeArtChildAnchor(
+                    parent_shape_id=parent_id,
+                    group_left=0,
+                    group_top=0,
+                    group_right=1000,
+                    group_bottom=1000,
+                    left=100,
+                    top=100,
+                    right=400,
+                    bottom=400,
+                )
+            },
+        )
+        report = ConversionReport("canvas-frame.doc")
+        collection = read_main_floating_shapes(
+            {parent_id: _anchor(parent_id)},
+            officeart,
+            excluded_shape_ids=frozenset((child_id,)),
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(len(collection.shapes), 1)
+        frame = collection.shapes[0]
+        self.assertEqual(frame.shape_type, 1)
+        self.assertEqual(frame.vml_z_index, 0)
+        assert frame.shape_style is not None
+        self.assertTrue(frame.shape_style.fill_enabled)
+        self.assertFalse(frame.shape_style.line_enabled)
+        self.assertEqual(
+            [warning.code for warning in report.warnings],
+            [
+                "GROUPED_FLOATING_FRAME_FLATTENED",
+                "FLOATING_SHAPE_STYLE_APPROXIMATED",
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "canvas-frame.docx"
+            write_docx(
+                Document((Paragraph((frame,)),)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        rect = root.find(f".//{V}rect")
+        assert rect is not None
+        self.assertEqual(rect.get("filled"), "t")
+        self.assertEqual(rect.get("stroked"), "f")
+        self.assertIn("z-index:0", rect.get("style", ""))
+
+    def test_omits_transparent_notprimitive_group_frame(self) -> None:
+        from doc2docx.msdoc.officeart import OfficeArtChildAnchor
+
+        parent_id = 1026
+        child_id = 1028
+        officeart = OfficeArtShapeCollection(
+            {
+                parent_id: ShapeStyle(fill_enabled=False, line_enabled=False),
+                child_id: ShapeStyle(),
+            },
+            shape_types_by_shape_id={parent_id: 0, child_id: 202},
+            child_anchors_by_shape_id={
+                child_id: OfficeArtChildAnchor(
+                    parent_shape_id=parent_id,
+                    group_left=0,
+                    group_top=0,
+                    group_right=1000,
+                    group_bottom=1000,
+                    left=100,
+                    top=100,
+                    right=400,
+                    bottom=400,
+                )
+            },
+        )
+        report = ConversionReport("transparent-group-frame.doc")
+        collection = read_main_floating_shapes(
+            {parent_id: _anchor(parent_id)},
+            officeart,
+            excluded_shape_ids=frozenset((child_id,)),
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertFalse(collection.shapes)
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+
     def test_recovers_arrow_line_and_plaque_presets(self) -> None:
         shape_types = (13, 14, 15, 20, 21)
         officeart = OfficeArtShapeCollection(

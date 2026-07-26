@@ -559,6 +559,9 @@ def _read_textboxes(
             anchor_locked=parent.anchor_locked,
         )
 
+    resolved_entries: list[
+        tuple[_TextBoxEntry, ShapeAnchor | None, ShapeAnchor, ShapeStyle | None]
+    ] = []
     for entry in entries:
         direct_spa = spas.get(entry.shape_id)
         spa = resolve_anchor(entry.shape_id)
@@ -581,14 +584,55 @@ def _read_textboxes(
                 f"{context_name} {entry.index} has no {spa_structure} shape "
                 f"{entry.shape_id}"
             )
-        if direct_spa is None:
-            reconstructed_grouped_shape_ids.append(entry.shape_id)
-        absolute_anchor_cp = anchor_story_cp_start + spa.anchor_cp
         shape_style = (
             shape_style_at(entry.shape_id) if shape_style_at is not None else None
         )
+        if direct_spa is None:
+            reconstructed_grouped_shape_ids.append(entry.shape_id)
+        resolved_entries.append((entry, direct_spa, spa, shape_style))
+
+    # Filled drawing-canvas parents that host reconstructed textboxes cover
+    # unfilled Spa sibling textboxes in Word's z-order. Emit those siblings
+    # behind text so the canvas underlay (z-index 0) hides their ghost stroke.
+    covered_by_filled_group: set[int] = set()
+    if shape_child_anchor_at is not None and shape_style_at is not None:
+        filled_group_bounds: list[ShapeAnchor] = []
+        for entry, direct_spa, _spa, _style in resolved_entries:
+            if direct_spa is not None:
+                continue
+            child = shape_child_anchor_at(entry.shape_id)
+            if child is None:
+                continue
+            parent_spa = spas.get(child.parent_shape_id)
+            parent_style = shape_style_at(child.parent_shape_id)
+            if (
+                parent_spa is not None
+                and parent_style is not None
+                and parent_style.fill_enabled
+            ):
+                filled_group_bounds.append(parent_spa)
+        for entry, direct_spa, spa, shape_style in resolved_entries:
+            if direct_spa is None or shape_style is None or shape_style.fill_enabled:
+                continue
+            for group in filled_group_bounds:
+                if (
+                    spa.left >= group.left
+                    and spa.right <= group.right
+                    and spa.top >= group.top
+                    and spa.bottom <= group.bottom
+                ):
+                    covered_by_filled_group.add(entry.shape_id)
+                    break
+
+    for entry, _direct_spa, spa, shape_style in resolved_entries:
+        absolute_anchor_cp = anchor_story_cp_start + spa.anchor_cp
         if shape_style is None or shape_style.approximated:
             approximated_style_count += 1
+        behind_text = (
+            True
+            if entry.shape_id in covered_by_filled_group
+            else spa.behind_text
+        )
         by_anchor_cp_lists.setdefault(absolute_anchor_cp, []).append(FloatingTextBox(
             shape_id=entry.shape_id,
             anchor_cp=absolute_anchor_cp,
@@ -600,7 +644,7 @@ def _read_textboxes(
             vertical_relative=spa.vertical_relative,
             wrap_type=spa.wrap_type,
             wrap_side=spa.wrap_side,
-            behind_text=spa.behind_text,
+            behind_text=behind_text,
             anchor_locked=spa.anchor_locked,
             paragraphs=entry.paragraphs,
             blocks=entry.blocks,

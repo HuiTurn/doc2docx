@@ -822,6 +822,8 @@ class FloatingShape:
     rotation_degrees: float = 0.0
     geometry_path: str | None = None
     shape_style: "ShapeStyle | None" = None
+    # Explicit VML z-index; None means -1 when behind_text else 1.
+    vml_z_index: int | None = None
     properties: CharacterProperties = field(default_factory=CharacterProperties)
 
 

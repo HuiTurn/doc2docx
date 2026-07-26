@@ -43,6 +43,10 @@ current capabilities without release-by-release notes.
 - Emit empty OfficeArt PictureFrame shapes (preset 75, no BLIP) as unfilled
   VML `<v:rect>` elements so Spa tight/through wrap geometry is preserved
   instead of triggering `FLOATING_SHAPE_TYPES_DEFERRED` and dropping the anchor.
+- Flatten filled drawing-canvas/group Spa parents to unstroked VML rectangles
+  at `z-index:0`, reporting `GROUPED_FLOATING_FRAME_FLATTENED`, so independently
+  positioned children retain their visible canvas underlay; unfilled Spa
+  textboxes covered by that canvas are kept behind it to preserve source z-order.
 
 ## 0.36.4 - 2026-07-22
 

@@ -81,6 +81,16 @@ def _is_line_like(
     return shape_type == 0 and style_line_enabled and not style_fill_enabled
 
 
+def _is_group_frame_parent(
+    shape_id: int,
+    officeart: OfficeArtShapeCollection,
+) -> bool:
+    return any(
+        child.parent_shape_id == shape_id
+        for child in officeart.child_anchors_by_shape_id.values()
+    )
+
+
 def _resolve_grouped_anchor(
     shape_id: int,
     anchors_by_shape_id: Mapping[int, ShapeAnchor],
@@ -156,6 +166,7 @@ def _read_floating_shapes(
     approximated_style_count = 0
     approximated_geometry_count = 0
     ungrouped_line_count = 0
+    emitted_group_frame_count = 0
     emitted_shape_ids: set[int] = set()
     resolved_anchors: dict[int, ShapeAnchor] = dict(anchors_by_shape_id)
 
@@ -206,21 +217,45 @@ def _read_floating_shapes(
             style_line_enabled=style.line_enabled,
             style_fill_enabled=style.fill_enabled,
         )
+        group_frame = False
+        vml_z_index = None
         if shape_type not in _SUPPORTED_SHAPE_TYPES and not line_like:
             geometry_path = officeart.geometry_path_at(anchor.shape_id)
             if geometry_path is None:
                 polygon = officeart.wrap_polygon_at(anchor.shape_id)
                 if len(polygon) < 3:
-                    deferred_types[shape_type or 0] = (
-                        deferred_types.get(shape_type or 0, 0) + 1
+                    if (
+                        shape_type == 0
+                        and _is_group_frame_parent(anchor.shape_id, officeart)
+                        and style is not None
+                        and style.fill_enabled
+                    ):
+                        # Flatten a visible drawing-canvas parent underneath
+                        # its independently positioned children. Word does not
+                        # paint the container stroke after the group is split.
+                        group_frame = True
+                        shape_type = 1
+                        vml_z_index = 0
+                        if style.line_enabled:
+                            style = replace(style, line_enabled=False)
+                            approximated_style_count += 1
+                    elif shape_type == 0 and _is_group_frame_parent(
+                        anchor.shape_id, officeart
+                    ):
+                        # Transparent group chrome has nothing to paint.
+                        continue
+                    else:
+                        deferred_types[shape_type or 0] = (
+                            deferred_types.get(shape_type or 0, 0) + 1
+                        )
+                        continue
+                else:
+                    geometry_path = (
+                        f"m{polygon[0][0]},{polygon[0][1]}l"
+                        + ",".join(f"{x},{y}" for x, y in polygon[1:])
+                        + "xe"
                     )
-                    continue
-                geometry_path = (
-                    f"m{polygon[0][0]},{polygon[0][1]}l"
-                    + ",".join(f"{x},{y}" for x, y in polygon[1:])
-                    + "xe"
-                )
-                approximated_geometry_count += 1
+                    approximated_geometry_count += 1
         elif line_like and shape_type not in _SUPPORTED_SHAPE_TYPES:
             # Emit NotPrimitive stroke-only connectors with the straight-line path.
             shape_type = 20
@@ -255,6 +290,7 @@ def _read_floating_shapes(
             rotation_degrees=officeart.rotation_at(anchor.shape_id),
             geometry_path=geometry_path,
             shape_style=shape_style,
+            vml_z_index=vml_z_index,
             properties=replace(
                 properties,
                 special=None,
@@ -263,6 +299,8 @@ def _read_floating_shapes(
             ),
         )
         emit(shape)
+        if group_frame:
+            emitted_group_frame_count += 1
 
     if deferred_types:
         report.warning(
@@ -273,6 +311,14 @@ def _read_floating_shapes(
             shape_types=[
                 f"0x{value:03X}" for value in sorted(deferred_types)
             ],
+        )
+    if emitted_group_frame_count:
+        report.warning(
+            "GROUPED_FLOATING_FRAME_FLATTENED",
+            "drawing-canvas or group frame containers were emitted as unstroked "
+            "filled rectangles under ungrouped children",
+            location=SourceLocation(story=anchor_story_name),
+            shape_count=emitted_group_frame_count,
         )
     if ungrouped_line_count:
         report.warning(
