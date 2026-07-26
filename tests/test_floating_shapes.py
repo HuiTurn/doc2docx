@@ -586,6 +586,53 @@ class FloatingShapeTests(unittest.TestCase):
         self.assertEqual(path.get("textboxrect"), "4353,0,17214,21600")
         self.assertIsNone(path.get(f"{O}extrusionok"))
 
+    def test_recovers_flowchart_manual_input_preset(self) -> None:
+        shape_id = 118
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
+            shape_types_by_shape_id={shape_id: shape_id},
+        )
+        report = ConversionReport("flowchart-manual-input.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertEqual(collection.shapes[0].shape_type, shape_id)
+        self.assertFalse(report.warnings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "flowchart-manual-input.docx"
+            write_docx(
+                Document((Paragraph((collection.shapes[0],)),)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        shapetype = root.find(f".//{V}shapetype")
+        shape = root.find(f".//{V}shape")
+        assert shapetype is not None and shape is not None
+        self.assertEqual(shapetype.get(f"{O}spt"), "118")
+        self.assertEqual(
+            shapetype.get("path"),
+            "m,4292l21600,r,21600l,21600xe",
+        )
+        self.assertEqual(shape.get("type"), "#_x0000_t118")
+        path = shapetype.find(f"{V}path")
+        assert path is not None
+        self.assertEqual(path.get("gradientshapeok"), "t")
+        self.assertEqual(path.get(f"{O}connecttype"), "custom")
+        self.assertEqual(
+            path.get(f"{O}connectlocs"),
+            "10800,2146;0,10800;10800,21600;21600,10800",
+        )
+        self.assertEqual(path.get("textboxrect"), "0,4291,21600,21600")
+        self.assertIsNone(path.get(f"{O}extrusionok"))
+
     def test_recovers_chevron_preset_shape(self) -> None:
         shape_id = 55
         officeart = OfficeArtShapeCollection(
