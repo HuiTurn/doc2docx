@@ -201,6 +201,9 @@ def read_shape_anchors(
             raise InvalidWordDocument(
                 f"{spa_structure} anchor at CP {anchor_cp} is not a shape character"
             )
+        # MS-DOC: fBelowText is meaningful only when wr == 3 (no wrapping /
+        # in-front-or-behind). For square/tight/through it MUST be ignored.
+        behind_text = bool(flags & 0x4000) if wrap_code == 3 else False
         spas[shape_id] = ShapeAnchor(
             anchor_cp=anchor_cp,
             shape_id=shape_id,
@@ -212,7 +215,7 @@ def read_shape_anchors(
             vertical_relative=_VERTICAL_RELATIVE[vertical_code],
             wrap_type=_WRAP_TYPE[wrap_code],
             wrap_side=_WRAP_SIDE[wrap_side_code],
-            behind_text=bool(flags & 0x4000),
+            behind_text=behind_text,
             anchor_locked=bool(flags & 0x8000),
         )
     return spas
@@ -560,7 +563,7 @@ def _read_textboxes(
         )
 
     resolved_entries: list[
-        tuple[_TextBoxEntry, ShapeAnchor | None, ShapeAnchor, ShapeStyle | None]
+        tuple[object, ShapeAnchor | None, ShapeAnchor, ShapeStyle | None]
     ] = []
     for entry in entries:
         direct_spa = spas.get(entry.shape_id)
@@ -597,7 +600,7 @@ def _read_textboxes(
     covered_by_filled_group: set[int] = set()
     if shape_child_anchor_at is not None and shape_style_at is not None:
         filled_group_bounds: list[ShapeAnchor] = []
-        for entry, direct_spa, _spa, _style in resolved_entries:
+        for entry, direct_spa, spa, _style in resolved_entries:
             if direct_spa is not None:
                 continue
             child = shape_child_anchor_at(entry.shape_id)
@@ -624,7 +627,7 @@ def _read_textboxes(
                     covered_by_filled_group.add(entry.shape_id)
                     break
 
-    for entry, _direct_spa, spa, shape_style in resolved_entries:
+    for entry, direct_spa, spa, shape_style in resolved_entries:
         absolute_anchor_cp = anchor_story_cp_start + spa.anchor_cp
         if shape_style is None or shape_style.approximated:
             approximated_style_count += 1

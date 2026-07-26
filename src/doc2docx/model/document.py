@@ -821,6 +821,10 @@ class FloatingShape:
     flip_vertical: bool = False
     rotation_degrees: float = 0.0
     geometry_path: str | None = None
+    # VML coordsize for geometry_path; None means the classic "21600,21600".
+    geometry_coordsize: str | None = None
+    # OfficeArt adjustValue..adjustNValue as a VML adj string (e.g. "4050").
+    geometry_adj: str | None = None
     shape_style: "ShapeStyle | None" = None
     # Explicit VML z-index; None means -1 when behind_text else 1.
     vml_z_index: int | None = None

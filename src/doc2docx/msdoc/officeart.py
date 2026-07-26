@@ -97,6 +97,10 @@ class OfficeArtShapeCollection:
         default_factory=dict
     )
     geometry_paths_by_shape_id: Mapping[int, str] = field(default_factory=dict)
+    geometry_coordsizes_by_shape_id: Mapping[int, str] = field(default_factory=dict)
+    adjustments_by_shape_id: Mapping[int, tuple[int | None, ...]] = field(
+        default_factory=dict
+    )
     wrap_distances_by_shape_id: Mapping[int, tuple[int, int, int, int]] = field(
         default_factory=dict
     )
@@ -134,6 +138,12 @@ class OfficeArtShapeCollection:
 
     def geometry_path_at(self, shape_id: int) -> str | None:
         return self.geometry_paths_by_shape_id.get(shape_id)
+
+    def geometry_coordsize_at(self, shape_id: int) -> str | None:
+        return self.geometry_coordsizes_by_shape_id.get(shape_id)
+
+    def adjustments_at(self, shape_id: int) -> tuple[int | None, ...]:
+        return self.adjustments_by_shape_id.get(shape_id, ())
 
     def wrap_distances_at(self, shape_id: int) -> tuple[int, int, int, int] | None:
         return self.wrap_distances_by_shape_id.get(shape_id)
@@ -346,6 +356,36 @@ def _rotation_property(properties: Mapping[int, _Property]) -> float:
     return value / 0x10000
 
 
+# OfficeArt adjustValue .. adjust8Value (MS-ODRAW).
+_ADJUST_PROPERTY_IDS = tuple(range(0x0147, 0x014F))
+
+
+def _geometry_adjustments(
+    properties: Mapping[int, _Property],
+) -> tuple[int | None, ...]:
+    """Return OfficeArt adjustment values, preserving leading gaps.
+
+    Word may store only adjust2Value (0x0148) and emit VML adj like ``,14040``.
+    Trailing missing values are trimmed; leading/middle gaps become empty
+    comma fields when formatted.
+    """
+
+    values: list[int | None] = []
+    seen_any = False
+    for identifier in _ADJUST_PROPERTY_IDS:
+        entry = properties.get(identifier)
+        if entry is None or entry.is_complex:
+            values.append(None)
+        else:
+            values.append(entry.value)
+            seen_any = True
+    if not seen_any:
+        return ()
+    while values and values[-1] is None:
+        values.pop()
+    return tuple(values)
+
+
 # MS-ODRAW dxWrapDistLeft / dyWrapDistTop / dxWrapDistRight / dyWrapDistBottom.
 _WRAP_DISTANCE_PROPERTY_IDS = (0x0390, 0x0391, 0x0392, 0x0393)
 
@@ -445,10 +485,24 @@ _PATH_ESCAPE = 0xA000
 _PATH_CLIENT_ESCAPE = 0xC000
 _PATH_TYPE_MASK = 0xE000
 _PATH_COUNT_MASK = 0x1FFF
+# MSOPATHESCAPEINFO: type (3) | escape (5) | segments (8)
+_PATH_ESCAPE_CODE_MASK = 0x1F00
+_PATH_ESCAPE_CODE_SHIFT = 8
+_PATH_ESCAPE_SEGMENT_MASK = 0x00FF
+# Drawing escapes that map directly to VML path modifiers (no POINT consumption).
+_PATH_ESCAPE_NO_FILL = 0x0A  # msopathEscapeNoFill -> VML "nf"
+_PATH_ESCAPE_NO_LINE = 0x0B  # msopathEscapeNoLine -> VML "ns"
 
 
-def _custom_geometry_path(properties: Mapping[int, _Property]) -> str | None:
-    """Build a VML path from OfficeArt pVertices + pSegmentInfo when present."""
+def _custom_geometry_path(
+    properties: Mapping[int, _Property],
+) -> tuple[str, str] | None:
+    """Build a VML path + coordsize from OfficeArt pVertices + pSegmentInfo.
+
+    Paths stay in the shape's native geometry space (often EMUs). Remapping to
+    a square 21600 grid loses precision for non-square shapes and leaves a thin
+    bilateral residual (e.g. five-point stars).
+    """
 
     vertices_entry = properties.get(0x0145)
     segments_entry = properties.get(0x0146)
@@ -489,13 +543,11 @@ def _custom_geometry_path(properties: Mapping[int, _Property]) -> str | None:
     bottom, _ = _simple_property(properties, 0x0143, 21600)
     if right <= left or bottom <= top:
         return None
+    coordsize = f"{right - left},{bottom - top}"
 
-    def normalize(point: tuple[int, int]) -> tuple[int, int]:
+    def localize(point: tuple[int, int]) -> tuple[int, int]:
         x, y = point
-        return (
-            round((x - left) * 21600 / (right - left)),
-            round((y - top) * 21600 / (bottom - top)),
-        )
+        return (x - left, y - top)
 
     point_index = 0
     commands: list[str] = []
@@ -505,7 +557,7 @@ def _custom_geometry_path(properties: Mapping[int, _Property]) -> str | None:
         if point_index + count_points > len(points):
             return None
         taken = [
-            normalize(points[index])
+            localize(points[index])
             for index in range(point_index, point_index + count_points)
         ]
         point_index += count_points
@@ -541,7 +593,20 @@ def _custom_geometry_path(properties: Mapping[int, _Property]) -> str | None:
         elif kind == _PATH_END:
             commands.append("e")
         elif kind in (_PATH_ESCAPE, _PATH_CLIENT_ESCAPE):
-            continue
+            escape = (segment & _PATH_ESCAPE_CODE_MASK) >> _PATH_ESCAPE_CODE_SHIFT
+            escape_segments = segment & _PATH_ESCAPE_SEGMENT_MASK
+            if escape == _PATH_ESCAPE_NO_FILL and escape_segments == 0:
+                # VML "nf": subsequent subpath is stroked without fill (arc overlay).
+                commands.append("nf")
+            elif escape == _PATH_ESCAPE_NO_LINE and escape_segments == 0:
+                # VML "ns": subsequent subpath is filled without stroke (pie body).
+                commands.append("ns")
+            elif escape_segments == 0:
+                # Editing-only escapes (auto/corner/smooth handles) consume no points.
+                continue
+            else:
+                # Point-consuming escapes (arcs, ellipses, colors) are not mapped yet.
+                return None
         else:
             return None
 
@@ -551,7 +616,7 @@ def _custom_geometry_path(properties: Mapping[int, _Property]) -> str | None:
         return None
     if commands[-1] != "e":
         commands.append("e")
-    return "".join(commands)
+    return "".join(commands), coordsize
 
 
 def _shape_style(properties: Mapping[int, _Property]) -> ShapeStyle:
@@ -999,6 +1064,8 @@ def read_officeart_shapes(
     unsupported_image_types_by_shape_id: dict[int, int] = {}
     wrap_polygons_by_shape_id: dict[int, tuple[tuple[int, int], ...]] = {}
     geometry_paths_by_shape_id: dict[int, str] = {}
+    geometry_coordsizes_by_shape_id: dict[int, str] = {}
+    adjustments_by_shape_id: dict[int, tuple[int | None, ...]] = {}
     wrap_distances_by_shape_id: dict[int, tuple[int, int, int, int]] = {}
     child_anchors_by_shape_id: dict[int, OfficeArtChildAnchor] = {}
     for drawing_label, drawing in drawings:
@@ -1043,9 +1110,14 @@ def read_officeart_shapes(
             wrap_polygon = _wrap_polygon(properties)
             if wrap_polygon:
                 wrap_polygons_by_shape_id[shape_id] = wrap_polygon
-            geometry_path = _custom_geometry_path(properties)
-            if geometry_path is not None:
+            geometry = _custom_geometry_path(properties)
+            if geometry is not None:
+                geometry_path, geometry_coordsize = geometry
                 geometry_paths_by_shape_id[shape_id] = geometry_path
+                geometry_coordsizes_by_shape_id[shape_id] = geometry_coordsize
+            adjustments = _geometry_adjustments(properties)
+            if adjustments:
+                adjustments_by_shape_id[shape_id] = adjustments
             wrap_distances = _wrap_distances(properties)
             if wrap_distances is not None:
                 wrap_distances_by_shape_id[shape_id] = wrap_distances
@@ -1072,6 +1144,8 @@ def read_officeart_shapes(
         ),
         wrap_polygons_by_shape_id=wrap_polygons_by_shape_id,
         geometry_paths_by_shape_id=geometry_paths_by_shape_id,
+        geometry_coordsizes_by_shape_id=geometry_coordsizes_by_shape_id,
+        adjustments_by_shape_id=adjustments_by_shape_id,
         wrap_distances_by_shape_id=wrap_distances_by_shape_id,
         child_anchors_by_shape_id=child_anchors_by_shape_id,
     )

@@ -22,17 +22,30 @@ faithful conversion.
 - Converts footnotes and endnotes—including custom separators, placement, and
   numbering controls—plus comments, named bookmarks, safe document-local
   reference fields, common date/metadata/page/statistic fields, and positioned
-  textboxes to native WordprocessingML structures.
+  textboxes (including drawing-canvas groups flattened to a filled underlay
+  plus independently positioned children) to native WordprocessingML structures.
 - Preserves core document metadata such as title, author, subject, keywords,
   revision, and creation/modification dates.
 - Restores inline and floating PNG, JPEG, BMP/DIB, TIFF, EMF, and WMF pictures
   in the main document and header/footer stories, including rotation, flips,
-  tight/through wrap polygons, and common floating preset shapes such as
-  polygons, stars (5/8/16-point), arrows (left/up/down/left-right, striped,
-  notched), chevrons, bevels, waves, lightning bolts, suns, moons,
-  cubes/cans/donuts, flowchart process/decision/data/document shapes, lines,
-  and plaques. Adjustment-formula presets are emitted from Word's authoritative
-  VML geometry so curves and star points render exactly.
+  tight/through wrap polygons (bounding-rectangle contour when OfficeArt omits
+  vertices), empty PictureFrame shapes used only for wrap (no BLIP), and common
+  floating preset shapes such as polygons, diamonds, stars (5/8/16-point),
+  arrows (left/up/down/left-right/up-down, striped, notched, and curved
+  right/left/up/down), smile faces, ribbons, arrow callouts, folded corners,
+  action buttons (blank through navigation/document icons), brackets/braces,
+  explosions/seals, no-symbol/math symbols, chevrons, bevels, waves,
+  lightning bolts, suns, moons, cubes/cans/donuts, flowchart
+  process/decision/data/document and extended flowchart symbols (sort, merge,
+  delay, display, punched tape, etc.), lines, and plaques. Path-only and
+  adjustment-formula presets (including diamonds, flowcharts, classic and modern cans,
+  cubes, donuts, chevrons, pentagons, plaques, and cardinal/left-right arrows)
+  are emitted as Word-style `<v:shapetype>` references with authoritative VML
+  geometry (including Word SaveAs `<v:handles>`), and OfficeArt
+  `adjustValue`/`adjust2Value` are passed through as VML `adj` (sparse/short
+  forms are filled from the preset default on emit, e.g. `,14040` →
+  `5400,14040`, `8100` → `8100,5400`) so lid depth and arrow geometry match
+  the source.
 - Preserves confirmed embedded OLE ObjectPool storages as native DOCX embedded
   objects, and retains Macintosh PICT payloads for consumers that can render
   them.
@@ -102,9 +115,10 @@ destination in batch mode.
 
 Grouped/custom OfficeArt geometry and advanced drawing effects remain
 incomplete. Unsupported geometry with reliable OfficeArt vertices is emitted
-as an exact VML path; geometry with only a wrap contour is retained as an
-explicitly diagnosed contour approximation; geometry without such evidence
-is deferred. Linked or unanchored OLE storages are not activated or guessed;
+as an exact VML path in the shape's native coordinate space (including
+`nf`/`ns` from path NoFill/NoLine escapes); geometry with only a wrap contour
+is retained as an explicitly diagnosed contour approximation; geometry without
+such evidence is deferred. Linked or unanchored OLE storages are not activated or guessed;
 only confirmed embedded-object anchors are packaged. Macintosh PICT images are
 retained as original media, although rendering them depends on support in the
 DOCX consumer. The legacy macro story has no safe WordprocessingML equivalent

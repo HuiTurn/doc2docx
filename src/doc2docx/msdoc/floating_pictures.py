@@ -11,6 +11,16 @@ from ..model import CharacterProperties, FloatingPicture
 from .header_textboxes import ShapeAnchor
 from .officeart import OfficeArtShapeCollection
 
+# OfficeArt / VML geometry space. Used when tight/through wrap is requested but
+# pWrapPolygonVertices is absent — the picture frame itself is the only safe
+# contour evidence.
+_BOUNDING_RECT_WRAP_POLYGON: tuple[tuple[int, int], ...] = (
+    (0, 0),
+    (21600, 0),
+    (21600, 21600),
+    (0, 21600),
+    (0, 0),
+)
 # Word's UI default left/right wrap distance when OfficeArt omits dxWrapDist*.
 _DEFAULT_WRAP_DIST_LR_EMU = 9 * 12700
 
@@ -86,6 +96,9 @@ def _read_floating_pictures(
             )
         wrap_polygon = officeart.wrap_polygon_at(anchor.shape_id)
         if anchor.wrap_type in ("tight", "through") and not wrap_polygon:
+            # Keep the native wrap kind with a rectangular contour instead of
+            # silently demoting to wrapSquare, which changes Word's wrap engine.
+            wrap_polygon = _BOUNDING_RECT_WRAP_POLYGON
             approximated_wrap_count += 1
         wrap_distances = officeart.wrap_distances_at(anchor.shape_id)
         if wrap_distances is None:
@@ -139,7 +152,8 @@ def _read_floating_pictures(
     if approximated_wrap_count:
         report.warning(
             "FLOATING_PICTURE_WRAP_APPROXIMATED",
-            "tight/through picture wrap polygons were approximated as square wrapping",
+            "tight/through picture wrap without OfficeArt contour vertices used "
+            "the picture bounding rectangle as the wrap polygon",
             location=SourceLocation(story=anchor_story_name),
             picture_count=approximated_wrap_count,
         )

@@ -135,6 +135,10 @@ class FloatingPictureTests(unittest.TestCase):
 
         self.assertEqual([picture.shape_id for picture in collection.pictures], [100])
         self.assertEqual(report.warnings[0].code, "FLOATING_PICTURE_WRAP_APPROXIMATED")
+        self.assertEqual(
+            collection.pictures[0].wrap_polygon,
+            ((0, 0), (21600, 0), (21600, 21600), (0, 21600), (0, 0)),
+        )
 
     def test_tight_wrap_polygon_is_preserved_without_approximation(self) -> None:
         shape_id = 100
@@ -282,6 +286,52 @@ class FloatingPictureTests(unittest.TestCase):
             self.assertEqual(anchor.get("distR"), str(9 * 12700))
             self.assertEqual(anchor.get("distT"), "0")
             self.assertEqual(anchor.get("distB"), "0")
+
+    def test_word_tight_wrap_fixture_is_not_forced_behind_text(self) -> None:
+        from doc2docx import convert
+
+        source = Path("artifacts/wrap_corpus/floating_tight_inline_convert.doc")
+        if not source.is_file():
+            self.skipTest("Word-authored tight-wrap fixture is not present")
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "tight-wrap.docx"
+            result = convert(source, destination)
+            self.assertEqual(
+                result.report.statistics.get("floating_picture_count"),
+                1,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            anchor = root.find(f".//{WP}anchor")
+            assert anchor is not None
+            self.assertEqual(anchor.get("behindDoc"), "0")
+            self.assertIsNotNone(root.find(f".//{WP}wrapTight"))
+
+    def test_packages_approximated_tight_wrap_as_wrap_tight_not_square(self) -> None:
+        report = ConversionReport("approx-tight.doc")
+        collection = read_main_floating_pictures(
+            {100: _anchor(100, wrap_type="tight")},
+            OfficeArtShapeCollection(
+                {},
+                {100: OfficeArtRasterImage(_PNG, "png", "image/png", 1)},
+            ),
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        picture = collection.pictures[0]
+        self.assertEqual(report.warnings[0].code, "FLOATING_PICTURE_WRAP_APPROXIMATED")
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "approx-tight.docx"
+            write_docx(
+                Document((Paragraph((picture,)),), pictures=(picture,)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        self.assertIsNotNone(root.find(f".//{WP}wrapTight"))
+        self.assertIsNone(root.find(f".//{WP}wrapSquare"))
 
     def test_scopes_image_relationships_to_document_and_header_parts(self) -> None:
         main_picture = FloatingPicture(

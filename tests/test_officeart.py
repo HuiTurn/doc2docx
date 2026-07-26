@@ -267,6 +267,85 @@ class OfficeArtParsingTests(unittest.TestCase):
         with self.assertRaises(InvalidWordDocument):
             read_officeart_shapes(data[:-1], offset=0, size=len(data) - 1)
 
+    def test_path_nofill_noline_escapes_become_vml_nf_ns(self) -> None:
+        """msopathEscapeNoFill/NoLine must survive into VML path modifiers."""
+
+        from doc2docx.msdoc.officeart import _Property, _custom_geometry_path
+
+        # Minimal pie+arc: move, no-line, curve, line, line, close, end,
+        # move, no-fill, curve, end — same escape pattern as the arc fixture.
+        points = (
+            (10800, 0),
+            (16765, 0),
+            (21600, 4835),
+            (21600, 10800),
+            (10800, 10800),
+            (10800, 0),
+            (10800, 0),
+            (16765, 0),
+            (21600, 4835),
+            (21600, 10800),
+        )
+        point_data = b"".join(struct.pack("<ii", x, y) for x, y in points)
+        vertices = struct.pack("<HHH", len(points), len(points), 8) + point_data
+        segments = [
+            0x4000,  # move
+            0xAB00,  # escape NoLine
+            0x2001,  # curve x1
+            0x0001,  # line
+            0x0001,  # line
+            0x6001,  # close
+            0x8000,  # end
+            0x4000,  # move
+            0xAA00,  # escape NoFill
+            0x2001,  # curve x1
+            0x8000,  # end
+        ]
+        segment_data = struct.pack("<HHH", len(segments), len(segments), 2) + b"".join(
+            struct.pack("<H", value) for value in segments
+        )
+        properties = {
+            0x0140: _Property(0, False, False),
+            0x0141: _Property(0, False, False),
+            0x0142: _Property(21600, False, False),
+            0x0143: _Property(21600, False, False),
+            0x0145: _Property(len(vertices), False, True, vertices),
+            0x0146: _Property(len(segment_data), False, True, segment_data),
+        }
+
+        path, coordsize = _custom_geometry_path(properties)
+        self.assertEqual(coordsize, "21600,21600")
+        self.assertEqual(
+            path,
+            "m10800,0nsc16765,0,21600,4835,21600,10800l10800,10800l10800,0x"
+            "em10800,0nfc16765,0,21600,4835,21600,10800e",
+        )
+
+    def test_custom_geometry_keeps_native_coordspace(self) -> None:
+        """Non-square EMU geo bounds must not be remapped onto 21600²."""
+
+        from doc2docx.msdoc.officeart import _Property, _custom_geometry_path
+
+        points = ((0, 0), (1828800, 0), (914400, 1371600))
+        point_data = b"".join(struct.pack("<ii", x, y) for x, y in points)
+        vertices = struct.pack("<HHH", len(points), len(points), 8) + point_data
+        segments = [0x4000, 0x0002, 0x6001, 0x8000]  # move, line×2, close, end
+        segment_data = struct.pack("<HHH", len(segments), len(segments), 2) + b"".join(
+            struct.pack("<H", value) for value in segments
+        )
+        properties = {
+            0x0140: _Property(0, False, False),
+            0x0141: _Property(0, False, False),
+            0x0142: _Property(1828800, False, False),
+            0x0143: _Property(1371600, False, False),
+            0x0145: _Property(len(vertices), False, True, vertices),
+            0x0146: _Property(len(segment_data), False, True, segment_data),
+        }
+
+        path, coordsize = _custom_geometry_path(properties)
+        self.assertEqual(coordsize, "1828800,1371600")
+        self.assertEqual(path, "m0,0l1828800,0,914400,1371600xe")
+
 
 if __name__ == "__main__":
     unittest.main()

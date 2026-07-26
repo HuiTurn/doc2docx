@@ -9,7 +9,12 @@ import zipfile
 from xml.etree import ElementTree as ET
 
 from ..errors import PackageWriteError
-from ._vml_preset_formulas import VML_PRESET_FORMULA_PATHS, VML_PRESET_FORMULAS
+from ._vml_preset_formulas import (
+    VML_PRESET_FORMULA_PATHS,
+    VML_PRESET_FORMULAS,
+    VML_PRESET_HANDLES,
+    VML_PRESET_PATH_ATTRIBUTES,
+)
 from ..model import (
     BookmarkEnd,
     BookmarkStart,
@@ -177,84 +182,20 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
         "m10800,0l13300,7500,21600,7500,14900,12300,17400,21600,"
         "10800,15800,4200,21600,6700,12300,0,7500,8300,7500xe",
     ),
-    13: (
-        "shape",
-        "m0,8100l12960,8100,12960,0,21600,10800,12960,21600,"
-        "12960,13500,0,13500xe",
-    ),
+    # Classic right arrow (13) and pentagon (15) use VML_PRESET_FORMULA_PATHS.
     14: (
         "shape",
         "m0,5400l10800,5400,10800,0,21600,10800,10800,21600,"
         "10800,16200,0,16200xe",
     ),
-    15: (
-        "shape",
-        "m0,0l16200,0,21600,10800,16200,21600,0,21600xe",
-    ),
-    # Cube / can / donut with Word shapetype default adj=5400 baked in.
-    16: (
-        "shape",
-        "m5400,0l0,5400,0,21600,16200,21600,21600,5400,21600,0xe"
-        "m0,5400nfl16200,5400,21600,0e"
-        "m16200,5400nfl16200,21600e",
-    ),
+    # Cube/can/donut/chevron/plaque/cardinal arrows use VML_PRESET_FORMULA_PATHS.
     20: ("shape", "m0,0l21600,21600e"),
-    21: (
-        "shape",
-        "m3600,0l18000,0c18000,1980,19620,3600,21600,3600l21600,18000"
-        "c19620,18000,18000,19620,18000,21600l3600,21600"
-        "c3600,19620,1980,18000,0,18000l0,3600"
-        "c1980,3600,3600,1980,3600,0xe",
-    ),
-    22: (
-        "shape",
-        "m10800,0qx0,5400l0,16200qy10800,21600,21600,16200l21600,5400qy10800,0xe"
-        "m0,5400qy10800,0,21600,5400nfe",
-    ),
-    23: (
-        "shape",
-        "m0,10800qy10800,0,21600,10800,10800,21600,0,10800xe"
-        "m5400,10800qy10800,5400,16200,10800,10800,16200,5400,10800xe",
-    ),
-    # Cardinal arrows derived by mirroring/rotating the baked type-13 path.
-    66: (
-        "shape",
-        "m21600,8100l8640,8100,8640,0,0,10800,8640,21600,8640,13500,21600,13500xe",
-    ),
-    67: (
-        "shape",
-        "m13500,0l13500,12960,21600,12960,10800,21600,0,12960,8100,12960,8100,0xe",
-    ),
-    68: (
-        "shape",
-        "m8100,21600l8100,8640,0,8640,10800,0,21600,8640,13500,8640,13500,21600xe",
-    ),
-    69: (
-        "shape",
-        "m0,10800l5400,0,5400,8100,16200,8100,16200,0,21600,10800,"
-        "16200,21600,16200,13500,5400,13500,5400,21600xe",
-    ),
-    # Chevron (Word shapetype default adj=16200 -> @0=16200, @1=5400).
-    55: (
-        "shape",
-        "m16200,0l0,0,5400,10800,0,21600,16200,21600,21600,10800xe",
-    ),
-    # Empty PictureFrame (no BLIP) keeps its Spa wrap geometry as a rectangle.
+    # Empty PictureFrame (no BLIP) — keep as a rect for wrap-only frames.
     75: ("rect", None),
     # Flowchart presets (paths taken from Word's own VML shapetype defaults).
     109: ("shape", "m0,0l0,21600,21600,21600,21600,0xe"),
     110: ("shape", "m10800,0l0,10800,10800,21600,21600,10800xe"),
     111: ("shape", "m4321,0l21600,0,17204,21600,0,21600xe"),
-    # MS-ODRAW msosptFlowChartPredefinedProcess (0x70), from Word SaveAs VML.
-    112: (
-        "shape",
-        "m,l,21600r21600,l21600,xem2610,nfl2610,21600em18990,nfl18990,21600e",
-    ),
-    # MS-ODRAW msosptFlowChartInternalStorage (0x71), from Word SaveAs VML.
-    113: (
-        "shape",
-        "m,l,21600r21600,l21600,xem4236,nfl4236,21600em,4236nfl21600,4236e",
-    ),
     114: (
         "shape",
         "m0,20172v945,400,1887,628,2795,913c3587,21312,4342,21370,5060,21597"
@@ -264,108 +205,7 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
         "v718,-113,1398,-398,2228,-513c19635,17437,20577,17322,21597,17322"
         "l21597,0,0,0xe",
     ),
-    # MS-ODRAW msosptFlowChartMultidocument (0x73), from Word SaveAs VML.
-    115: (
-        "shape",
-        "m,20465v810,317,1620,452,2397,725c3077,21325,3790,21417,4405,21597"
-        "v1620,,2202,-180,2657,-272c7580,21280,8002,21010,8455,20917"
-        "v422,-135,810,-405,1327,-542c10205,20150,10657,19967,11080,19742"
-        "v517,-182,970,-407,1425,-590c13087,19017,13605,18745,14255,18610"
-        "v615,-180,1262,-318,1942,-408c16975,18202,17785,18022,18595,18022"
-        "r,-1670l19192,16252r808,l20000,14467r722,-75l21597,14392,21597,,2972,"
-        "r,1815l1532,1815r,1860l,3675,,20465xem1532,3675nfl18595,3675r,12677"
-        "em2972,1815nfl20000,1815r,12652e",
-    ),
-    # MS-ODRAW msosptFlowChartTerminator (0x74), from Word SaveAs VML.
-    116: (
-        "shape",
-        "m3475,qx,10800,3475,21600l18125,21600qx21600,10800,18125,xe",
-    ),
-    # MS-ODRAW msosptFlowChartPreparation (0x75), from Word SaveAs VML.
-    117: (
-        "shape",
-        "m4353,l17214,r4386,10800l17214,21600r-12861,l,10800xe",
-    ),
-    # MS-ODRAW msosptFlowChartManualInput (0x76), from Word SaveAs VML.
-    118: (
-        "shape",
-        "m,4292l21600,r,21600l,21600xe",
-    ),
-    # MS-ODRAW msosptFlowChartManualOperation (0x77), from Word SaveAs VML.
-    119: (
-        "shape",
-        "m,l21600,,17240,21600r-12880,xe",
-    ),
-    # MS-ODRAW msosptFlowChartConnector (0x78), from Word SaveAs VML.
-    120: (
-        "shape",
-        "m10800,qx,10800,10800,21600,21600,10800,10800,xe",
-    ),
-    # MS-ODRAW msosptFlowChartOffpageConnector (0xB1), from Word SaveAs VML.
-    177: (
-        "shape",
-        "m,l21600,r,17255l10800,21600,,17255xe",
-    ),
 }
-
-# Word emits these verified multi-subpath presets through an independent
-# <v:shapetype>. Keeping the exact per-preset <v:path> metadata avoids
-# edge-pixel changes from inlining their geometry directly on <v:shape>.
-_VML_NATIVE_SHAPETYPE_PATH_ATTRIBUTES: dict[int, dict[str, str]] = {
-    112: {
-        "o:extrusionok": "f",
-        "gradientshapeok": "t",
-        "o:connecttype": "rect",
-        "textboxrect": "2610,0,18990,21600",
-    },
-    113: {
-        "o:extrusionok": "f",
-        "gradientshapeok": "t",
-        "o:connecttype": "rect",
-        "textboxrect": "4236,4236,21600,21600",
-    },
-    115: {
-        "o:extrusionok": "f",
-        "o:connecttype": "custom",
-        "o:connectlocs": "10800,0;0,10800;10800,19890;21600,10800",
-        "textboxrect": "0,3675,18595,18022",
-    },
-    117: {
-        "gradientshapeok": "t",
-        "o:connecttype": "rect",
-        "textboxrect": "4353,0,17214,21600",
-    },
-    118: {
-        "gradientshapeok": "t",
-        "o:connecttype": "custom",
-        "o:connectlocs": "10800,2146;0,10800;10800,21600;21600,10800",
-        "textboxrect": "0,4291,21600,21600",
-    },
-    119: {
-        "gradientshapeok": "t",
-        "o:connecttype": "custom",
-        "o:connectlocs": "10800,0;2180,10800;10800,21600;19420,10800",
-        "textboxrect": "4321,0,17204,21600",
-    },
-    120: {
-        "gradientshapeok": "t",
-        "o:connecttype": "custom",
-        "o:connectlocs": (
-            "10800,0;3163,3163;0,10800;3163,18437;10800,21600;"
-            "18437,18437;21600,10800;18437,3163"
-        ),
-        "textboxrect": "3163,3163,18437,18437",
-    },
-    177: {
-        "gradientshapeok": "t",
-        "o:connecttype": "rect",
-        "textboxrect": "0,0,21600,17255",
-    },
-}
-
-_VML_NATIVE_SHAPETYPE_MITER_STROKE = frozenset(
-    (112, 113, 115, 117, 118, 119, 177)
-)
 
 ET.register_namespace("w", W_NS)
 ET.register_namespace("r", R_NS)
@@ -1713,6 +1553,82 @@ def _emus_as_points(value: int) -> str:
     return f"{points:.4f}".rstrip("0").rstrip(".")
 
 
+def _append_vml_preset_shapetype(pict: ET.Element, shape_type: int) -> None:
+    """Emit Word-style ``<v:shapetype>`` for a formula-based AutoShape preset."""
+
+    path = VML_PRESET_FORMULA_PATHS[shape_type]
+    default_adj, formulas = VML_PRESET_FORMULAS.get(shape_type, (None, []))
+    attributes = {
+        "id": f"_x0000_t{shape_type}",
+        "coordsize": "21600,21600",
+        _qn(OFFICE_NS, "spt"): str(shape_type),
+        "path": path,
+    }
+    if default_adj is not None:
+        attributes["adj"] = default_adj
+    shapetype = ET.SubElement(pict, _qn(VML_NS, "shapetype"), attributes)
+    ET.SubElement(shapetype, _qn(VML_NS, "stroke"), {"joinstyle": "miter"})
+    if formulas:
+        formulas_el = ET.SubElement(shapetype, _qn(VML_NS, "formulas"))
+        for eqn in formulas:
+            ET.SubElement(formulas_el, _qn(VML_NS, "f"), {"eqn": eqn})
+    path_attributes = VML_PRESET_PATH_ATTRIBUTES.get(shape_type)
+    if path_attributes:
+        # Word stores some path flags in the office namespace (extrusionok).
+        resolved = {
+            (
+                _qn(OFFICE_NS, key)
+                if key
+                in {
+                    "extrusionok",
+                    "connecttype",
+                    "connectlocs",
+                    "connectangles",
+                }
+                else key
+            ): value
+            for key, value in path_attributes.items()
+        }
+        ET.SubElement(shapetype, _qn(VML_NS, "path"), resolved)
+    handles = VML_PRESET_HANDLES.get(shape_type)
+    if handles:
+        # Word evaluates some adjusted presets (e.g. modern can) only when the
+        # shapetype carries the same <v:handles> definitions as SaveAs.
+        handles_el = ET.SubElement(shapetype, _qn(VML_NS, "handles"))
+        for handle in handles:
+            ET.SubElement(handles_el, _qn(VML_NS, "h"), dict(handle))
+
+
+def _materialize_vml_adj(
+    default_adj: str | None, override_adj: str | None
+) -> str | None:
+    """Fill missing VML adj slots from the preset default.
+
+    Word SaveAs keeps defaults on ``<v:shapetype adj="5400,5400">`` and lets
+    shapes override with sparse (``,14040``) or short (``8100``) values. We emit
+    path + formulas on the shape itself, so omitted slots must be materialized
+    or Word treats them as zero and distorts geometry.
+    """
+
+    if override_adj is None:
+        return default_adj
+    if default_adj is None:
+        return override_adj
+    defaults = default_adj.split(",")
+    overrides = override_adj.split(",")
+    if len(overrides) >= len(defaults) and "" not in overrides:
+        return override_adj
+    length = max(len(defaults), len(overrides))
+    merged: list[str] = []
+    for index in range(length):
+        override = overrides[index] if index < len(overrides) else ""
+        default = defaults[index] if index < len(defaults) else ""
+        merged.append(override if override != "" else default)
+    while merged and merged[-1] == "":
+        merged.pop()
+    return ",".join(merged) if merged else None
+
+
 def _opacity_as_percentage(value: int) -> str:
     percentage = value * 100 / 0x10000
     return f"{percentage:.3f}".rstrip("0").rstrip(".") + "%"
@@ -1841,76 +1757,56 @@ def _append_floating_shape(
         shape_attributes["strokeweight"] = (
             f"{_emus_as_points(shape_style.line_width_emu)}pt"
         )
-    native_shapetype_path_attributes = (
-        _VML_NATIVE_SHAPETYPE_PATH_ATTRIBUTES.get(floating_shape.shape_type)
-        if floating_shape.geometry_path is None
-        else None
+    # Formula presets must use a separate <v:shapetype> like Word SaveAs;
+    # inlining path/formulas on the shape leaves residual geometry for cubes
+    # and similar 3D-ish presets even when limo/adj are present.
+    use_shapetype = (
+        floating_shape.geometry_path is None
+        and floating_shape.shape_type in VML_PRESET_FORMULAS
     )
-    use_native_shapetype = native_shapetype_path_attributes is not None
-    if use_native_shapetype:
-        element_name, path = _VML_PRESET_SHAPES[floating_shape.shape_type]
-        assert element_name == "shape" and path is not None
-        shapetype_id = f"_x0000_t{floating_shape.shape_type}"
-        shapetype = ET.SubElement(
-            pict,
-            _qn(VML_NS, "shapetype"),
-            {
-                "id": shapetype_id,
-                "coordsize": "21600,21600",
-                _qn(OFFICE_NS, "spt"): str(floating_shape.shape_type),
-                "path": path,
-            },
-        )
-        if floating_shape.shape_type in _VML_NATIVE_SHAPETYPE_MITER_STROKE:
-            ET.SubElement(
-                shapetype,
-                _qn(VML_NS, "stroke"),
-                {"joinstyle": "miter"},
-            )
-        assert native_shapetype_path_attributes is not None
-        path_attributes = {
-            (
-                _qn(OFFICE_NS, name.removeprefix("o:"))
-                if name.startswith("o:")
-                else name
-            ): value
-            for name, value in native_shapetype_path_attributes.items()
-        }
-        ET.SubElement(
-            shapetype,
-            _qn(VML_NS, "path"),
-            path_attributes,
-        )
-        shape_attributes["type"] = f"#{shapetype_id}"
-    elif floating_shape.geometry_path is not None:
+    if floating_shape.geometry_path is not None:
         element_name, path = "shape", floating_shape.geometry_path
+    elif use_shapetype:
+        element_name, path = "shape", None
     elif floating_shape.shape_type in VML_PRESET_FORMULA_PATHS:
         element_name, path = "shape", VML_PRESET_FORMULA_PATHS[floating_shape.shape_type]
     else:
         element_name, path = _VML_PRESET_SHAPES[floating_shape.shape_type]
-    if path is not None and not use_native_shapetype:
-        shape_attributes["coordsize"] = "21600,21600"
+    if path is not None:
+        shape_attributes["coordsize"] = (
+            floating_shape.geometry_coordsize or "21600,21600"
+        )
         shape_attributes["path"] = path
-    if element_name == "shape" and not use_native_shapetype:
+    if element_name == "shape" and not use_shapetype:
         shape_attributes[_qn(OFFICE_NS, "spt")] = str(
             floating_shape.shape_type
         )
+    if use_shapetype:
+        shape_attributes["type"] = f"#_x0000_t{floating_shape.shape_type}"
+        _append_vml_preset_shapetype(pict, floating_shape.shape_type)
     shape = ET.SubElement(
         pict,
         _qn(VML_NS, element_name),
         shape_attributes,
     )
-    # Presets whose path references formula variables (@0..@N) carry Word's
-    # authoritative adjustment + <v:f eqn> formulas so the consumer evaluates
-    # exact geometry instead of an approximated literal path.
-    if floating_shape.shape_type in VML_PRESET_FORMULAS:
+    if use_shapetype:
+        # Sparse/short adj inherits empty slots from the shapetype default.
+        if floating_shape.geometry_adj is not None:
+            shape.set("adj", floating_shape.geometry_adj)
+    elif floating_shape.shape_type in VML_PRESET_FORMULAS:
         adj, formulas = VML_PRESET_FORMULAS[floating_shape.shape_type]
+        adj = _materialize_vml_adj(adj, floating_shape.geometry_adj)
         if adj is not None:
             shape.set("adj", adj)
         if formulas:
             formulas_el = ET.SubElement(shape, _qn(VML_NS, "formulas"))
             for eqn in formulas:
                 ET.SubElement(formulas_el, _qn(VML_NS, "f"), {"eqn": eqn})
+        path_attributes = VML_PRESET_PATH_ATTRIBUTES.get(
+            floating_shape.shape_type
+        )
+        if path_attributes:
+            ET.SubElement(shape, _qn(VML_NS, "path"), path_attributes)
     if shape_style.fill_enabled and shape_style.fill_opacity < 0x10000:
         ET.SubElement(
             shape,

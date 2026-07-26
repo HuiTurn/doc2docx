@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 
 from ..diagnostics import ConversionReport, SourceLocation
 from ..errors import InvalidWordDocument
-from ..model import CharacterProperties, FloatingShape
+from ..model import CharacterProperties, FloatingShape, ShapeStyle
 from .header_textboxes import ShapeAnchor
 from .officeart import OfficeArtChildAnchor, OfficeArtShapeCollection
 
@@ -15,14 +15,23 @@ from .officeart import OfficeArtChildAnchor, OfficeArtShapeCollection
 # These OfficeArt presets have stable VML equivalents or bounded paths.
 # 66-69 are the cardinal / left-right arrow family commonly emitted by Word
 # AutoShapes beyond the classic msosptArrow (13) preset.
-# 55 is the chevron AutoShape; 16/22/23 are can/cube/donut; 109-116 are common
-# flowchart shapes (112/113/115/116 are MS-ODRAW predefined-process /
-# internal-storage / multidocument / terminator presets).
-# 75 is PictureFrame: when OfficeArt omits its BLIP, retain the empty frame as
-# an unfilled rectangle so wrap geometry stays.
+# 55 is the chevron AutoShape; 16/22/23 are can/cube/donut; 54 is the modern
+# Word "can" AutoShape (msoShapeCan) distinct from classic spt 22; 109-120 and
+# 177 are common flowchart shapes (process through connector / off-page).
 # 59/64/73/84/92/93/94/183/184 are star_8, wave, lightning, bevel, star_16,
 # striped_right_arrow, notched_right_arrow, sun and moon respectively; their
 # geometry is emitted from Word's authoritative <v:shapetype> path + formulas.
+# 102-105 are the curved right/left/up/down arrow family; 70 is up-down arrow;
+# 96 is the smile face AutoShape; 78/77 are ribbon AutoShapes; 53/60 are
+# bent and right arrow callouts; 65 is folded corner; 189 is blank action button;
+# 85-88 are left/right brackets and braces; 185-186 are double bracket/brace;
+# 71-72 are irregular seal / explosion AutoShapes (path-only);
+# 189-200 are Word action-button AutoShapes (blank through document/help/...);
+# additional flowchart symbols include 122, 125-128, 130-134, and 176;
+# leftovers include no-symbol 57, scroll/ribbon variants 80-82, math 97/107/108,
+# callout 129, and 4-point star 187.
+# 75 is PictureFrame: when OfficeArt omits the BLIP (empty frame used only for
+# tight/through wrap), emit as an unfilled VML rect so wrap geometry is kept.
 _SUPPORTED_SHAPE_TYPES = frozenset(
     (
         *range(1, 16),
@@ -31,34 +40,64 @@ _SUPPORTED_SHAPE_TYPES = frozenset(
         21,
         22,
         23,
+        53,
+        54,
         55,
+        57,
         59,
+        60,
         64,
+        65,
         66,
         67,
         68,
         69,
+        70,
+        71,
+        72,
         73,
         75,
+        77,
+        78,
+        80,
+        81,
+        82,
         84,
+        85,
+        86,
+        87,
+        88,
         92,
         93,
         94,
-        109,
-        110,
-        111,
-        112,
-        113,
-        114,
-        115,
-        116,
-        117,
-        118,
-        119,
-        120,
+        96,
+        97,
+        102,
+        103,
+        104,
+        105,
+        107,
+        108,
+        *range(109, 121),
+        122,
+        125,
+        126,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        176,
         177,
         183,
         184,
+        185,
+        186,
+        187,
+        *range(189, 201),
     )
 )
 # Straight lines and line-like NotPrimitive connectors from grouped diagrams.
@@ -222,6 +261,7 @@ def _read_floating_shapes(
         absolute_cp = anchor_story_cp_start + anchor.anchor_cp
         shape_type = officeart.shape_type_at(anchor.shape_id) or 0
         geometry_path = None
+        geometry_coordsize = None
         style = officeart.style_at(anchor.shape_id)
         line_like = style is not None and _is_line_like(
             shape_type,
@@ -232,6 +272,7 @@ def _read_floating_shapes(
         vml_z_index = None
         if shape_type not in _SUPPORTED_SHAPE_TYPES and not line_like:
             geometry_path = officeart.geometry_path_at(anchor.shape_id)
+            geometry_coordsize = officeart.geometry_coordsize_at(anchor.shape_id)
             if geometry_path is None:
                 polygon = officeart.wrap_polygon_at(anchor.shape_id)
                 if len(polygon) < 3:
@@ -241,9 +282,12 @@ def _read_floating_shapes(
                         and style is not None
                         and style.fill_enabled
                     ):
-                        # Flatten a visible drawing-canvas parent underneath
-                        # its independently positioned children. Word does not
-                        # paint the container stroke after the group is split.
+                        # Drawing-canvas Spa parents: emit an unstroked filled
+                        # rect at z-index 0 so ungrouped children keep the white
+                        # canvas underlay. Word does not paint the container
+                        # stroke the same way once children are flattened.
+                        # Unfilled group parents (e.g. connector-only groups)
+                        # stay omitted.
                         group_frame = True
                         shape_type = 1
                         vml_z_index = 0
@@ -253,7 +297,7 @@ def _read_floating_shapes(
                     elif shape_type == 0 and _is_group_frame_parent(
                         anchor.shape_id, officeart
                     ):
-                        # Transparent group chrome has nothing to paint.
+                        # Transparent group chrome — nothing to paint.
                         continue
                     else:
                         deferred_types[shape_type or 0] = (
@@ -266,6 +310,7 @@ def _read_floating_shapes(
                         + ",".join(f"{x},{y}" for x, y in polygon[1:])
                         + "xe"
                     )
+                    geometry_coordsize = "21600,21600"
                     approximated_geometry_count += 1
         elif line_like and shape_type not in _SUPPORTED_SHAPE_TYPES:
             # Emit NotPrimitive stroke-only connectors with the straight-line path.
@@ -300,6 +345,14 @@ def _read_floating_shapes(
             flip_vertical=officeart.is_vertically_flipped(anchor.shape_id),
             rotation_degrees=officeart.rotation_at(anchor.shape_id),
             geometry_path=geometry_path,
+            geometry_coordsize=geometry_coordsize,
+            geometry_adj=(
+                ",".join(
+                    "" if value is None else str(value)
+                    for value in officeart.adjustments_at(anchor.shape_id)
+                )
+                or None
+            ),
             shape_style=shape_style,
             vml_z_index=vml_z_index,
             properties=replace(

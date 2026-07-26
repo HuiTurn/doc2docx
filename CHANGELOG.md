@@ -37,50 +37,128 @@ current capabilities without release-by-release notes.
   instead of an approximated literal path. This clears
   `FLOATING_SHAPE_TYPES_DEFERRED` (and the accompanying dropped shape) for
   these presets.
+- Emit the donut AutoShape (OfficeArt preset 23) from Word's formula-based
+  `<v:shapetype>` path and pass through OfficeArt `adjustValue` as VML `adj`
+  instead of baking the shapetype default hole size (5400). Documents that
+  store a non-default hole (for example `adj=4050`) no longer render with the
+  wrong inner radius.
+- Emit the chevron AutoShape (OfficeArt preset 55) from Word's formula-based
+  `<v:shapetype>` path and pass through OfficeArt `adjustValue` as VML `adj`
+  instead of baking the shapetype default tip depth (16200).
+- Emit cube and can AutoShapes (OfficeArt presets 16 and 22) from Word's
+  formula-based `<v:shapetype>` paths with default `adj=5400`, replacing baked
+  literal paths so OfficeArt `adjustValue` can override perspective/lid depth.
+- Report flattened drawing-canvas / group Spa parents as
+  `GROUPED_FLOATING_FRAME_FLATTENED` (filled canvas underlay) instead of leaving
+  them deferred; transparent connector-only group parents remain omitted.
+- When floating pictures request tight/through wrap but OfficeArt omits
+  `pWrapPolygonVertices`, emit `wrapTight`/`wrapThrough` with the picture
+  bounding rectangle as the wrap polygon instead of demoting to `wrapSquare`.
+  Still reports `FLOATING_PICTURE_WRAP_APPROXIMATED`.
+- Honor MS-DOC `Spa.fBelowText` only when wrap mode is `none` (wr=3). For
+  square/tight/through wraps the bit is ignored, so Word-authored tight
+  pictures are no longer forced behind document text (`behindDoc=1`).
 - Preserve OfficeArt wrap distances (`dxWrapDist*` / `dyWrapDist*`) on floating
   pictures, and when they are absent apply Word's UI default of 9pt left/right
   (0 top/bottom) for square/tight/through wraps instead of emitting `dist*=0`.
+- Preserve the modern Word "can" AutoShape (OfficeArt preset 54 / msoShapeCan)
+  as a formula-based VML shape, and format sparse OfficeArt adjustments so a
+  lone `adjust2Value` becomes VML `adj=",14040"` instead of being dropped.
+  Clears `FLOATING_SHAPE_TYPES_DEFERRED` / `OBJECT_ANCHOR_DEFERRED` for these
+  shapes.
+- When emitting formula-based presets on the shape (without a separate
+  `<v:shapetype>`), materialize empty VML `adj` slots from the preset default
+  so sparse overrides like `,14040` become `5400,14040` and Word no longer
+  treats the missing `#0` as zero.
+- Emit classic/cardinal/left-right arrows (OfficeArt 13/66–69) from Word's
+  formula-based VML paths, and pad short `adjustValue` overrides with shapetype
+  defaults (e.g. `8100` → `8100,5400`) so arrow head/shaft geometry matches.
+- Emit the pentagon AutoShape (OfficeArt preset 15) from Word's formula-based
+  VML path with default `adj=16200`, so OfficeArt `adjustValue` (e.g. `13500`)
+  overrides the tip position instead of a baked default path.
+- Emit the plaque AutoShape (OfficeArt preset 21) from Word's quadratic
+  formula-based VML path with default `adj=3600`, and include Word's
+  `<v:path limo="10800,10800">` child so quadratic corners evaluate correctly
+  instead of the previous cubic baked approximation.
+- Emit Word's `<v:path limo="10800,10800">` for the bevel AutoShape (OfficeArt
+  preset 84) as well; the formula path alone left a visible residual until limo
+  was present.
+- Emit Word's `<v:path limo="10800,10800">` for the cube AutoShape (OfficeArt
+  preset 16); without limo the perspective edges still mismatched Word.
+- Emit formula-based AutoShapes via a Word-style `<v:shapetype>` plus
+  `type="#_x0000_tN"` reference (path/formulas/default adj/path flags on the
+  shapetype; sparse `adj` on the shape), including `o:connectlocs` /
+  `textboxrect` / `limo` / `o:extrusionok` from Word SaveAs. Closes the cube
+  residual that remained when path/formulas were inlined on the shape.
+- Emit Word SaveAs `<v:handles>` on formula shapetypes so adjusted modern can
+  (OfficeArt 54) geometry matches Word at full fidelity (SSIM 0.990 → 1.0).
 - Emit empty OfficeArt PictureFrame shapes (preset 75, no BLIP) as unfilled
-  VML `<v:rect>` elements so Spa tight/through wrap geometry is preserved
-  instead of triggering `FLOATING_SHAPE_TYPES_DEFERRED` and dropping the anchor.
-- Flatten filled drawing-canvas/group Spa parents to unstroked VML rectangles
-  at `z-index:0`, reporting `GROUPED_FLOATING_FRAME_FLATTENED`, so independently
-  positioned children retain their visible canvas underlay; unfilled Spa
-  textboxes covered by that canvas are kept behind it to preserve source z-order.
-- Preserve the MS-ODRAW flowchart terminator preset (`msosptFlowChartTerminator`,
-  `0x74` / 116) as an editable native VML shape instead of deferring and
-  dropping its object anchor.
-- Preserve the MS-ODRAW predefined-process flowchart preset
-  (`msosptFlowChartPredefinedProcess`, `0x70` / 112) as an editable native VML
-  shape instead of deferring and dropping its object anchor.
-- Preserve the MS-ODRAW internal-storage flowchart preset
-  (`msosptFlowChartInternalStorage`, `0x71` / 113) through its Word-native
-  multi-subpath VML shapetype instead of deferring and dropping its object anchor.
-- Preserve the MS-ODRAW multidocument flowchart preset
-  (`msosptFlowChartMultidocument`, `0x73` / 115) through its Word-native
-  multi-subpath VML shapetype and custom connection locations instead of
-  deferring and dropping its object anchor.
-- Preserve the MS-ODRAW preparation flowchart preset
-  (`msosptFlowChartPreparation`, `0x75` / 117) through its Word-native VML
-  shapetype and text/connection rectangle instead of deferring and dropping its
-  object anchor.
-- Preserve the MS-ODRAW manual-input flowchart preset
-  (`msosptFlowChartManualInput`, `0x76` / 118) through its Word-native VML
-  shapetype, custom connection locations, and text rectangle instead of
-  deferring and dropping its object anchor.
-- Preserve the MS-ODRAW manual-operation flowchart preset
-  (`msosptFlowChartManualOperation`, `0x77` / 119) through its Word-native VML
-  shapetype, custom connection locations, and text rectangle instead of
-  deferring and dropping its object anchor.
-- Preserve the MS-ODRAW flowchart connector preset
-  (`msosptFlowChartConnector`, `0x78` / 120) through its Word-native quadratic
-  VML shapetype, eight custom connection locations, and text rectangle instead
-  of deferring and dropping its object anchor.
-- Preserve the MS-ODRAW off-page flowchart connector preset
-  (`msosptFlowChartOffpageConnector`, `0xB1` / 177) through its Word-native VML
-  shapetype and text/connection rectangle instead of deferring and dropping its
-  object anchor.
-
+  VML `<v:rect>` so Spa tight/through wrap geometry is preserved instead of
+  dropping the frame (`FLOATING_SHAPE_TYPES_DEFERRED` / `OBJECT_ANCHOR_DEFERRED`).
+  Restores wrap holes in fixtures such as `floating_tight_wrap` (SSIM 0.707 → 1.0).
+- Flatten filled drawing-canvas / group Spa parents to unstroked VML rects at
+  `z-index:0` (`GROUPED_FLOATING_FRAME_FLATTENED`) so ungrouped children keep
+  the white canvas underlay, and place unfilled Spa textboxes covered by that
+  canvas behind it. Closes `grouped_two_textboxes` (SSIM 0.827 → 1.0) and
+  `canvas_two_textboxes` (SSIM 0.985 → 1.0).
+- Map OfficeArt path escapes `msopathEscapeNoFill` / `msopathEscapeNoLine` to
+  VML `nf` / `ns` so pie/arc NotPrimitive geometry does not stroke fill radii.
+  Closes the `arc` residual (SSIM 0.997 → ~1.0).
+- Emit path-only AutoShape presets such as lightning (OfficeArt 73) via
+  `<v:shapetype>` (including Word's miter stroke and connect path flags)
+  instead of inlining the path on the shape. Closes the lightning residual
+  (SSIM 0.99993 → 1.0).
+- Keep NotPrimitive OfficeArt freeform paths in their native geometry
+  coordinate space (`coordsize` = `geoRight-geoLeft,geoBottom-geoTop`) instead
+  of remapping onto a square `21600×21600` grid. Removes sub-pixel rounding
+  loss on non-square shapes such as five-point stars (`star_5_point` MAE → 0).
+- Emit diamond and flowchart AutoShapes (OfficeArt 4 / 109–111 / 114) via
+  Word-style path-only `<v:shapetype>` with miter stroke instead of inlining
+  literal paths on the shape. Clears tip AA residuals (`diamond` and flowchart
+  decision/data/document MAE → 0).
+- Preserve additional Word flowchart AutoShapes (OfficeArt 112–113, 115–120,
+  177: predefined process, internal storage, multi-document, terminator,
+  preparation, manual input/operation, connector, off-page connector) as
+  path-only `<v:shapetype>` floating shapes instead of
+  `FLOATING_SHAPE_TYPES_DEFERRED`. Word bilateral SSIM 1.0 on the discovery
+  fixtures.
+- Preserve curved AutoShape arrows (OfficeArt 102–105: right/left/up/down) as
+  formula-based `<v:shapetype>` floating shapes with Word path, adj defaults,
+  formulas, path flags, and handles, passing through OfficeArt adjustments.
+  Clears `FLOATING_SHAPE_TYPES_DEFERRED` for the curved-arrow family (SSIM 1.0).
+- Preserve the up-down AutoShape arrow (OfficeArt 70) as a formula-based
+  `<v:shapetype>` floating shape, including sparse OfficeArt `adjust2Value`
+  passthrough (for example `,10800` over defaults `5400,4320`). SSIM 1.0.
+- Preserve the smile-face AutoShape (OfficeArt 96) as a formula-based
+  `<v:shapetype>` floating shape with Word path (`nf` eye holes + smile curve),
+  adj default, formulas, and handles. Clears `FLOATING_SHAPE_TYPES_DEFERRED`
+  (SSIM 1.0).
+- Preserve the ribbon AutoShape (OfficeArt 78) as a formula-based
+  `<v:shapetype>` floating shape, including sparse multi-slot OfficeArt
+  adjustments (for example `14035,,17550` over defaults `14400,5400,18000,8100`).
+  SSIM 1.0.
+- Preserve arrow-callout AutoShapes (OfficeArt 53 bent callout and 60) as
+  formula-based `<v:shapetype>` floating shapes with Word path, adj, formulas,
+  and handles (including sparse `,3600` on the bent callout). SSIM 1.0.
+- Preserve the remaining discovery-corpus deferred presets — folded corner
+  (OfficeArt 65), vertical ribbon (77), and blank action button (189) — as
+  formula-based `<v:shapetype>` floating shapes. Clears the last
+  `FLOATING_SHAPE_TYPES_DEFERRED` hits in the discovery corpus (SSIM 1.0).
+- Preserve bracket and brace AutoShapes (OfficeArt 85–88 left/right bracket and
+  brace, plus 185–186 double bracket/brace) as formula-based `<v:shapetype>`
+  floating shapes. SSIM 1.0 on the expanded discovery fixtures.
+- Preserve irregular seal / explosion AutoShapes (OfficeArt 71–72) as path-only
+  `<v:shapetype>` floating shapes (Word path + miter, no formulas). SSIM 1.0.
+- Preserve Word action-button AutoShapes (OfficeArt 190–200) as formula-based
+  `<v:shapetype>` floating shapes alongside the blank button (189), including
+  bevel frame path, icon formulas, and handles. SSIM 1.0 across the family.
+- Preserve additional flowchart AutoShapes (OfficeArt 122, 125–128, 130–134,
+  and 176) as Word-style `<v:shapetype>` floating shapes (mostly path-only;
+  176 carries formulas). SSIM 1.0 on the remaining discovery2 flowchart set.
+- Preserve remaining discovery2 deferred presets — no-symbol (57), scroll/ribbon
+  variants (80–82), math pie/chord-like shapes (97/107/108), callout (129), and
+  4-point star (187) — as Word-style `<v:shapetype>` floating shapes. SSIM 1.0;
+  only pVertices parse failures (`mso_180`–`182`) remain in that corpus.
 ## 0.36.4 - 2026-07-22
 
 - Reconstruct grouped OfficeArt line connectors (flowchart arrows) from child

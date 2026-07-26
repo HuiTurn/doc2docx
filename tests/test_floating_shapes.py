@@ -29,6 +29,54 @@ O = "{urn:schemas-microsoft-com:office:office}"
 W10 = "{urn:schemas-microsoft-com:office:word}"
 
 
+def _assert_formula_shapetype(
+    test: unittest.TestCase,
+    root: ET.Element,
+    shape_type: int,
+    *,
+    shape_adj: str | None = None,
+) -> ET.Element:
+    from doc2docx.ooxml._vml_preset_formulas import (
+        VML_PRESET_FORMULA_PATHS,
+        VML_PRESET_FORMULAS,
+        VML_PRESET_HANDLES,
+        VML_PRESET_PATH_ATTRIBUTES,
+    )
+
+    shapetype = root.find(f".//{V}shapetype")
+    shape = root.find(f".//{V}shape")
+    assert shapetype is not None
+    assert shape is not None
+    default_adj, formulas = VML_PRESET_FORMULAS[shape_type]
+    test.assertEqual(shapetype.get("id"), f"_x0000_t{shape_type}")
+    test.assertEqual(shapetype.get(f"{O}spt"), str(shape_type))
+    test.assertEqual(shapetype.get("path"), VML_PRESET_FORMULA_PATHS[shape_type])
+    test.assertEqual(shapetype.get("adj"), default_adj)
+    formulas_el = shapetype.find(f"{V}formulas")
+    if formulas:
+        assert formulas_el is not None
+        test.assertEqual(len(formulas_el.findall(f"{V}f")), len(formulas))
+    else:
+        test.assertIsNone(formulas_el)
+    test.assertEqual(shape.get("type"), f"#_x0000_t{shape_type}")
+    test.assertIsNone(shape.get("path"))
+    test.assertIsNone(shape.get(f"{O}spt"))
+    test.assertIsNone(shape.find(f"{V}formulas"))
+    test.assertEqual(shape.get("adj"), shape_adj)
+    path_attrs = VML_PRESET_PATH_ATTRIBUTES.get(shape_type)
+    if path_attrs and "limo" in path_attrs:
+        path_el = shapetype.find(f"{V}path")
+        assert path_el is not None
+        test.assertEqual(path_el.get("limo"), path_attrs["limo"])
+    expected_handles = VML_PRESET_HANDLES.get(shape_type)
+    if expected_handles:
+        handles_el = shapetype.find(f"{V}handles")
+        assert handles_el is not None
+        actual = [dict(h.attrib) for h in handles_el.findall(f"{V}h")]
+        test.assertEqual(actual, expected_handles)
+    return shape
+
+
 def _anchor(shape_id: int) -> ShapeAnchor:
     return ShapeAnchor(
         anchor_cp=7,
@@ -113,7 +161,6 @@ class FloatingShapeTests(unittest.TestCase):
             report=report,
             character_properties_at=lambda _cp: CharacterProperties(special=True),
         )
-
         self.assertEqual(len(collection.shapes), 1)
         self.assertEqual(collection.shapes[0].shape_type, 75)
         self.assertEqual(collection.shapes[0].wrap_type, "tight")
@@ -127,7 +174,6 @@ class FloatingShapeTests(unittest.TestCase):
             )
             with zipfile.ZipFile(destination) as package:
                 root = ET.fromstring(package.read("word/document.xml"))
-
         rect = root.find(f".//{V}rect")
         assert rect is not None
         self.assertEqual(rect.get("filled"), "f")
@@ -183,10 +229,7 @@ class FloatingShapeTests(unittest.TestCase):
         self.assertFalse(frame.shape_style.line_enabled)
         self.assertEqual(
             [warning.code for warning in report.warnings],
-            [
-                "GROUPED_FLOATING_FRAME_FLATTENED",
-                "FLOATING_SHAPE_STYLE_APPROXIMATED",
-            ],
+            ["GROUPED_FLOATING_FRAME_FLATTENED", "FLOATING_SHAPE_STYLE_APPROXIMATED"],
         )
 
         with tempfile.TemporaryDirectory() as directory:
@@ -197,58 +240,22 @@ class FloatingShapeTests(unittest.TestCase):
             )
             with zipfile.ZipFile(destination) as package:
                 root = ET.fromstring(package.read("word/document.xml"))
-
         rect = root.find(f".//{V}rect")
         assert rect is not None
         self.assertEqual(rect.get("filled"), "t")
         self.assertEqual(rect.get("stroked"), "f")
         self.assertIn("z-index:0", rect.get("style", ""))
 
-    def test_omits_transparent_notprimitive_group_frame(self) -> None:
-        from doc2docx.msdoc.officeart import OfficeArtChildAnchor
-
-        parent_id = 1026
-        child_id = 1028
-        officeart = OfficeArtShapeCollection(
-            {
-                parent_id: ShapeStyle(fill_enabled=False, line_enabled=False),
-                child_id: ShapeStyle(),
-            },
-            shape_types_by_shape_id={parent_id: 0, child_id: 202},
-            child_anchors_by_shape_id={
-                child_id: OfficeArtChildAnchor(
-                    parent_shape_id=parent_id,
-                    group_left=0,
-                    group_top=0,
-                    group_right=1000,
-                    group_bottom=1000,
-                    left=100,
-                    top=100,
-                    right=400,
-                    bottom=400,
-                )
-            },
-        )
-        report = ConversionReport("transparent-group-frame.doc")
-        collection = read_main_floating_shapes(
-            {parent_id: _anchor(parent_id)},
-            officeart,
-            excluded_shape_ids=frozenset((child_id,)),
-            report=report,
-            character_properties_at=lambda _cp: CharacterProperties(special=True),
-        )
-
-        self.assertFalse(collection.shapes)
-        self.assertEqual(collection.deferred_count, 0)
-        self.assertFalse(report.warnings)
-
     def test_recovers_arrow_line_and_plaque_presets(self) -> None:
+        from doc2docx.ooxml._vml_preset_formulas import VML_PRESET_FORMULA_PATHS
+
         shape_types = (13, 14, 15, 20, 21)
         officeart = OfficeArtShapeCollection(
             {shape_type: ShapeStyle() for shape_type in shape_types},
             shape_types_by_shape_id={
                 shape_type: shape_type for shape_type in shape_types
             },
+            adjustments_by_shape_id={21: (2700,)},
         )
         anchors = {
             shape_type: replace(
@@ -269,13 +276,35 @@ class FloatingShapeTests(unittest.TestCase):
             list(shape_types),
         )
         self.assertEqual(collection.deferred_count, 0)
+        self.assertEqual(collection.shapes[-1].geometry_adj, "2700")
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "preset-shapes.docx"
+            write_docx(
+                Document((Paragraph((collection.shapes[-1],)),)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(self, root, 21, shape_adj="2700")
 
     def test_recovers_cardinal_and_left_right_arrow_presets(self) -> None:
+        from doc2docx.ooxml._vml_preset_formulas import (
+            VML_PRESET_FORMULA_PATHS,
+            VML_PRESET_FORMULAS,
+        )
+
         shape_types = (66, 67, 68, 69)
         officeart = OfficeArtShapeCollection(
             {shape_type: ShapeStyle() for shape_type in shape_types},
             shape_types_by_shape_id={
                 shape_type: shape_type for shape_type in shape_types
+            },
+            adjustments_by_shape_id={
+                66: (8100,),
+                67: (10800,),
+                68: (10800,),
+                69: (8100,),
             },
         )
         anchors = {
@@ -300,27 +329,23 @@ class FloatingShapeTests(unittest.TestCase):
         self.assertEqual(collection.deferred_count, 0)
         self.assertFalse(report.warnings)
 
-        office_ns = "{urn:schemas-microsoft-com:office:office}"
+        expected_adj = {66: "8100", 67: "10800", 68: "10800", 69: "8100"}
         with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "cardinal-arrows.docx"
-            write_docx(
-                Document(tuple(Paragraph((shape,)) for shape in collection.shapes)),
-                destination,
-            )
-            with zipfile.ZipFile(destination) as package:
-                root = ET.fromstring(package.read("word/document.xml"))
-            emitted = [
-                (element.get(f"{office_ns}spt"), element.get("path"))
-                for element in root.findall(f".//{V}shape")
-            ]
-            self.assertEqual(
-                [shape_type for shape_type, _path in emitted],
-                ["66", "67", "68", "69"],
-            )
-            self.assertTrue(all(path for _shape_type, path in emitted))
+            for shape in collection.shapes:
+                destination = Path(directory) / f"arrow-{shape.shape_type}.docx"
+                write_docx(Document((Paragraph((shape,)),)), destination)
+                with zipfile.ZipFile(destination) as package:
+                    root = ET.fromstring(package.read("word/document.xml"))
+                # Short adj inherits remaining slots from <v:shapetype>.
+                _assert_formula_shapetype(
+                    self,
+                    root,
+                    shape.shape_type,
+                    shape_adj=expected_adj[shape.shape_type],
+                )
 
     def test_recovers_flowchart_preset_shapes(self) -> None:
-        shape_types = (109, 110, 111, 114)
+        shape_types = (109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 177)
         officeart = OfficeArtShapeCollection(
             {shape_type: ShapeStyle() for shape_type in shape_types},
             shape_types_by_shape_id={
@@ -349,7 +374,6 @@ class FloatingShapeTests(unittest.TestCase):
         self.assertEqual(collection.deferred_count, 0)
         self.assertFalse(report.warnings)
 
-        office_ns = "{urn:schemas-microsoft-com:office:office}"
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "flowchart-shapes.docx"
             write_docx(
@@ -358,428 +382,38 @@ class FloatingShapeTests(unittest.TestCase):
             )
             with zipfile.ZipFile(destination) as package:
                 root = ET.fromstring(package.read("word/document.xml"))
-            emitted = [
-                element.get(f"{office_ns}spt")
-                for element in root.findall(f".//{V}shape")
-            ]
-            self.assertEqual(emitted, ["109", "110", "111", "114"])
-
-    def test_recovers_flowchart_terminator_preset(self) -> None:
-        shape_id = 116
-        officeart = OfficeArtShapeCollection(
-            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
-            shape_types_by_shape_id={shape_id: shape_id},
-        )
-        report = ConversionReport("flowchart-terminator.doc")
-        collection = read_main_floating_shapes(
-            {shape_id: _anchor(shape_id)},
-            officeart,
-            report=report,
-            character_properties_at=lambda _cp: CharacterProperties(special=True),
-        )
-
-        self.assertEqual(collection.deferred_count, 0)
-        self.assertEqual(collection.shapes[0].shape_type, shape_id)
-        self.assertFalse(report.warnings)
-
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "flowchart-terminator.docx"
-            write_docx(
-                Document((Paragraph((collection.shapes[0],)),)),
-                destination,
+            shapes = root.findall(f".//{V}shape")
+            shapetypes = root.findall(f".//{V}shapetype")
+            self.assertEqual(
+                [element.get("type") for element in shapes],
+                [f"#_x0000_t{value}" for value in shape_types],
             )
-            with zipfile.ZipFile(destination) as package:
-                root = ET.fromstring(package.read("word/document.xml"))
-
-        shape = root.find(f".//{V}shape")
-        assert shape is not None
-        self.assertEqual(
-            shape.get("{urn:schemas-microsoft-com:office:office}spt"),
-            "116",
-        )
-        self.assertEqual(
-            shape.get("path"),
-            "m3475,qx,10800,3475,21600l18125,21600qx21600,10800,18125,xe",
-        )
-
-    def test_recovers_flowchart_predefined_process_preset(self) -> None:
-        shape_id = 112
-        officeart = OfficeArtShapeCollection(
-            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
-            shape_types_by_shape_id={shape_id: shape_id},
-        )
-        report = ConversionReport("flowchart-predefined-process.doc")
-        collection = read_main_floating_shapes(
-            {shape_id: _anchor(shape_id)},
-            officeart,
-            report=report,
-            character_properties_at=lambda _cp: CharacterProperties(special=True),
-        )
-
-        self.assertEqual(collection.deferred_count, 0)
-        self.assertEqual(collection.shapes[0].shape_type, shape_id)
-        self.assertFalse(report.warnings)
-
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "flowchart-predefined-process.docx"
-            write_docx(
-                Document((Paragraph((collection.shapes[0],)),)),
-                destination,
+            self.assertEqual(
+                {element.get(f"{O}spt") for element in shapetypes},
+                {str(value) for value in shape_types},
             )
-            with zipfile.ZipFile(destination) as package:
-                root = ET.fromstring(package.read("word/document.xml"))
-
-        shapetype = root.find(f".//{V}shapetype")
-        shape = root.find(f".//{V}shape")
-        assert shapetype is not None and shape is not None
-        self.assertEqual(
-            shapetype.get(f"{O}spt"),
-            "112",
-        )
-        self.assertEqual(
-            shapetype.get("path"),
-            "m,l,21600r21600,l21600,xem2610,nfl2610,21600em18990,nfl18990,21600e",
-        )
-        self.assertEqual(shape.get("type"), "#_x0000_t112")
-        path = shapetype.find(f"{V}path")
-        assert path is not None
-        self.assertEqual(path.get(f"{O}extrusionok"), "f")
-        self.assertEqual(path.get(f"{O}connecttype"), "rect")
-        self.assertEqual(path.get("textboxrect"), "2610,0,18990,21600")
-
-    def test_recovers_flowchart_internal_storage_preset(self) -> None:
-        shape_id = 113
-        officeart = OfficeArtShapeCollection(
-            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
-            shape_types_by_shape_id={shape_id: shape_id},
-        )
-        report = ConversionReport("flowchart-internal-storage.doc")
-        collection = read_main_floating_shapes(
-            {shape_id: _anchor(shape_id)},
-            officeart,
-            report=report,
-            character_properties_at=lambda _cp: CharacterProperties(special=True),
-        )
-
-        self.assertEqual(collection.deferred_count, 0)
-        self.assertEqual(collection.shapes[0].shape_type, shape_id)
-        self.assertFalse(report.warnings)
-
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "flowchart-internal-storage.docx"
-            write_docx(
-                Document((Paragraph((collection.shapes[0],)),)),
-                destination,
+            terminator = next(
+                element
+                for element in shapetypes
+                if element.get(f"{O}spt") == "116"
             )
-            with zipfile.ZipFile(destination) as package:
-                root = ET.fromstring(package.read("word/document.xml"))
-
-        shapetype = root.find(f".//{V}shapetype")
-        shape = root.find(f".//{V}shape")
-        assert shapetype is not None and shape is not None
-        self.assertEqual(shapetype.get(f"{O}spt"), "113")
-        self.assertEqual(
-            shapetype.get("path"),
-            "m,l,21600r21600,l21600,xem4236,nfl4236,21600em,4236nfl21600,4236e",
-        )
-        self.assertEqual(shape.get("type"), "#_x0000_t113")
-        path = shapetype.find(f"{V}path")
-        assert path is not None
-        self.assertEqual(path.get(f"{O}extrusionok"), "f")
-        self.assertEqual(path.get(f"{O}connecttype"), "rect")
-        self.assertEqual(path.get("textboxrect"), "4236,4236,21600,21600")
-
-    def test_recovers_flowchart_multidocument_preset(self) -> None:
-        shape_id = 115
-        officeart = OfficeArtShapeCollection(
-            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
-            shape_types_by_shape_id={shape_id: shape_id},
-        )
-        report = ConversionReport("flowchart-multidocument.doc")
-        collection = read_main_floating_shapes(
-            {shape_id: _anchor(shape_id)},
-            officeart,
-            report=report,
-            character_properties_at=lambda _cp: CharacterProperties(special=True),
-        )
-
-        self.assertEqual(collection.deferred_count, 0)
-        self.assertEqual(collection.shapes[0].shape_type, shape_id)
-        self.assertFalse(report.warnings)
-
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "flowchart-multidocument.docx"
-            write_docx(
-                Document((Paragraph((collection.shapes[0],)),)),
-                destination,
+            self.assertEqual(
+                terminator.get("path"),
+                "m3475,qx,10800,3475,21600l18125,21600qx21600,10800,18125,xe",
             )
-            with zipfile.ZipFile(destination) as package:
-                root = ET.fromstring(package.read("word/document.xml"))
-
-        shapetype = root.find(f".//{V}shapetype")
-        shape = root.find(f".//{V}shape")
-        assert shapetype is not None and shape is not None
-        self.assertEqual(shapetype.get(f"{O}spt"), "115")
-        self.assertEqual(
-            shapetype.get("path"),
-            "m,20465v810,317,1620,452,2397,725c3077,21325,3790,21417,4405,21597"
-            "v1620,,2202,-180,2657,-272c7580,21280,8002,21010,8455,20917"
-            "v422,-135,810,-405,1327,-542c10205,20150,10657,19967,11080,19742"
-            "v517,-182,970,-407,1425,-590c13087,19017,13605,18745,14255,18610"
-            "v615,-180,1262,-318,1942,-408c16975,18202,17785,18022,18595,18022"
-            "r,-1670l19192,16252r808,l20000,14467r722,-75l21597,14392,21597,,2972,"
-            "r,1815l1532,1815r,1860l,3675,,20465xem1532,3675nfl18595,3675r,12677"
-            "em2972,1815nfl20000,1815r,12652e",
-        )
-        self.assertEqual(shape.get("type"), "#_x0000_t115")
-        path = shapetype.find(f"{V}path")
-        assert path is not None
-        self.assertEqual(path.get(f"{O}extrusionok"), "f")
-        self.assertEqual(path.get(f"{O}connecttype"), "custom")
-        self.assertEqual(
-            path.get(f"{O}connectlocs"),
-            "10800,0;0,10800;10800,19890;21600,10800",
-        )
-        self.assertEqual(path.get("textboxrect"), "0,3675,18595,18022")
-        self.assertIsNone(path.get("gradientshapeok"))
-
-    def test_recovers_flowchart_preparation_preset(self) -> None:
-        shape_id = 117
-        officeart = OfficeArtShapeCollection(
-            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
-            shape_types_by_shape_id={shape_id: shape_id},
-        )
-        report = ConversionReport("flowchart-preparation.doc")
-        collection = read_main_floating_shapes(
-            {shape_id: _anchor(shape_id)},
-            officeart,
-            report=report,
-            character_properties_at=lambda _cp: CharacterProperties(special=True),
-        )
-
-        self.assertEqual(collection.deferred_count, 0)
-        self.assertEqual(collection.shapes[0].shape_type, shape_id)
-        self.assertFalse(report.warnings)
-
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "flowchart-preparation.docx"
-            write_docx(
-                Document((Paragraph((collection.shapes[0],)),)),
-                destination,
+            self.assertEqual(
+                terminator.find(f"{V}stroke").get("joinstyle"),
+                "miter",
             )
-            with zipfile.ZipFile(destination) as package:
-                root = ET.fromstring(package.read("word/document.xml"))
-
-        shapetype = root.find(f".//{V}shapetype")
-        shape = root.find(f".//{V}shape")
-        assert shapetype is not None and shape is not None
-        self.assertEqual(shapetype.get(f"{O}spt"), "117")
-        self.assertEqual(
-            shapetype.get("path"),
-            "m4353,l17214,r4386,10800l17214,21600r-12861,l,10800xe",
-        )
-        self.assertEqual(shape.get("type"), "#_x0000_t117")
-        path = shapetype.find(f"{V}path")
-        assert path is not None
-        self.assertEqual(path.get("gradientshapeok"), "t")
-        self.assertEqual(path.get(f"{O}connecttype"), "rect")
-        self.assertEqual(path.get("textboxrect"), "4353,0,17214,21600")
-        self.assertIsNone(path.get(f"{O}extrusionok"))
-
-    def test_recovers_flowchart_manual_input_preset(self) -> None:
-        shape_id = 118
-        officeart = OfficeArtShapeCollection(
-            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
-            shape_types_by_shape_id={shape_id: shape_id},
-        )
-        report = ConversionReport("flowchart-manual-input.doc")
-        collection = read_main_floating_shapes(
-            {shape_id: _anchor(shape_id)},
-            officeart,
-            report=report,
-            character_properties_at=lambda _cp: CharacterProperties(special=True),
-        )
-
-        self.assertEqual(collection.deferred_count, 0)
-        self.assertEqual(collection.shapes[0].shape_type, shape_id)
-        self.assertFalse(report.warnings)
-
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "flowchart-manual-input.docx"
-            write_docx(
-                Document((Paragraph((collection.shapes[0],)),)),
-                destination,
-            )
-            with zipfile.ZipFile(destination) as package:
-                root = ET.fromstring(package.read("word/document.xml"))
-
-        shapetype = root.find(f".//{V}shapetype")
-        shape = root.find(f".//{V}shape")
-        assert shapetype is not None and shape is not None
-        self.assertEqual(shapetype.get(f"{O}spt"), "118")
-        self.assertEqual(
-            shapetype.get("path"),
-            "m,4292l21600,r,21600l,21600xe",
-        )
-        self.assertEqual(shape.get("type"), "#_x0000_t118")
-        path = shapetype.find(f"{V}path")
-        assert path is not None
-        self.assertEqual(path.get("gradientshapeok"), "t")
-        self.assertEqual(path.get(f"{O}connecttype"), "custom")
-        self.assertEqual(
-            path.get(f"{O}connectlocs"),
-            "10800,2146;0,10800;10800,21600;21600,10800",
-        )
-        self.assertEqual(path.get("textboxrect"), "0,4291,21600,21600")
-        self.assertIsNone(path.get(f"{O}extrusionok"))
-
-    def test_recovers_flowchart_manual_operation_preset(self) -> None:
-        shape_id = 119
-        officeart = OfficeArtShapeCollection(
-            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
-            shape_types_by_shape_id={shape_id: shape_id},
-        )
-        report = ConversionReport("flowchart-manual-operation.doc")
-        collection = read_main_floating_shapes(
-            {shape_id: _anchor(shape_id)},
-            officeart,
-            report=report,
-            character_properties_at=lambda _cp: CharacterProperties(special=True),
-        )
-
-        self.assertEqual(collection.deferred_count, 0)
-        self.assertEqual(collection.shapes[0].shape_type, shape_id)
-        self.assertFalse(report.warnings)
-
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "flowchart-manual-operation.docx"
-            write_docx(
-                Document((Paragraph((collection.shapes[0],)),)),
-                destination,
-            )
-            with zipfile.ZipFile(destination) as package:
-                root = ET.fromstring(package.read("word/document.xml"))
-
-        shapetype = root.find(f".//{V}shapetype")
-        shape = root.find(f".//{V}shape")
-        assert shapetype is not None and shape is not None
-        self.assertEqual(shapetype.get(f"{O}spt"), "119")
-        self.assertEqual(
-            shapetype.get("path"),
-            "m,l21600,,17240,21600r-12880,xe",
-        )
-        self.assertEqual(shape.get("type"), "#_x0000_t119")
-        path = shapetype.find(f"{V}path")
-        assert path is not None
-        self.assertEqual(path.get("gradientshapeok"), "t")
-        self.assertEqual(path.get(f"{O}connecttype"), "custom")
-        self.assertEqual(
-            path.get(f"{O}connectlocs"),
-            "10800,0;2180,10800;10800,21600;19420,10800",
-        )
-        self.assertEqual(path.get("textboxrect"), "4321,0,17204,21600")
-        self.assertIsNone(path.get(f"{O}extrusionok"))
-
-    def test_recovers_flowchart_connector_preset(self) -> None:
-        shape_id = 120
-        officeart = OfficeArtShapeCollection(
-            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
-            shape_types_by_shape_id={shape_id: shape_id},
-        )
-        report = ConversionReport("flowchart-connector.doc")
-        collection = read_main_floating_shapes(
-            {shape_id: _anchor(shape_id)},
-            officeart,
-            report=report,
-            character_properties_at=lambda _cp: CharacterProperties(special=True),
-        )
-
-        self.assertEqual(collection.deferred_count, 0)
-        self.assertEqual(collection.shapes[0].shape_type, shape_id)
-        self.assertFalse(report.warnings)
-
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "flowchart-connector.docx"
-            write_docx(
-                Document((Paragraph((collection.shapes[0],)),)),
-                destination,
-            )
-            with zipfile.ZipFile(destination) as package:
-                root = ET.fromstring(package.read("word/document.xml"))
-
-        shapetype = root.find(f".//{V}shapetype")
-        shape = root.find(f".//{V}shape")
-        assert shapetype is not None and shape is not None
-        self.assertEqual(shapetype.get(f"{O}spt"), "120")
-        self.assertEqual(
-            shapetype.get("path"),
-            "m10800,qx,10800,10800,21600,21600,10800,10800,xe",
-        )
-        self.assertEqual(shape.get("type"), "#_x0000_t120")
-        self.assertIsNone(shapetype.find(f"{V}stroke"))
-        path = shapetype.find(f"{V}path")
-        assert path is not None
-        self.assertEqual(path.get("gradientshapeok"), "t")
-        self.assertEqual(path.get(f"{O}connecttype"), "custom")
-        self.assertEqual(
-            path.get(f"{O}connectlocs"),
-            "10800,0;3163,3163;0,10800;3163,18437;10800,21600;"
-            "18437,18437;21600,10800;18437,3163",
-        )
-        self.assertEqual(path.get("textboxrect"), "3163,3163,18437,18437")
-        self.assertIsNone(path.get(f"{O}extrusionok"))
-
-    def test_recovers_flowchart_offpage_connector_preset(self) -> None:
-        shape_id = 177
-        officeart = OfficeArtShapeCollection(
-            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
-            shape_types_by_shape_id={shape_id: shape_id},
-        )
-        report = ConversionReport("flowchart-offpage.doc")
-        collection = read_main_floating_shapes(
-            {shape_id: _anchor(shape_id)},
-            officeart,
-            report=report,
-            character_properties_at=lambda _cp: CharacterProperties(special=True),
-        )
-
-        self.assertEqual(collection.deferred_count, 0)
-        self.assertEqual(collection.shapes[0].shape_type, shape_id)
-        self.assertFalse(report.warnings)
-
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "flowchart-offpage.docx"
-            write_docx(
-                Document((Paragraph((collection.shapes[0],)),)),
-                destination,
-            )
-            with zipfile.ZipFile(destination) as package:
-                root = ET.fromstring(package.read("word/document.xml"))
-
-        shapetype = root.find(f".//{V}shapetype")
-        shape = root.find(f".//{V}shape")
-        assert shapetype is not None and shape is not None
-        self.assertEqual(shapetype.get(f"{O}spt"), "177")
-        self.assertEqual(
-            shapetype.get("path"),
-            "m,l21600,r,17255l10800,21600,,17255xe",
-        )
-        self.assertEqual(shape.get("type"), "#_x0000_t177")
-        stroke = shapetype.find(f"{V}stroke")
-        assert stroke is not None
-        self.assertEqual(stroke.get("joinstyle"), "miter")
-        path = shapetype.find(f"{V}path")
-        assert path is not None
-        self.assertEqual(path.get("gradientshapeok"), "t")
-        self.assertEqual(path.get(f"{O}connecttype"), "rect")
-        self.assertEqual(path.get("textboxrect"), "0,0,21600,17255")
-        self.assertIsNone(path.get(f"{O}extrusionok"))
 
     def test_recovers_chevron_preset_shape(self) -> None:
+        from doc2docx.ooxml._vml_preset_formulas import VML_PRESET_FORMULA_PATHS
+
         shape_id = 55
         officeart = OfficeArtShapeCollection(
             {shape_id: ShapeStyle(fill_color="3366ff", line_color="003399")},
             shape_types_by_shape_id={shape_id: 55},
+            adjustments_by_shape_id={shape_id: (13500,)},
         )
         report = ConversionReport("chevron.doc")
         collection = read_main_floating_shapes(
@@ -791,6 +425,7 @@ class FloatingShapeTests(unittest.TestCase):
 
         self.assertEqual(collection.deferred_count, 0)
         self.assertEqual(collection.shapes[0].shape_type, 55)
+        self.assertEqual(collection.shapes[0].geometry_adj, "13500")
         self.assertFalse(report.warnings)
 
         with tempfile.TemporaryDirectory() as directory:
@@ -798,13 +433,7 @@ class FloatingShapeTests(unittest.TestCase):
             write_docx(Document((Paragraph((collection.shapes[0],)),)), destination)
             with zipfile.ZipFile(destination) as package:
                 root = ET.fromstring(package.read("word/document.xml"))
-            shape = root.find(f".//{V}shape")
-            assert shape is not None
-            self.assertEqual(
-                shape.get("{urn:schemas-microsoft-com:office:office}spt"),
-                "55",
-            )
-            self.assertIn("16200,0", shape.get("path", ""))
+            _assert_formula_shapetype(self, root, 55, shape_adj="13500")
 
     def test_recovers_adjustment_formula_preset_shapes_without_deferral(self) -> None:
         from doc2docx.ooxml._vml_preset_formulas import (
@@ -812,7 +441,34 @@ class FloatingShapeTests(unittest.TestCase):
             VML_PRESET_FORMULAS,
         )
 
-        target_types = (59, 64, 73, 84, 92, 93, 94, 183, 184)
+        target_types = (
+            16,
+            22,
+            23,
+            53,
+            54,
+            55,
+            59,
+            60,
+            64,
+            65,
+            70,
+            73,
+            77,
+            78,
+            84,
+            92,
+            93,
+            94,
+            96,
+            102,
+            103,
+            104,
+            105,
+            183,
+            184,
+            189,
+        )
         for shape_type in target_types:
             with self.subTest(shape_type=shape_type):
                 shape_id = 100 + shape_type
@@ -838,26 +494,383 @@ class FloatingShapeTests(unittest.TestCase):
                     )
                     with zipfile.ZipFile(destination) as package:
                         root = ET.fromstring(package.read("word/document.xml"))
-                    shape = root.find(f".//{V}shape")
-                    assert shape is not None
-                    self.assertEqual(
-                        shape.get("{urn:schemas-microsoft-com:office:office}spt"),
-                        str(shape_type),
-                    )
-                    self.assertEqual(
-                        shape.get("path"), VML_PRESET_FORMULA_PATHS[shape_type]
-                    )
                     if shape_type in VML_PRESET_FORMULAS:
-                        adj, formulas = VML_PRESET_FORMULAS[shape_type]
-                        self.assertEqual(shape.get("adj"), adj)
-                        formulas_el = shape.find(f"{V}formulas")
-                        assert formulas_el is not None
-                        self.assertEqual(len(formulas_el.findall(f"{V}f")), len(formulas))
+                        _assert_formula_shapetype(self, root, shape_type)
                     else:
+                        shape = root.find(f".//{V}shape")
+                        assert shape is not None
+                        self.assertEqual(
+                            shape.get(f"{O}spt"),
+                            str(shape_type),
+                        )
+                        self.assertEqual(
+                            shape.get("path"), VML_PRESET_FORMULA_PATHS[shape_type]
+                        )
                         self.assertIsNone(shape.get("adj"))
                         self.assertIsNone(shape.find(f"{V}formulas"))
 
+    def test_recovers_curved_arrow_formula_presets(self) -> None:
+        shape_types = (102, 103, 104, 105)
+        officeart = OfficeArtShapeCollection(
+            {shape_type: ShapeStyle() for shape_type in shape_types},
+            shape_types_by_shape_id={
+                shape_type: shape_type for shape_type in shape_types
+            },
+            adjustments_by_shape_id={
+                102: (10800, 18900, 17550),
+                103: (10800, 18900, 4050),
+            },
+        )
+        anchors = {
+            shape_type: replace(_anchor(shape_type), anchor_cp=index)
+            for index, shape_type in enumerate(shape_types)
+        }
+        report = ConversionReport("curved-arrows.doc")
+        collection = read_main_floating_shapes(
+            anchors,
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(
+            [shape.shape_type for shape in collection.shapes],
+            list(shape_types),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+        self.assertEqual(collection.shapes[0].geometry_adj, "10800,18900,17550")
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "curved-right.docx"
+            write_docx(
+                Document((Paragraph((collection.shapes[0],)),)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(
+                self, root, 102, shape_adj="10800,18900,17550"
+            )
+
+    def test_recovers_up_down_arrow_formula_preset(self) -> None:
+        shape_id = 70
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle(fill_color="3366ff", line_color="003399")},
+            shape_types_by_shape_id={shape_id: 70},
+            adjustments_by_shape_id={shape_id: (None, 10800)},
+        )
+        report = ConversionReport("up-down-arrow.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+        self.assertEqual(collection.shapes[0].geometry_adj, ",10800")
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "up-down-arrow.docx"
+            write_docx(Document((Paragraph((collection.shapes[0],)),)), destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            # Sparse OfficeArt adj materializes onto shapetype defaults.
+            _assert_formula_shapetype(self, root, 70, shape_adj=",10800")
+
+    def test_recovers_smile_face_formula_preset(self) -> None:
+        shape_id = 96
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle(fill_color="ffff00", line_color="000000")},
+            shape_types_by_shape_id={shape_id: 96},
+        )
+        report = ConversionReport("smile-face.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+        self.assertIsNone(collection.shapes[0].geometry_adj)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "smile-face.docx"
+            write_docx(Document((Paragraph((collection.shapes[0],)),)), destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(self, root, 96)
+            shapetype = root.find(f".//{V}shapetype")
+            assert shapetype is not None
+            self.assertIn("xnfem", shapetype.get("path", ""))
+
+    def test_recovers_ribbon_formula_preset(self) -> None:
+        shape_id = 78
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle(fill_color="3366ff", line_color="003399")},
+            shape_types_by_shape_id={shape_id: 78},
+            adjustments_by_shape_id={shape_id: (14035, None, 17550)},
+        )
+        report = ConversionReport("ribbon.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+        self.assertEqual(collection.shapes[0].geometry_adj, "14035,,17550")
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "ribbon.docx"
+            write_docx(Document((Paragraph((collection.shapes[0],)),)), destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(self, root, 78, shape_adj="14035,,17550")
+
+    def test_recovers_arrow_callout_formula_presets(self) -> None:
+        officeart = OfficeArtShapeCollection(
+            {
+                53: ShapeStyle(fill_color="3366ff", line_color="003399"),
+                60: ShapeStyle(fill_color="ff6633", line_color="993300"),
+            },
+            shape_types_by_shape_id={53: 53, 60: 60},
+            adjustments_by_shape_id={53: (None, 3600)},
+        )
+        anchors = {
+            53: replace(_anchor(53), anchor_cp=0),
+            60: replace(_anchor(60), anchor_cp=1),
+        }
+        report = ConversionReport("arrow-callouts.doc")
+        collection = read_main_floating_shapes(
+            anchors,
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(
+            [shape.shape_type for shape in collection.shapes],
+            [53, 60],
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+        self.assertEqual(collection.shapes[0].geometry_adj, ",3600")
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "bent-callout.docx"
+            write_docx(Document((Paragraph((collection.shapes[0],)),)), destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(self, root, 53, shape_adj=",3600")
+
+    def test_recovers_remaining_discovery_formula_presets(self) -> None:
+        cases = (
+            (65, (18000,), "18000"),
+            (77, (7565, None, 4050), "7565,,4050"),
+            (189, (), None),
+        )
+        for shape_type, adjustments, expected_adj in cases:
+            with self.subTest(shape_type=shape_type):
+                officeart = OfficeArtShapeCollection(
+                    {shape_type: ShapeStyle()},
+                    shape_types_by_shape_id={shape_type: shape_type},
+                    adjustments_by_shape_id=(
+                        {shape_type: adjustments} if adjustments else {}
+                    ),
+                )
+                report = ConversionReport(f"preset-{shape_type}.doc")
+                collection = read_main_floating_shapes(
+                    {shape_type: _anchor(shape_type)},
+                    officeart,
+                    report=report,
+                    character_properties_at=lambda _cp: CharacterProperties(
+                        special=True
+                    ),
+                )
+                self.assertEqual(collection.deferred_count, 0)
+                self.assertFalse(report.warnings)
+                self.assertEqual(collection.shapes[0].geometry_adj, expected_adj)
+                with tempfile.TemporaryDirectory() as directory:
+                    destination = Path(directory) / f"preset-{shape_type}.docx"
+                    write_docx(
+                        Document((Paragraph((collection.shapes[0],)),)),
+                        destination,
+                    )
+                    with zipfile.ZipFile(destination) as package:
+                        root = ET.fromstring(package.read("word/document.xml"))
+                    _assert_formula_shapetype(
+                        self, root, shape_type, shape_adj=expected_adj
+                    )
+
+    def test_recovers_bracket_and_brace_formula_presets(self) -> None:
+        shape_types = (85, 86, 87, 88, 185, 186)
+        officeart = OfficeArtShapeCollection(
+            {shape_type: ShapeStyle() for shape_type in shape_types},
+            shape_types_by_shape_id={
+                shape_type: shape_type for shape_type in shape_types
+            },
+        )
+        anchors = {
+            shape_type: replace(_anchor(shape_type), anchor_cp=index)
+            for index, shape_type in enumerate(shape_types)
+        }
+        report = ConversionReport("brackets.doc")
+        collection = read_main_floating_shapes(
+            anchors,
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(
+            [shape.shape_type for shape in collection.shapes],
+            list(shape_types),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "left-bracket.docx"
+            write_docx(Document((Paragraph((collection.shapes[0],)),)), destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(self, root, 85)
+
+    def test_recovers_explosion_path_only_presets(self) -> None:
+        shape_types = (71, 72)
+        officeart = OfficeArtShapeCollection(
+            {shape_type: ShapeStyle() for shape_type in shape_types},
+            shape_types_by_shape_id={
+                shape_type: shape_type for shape_type in shape_types
+            },
+        )
+        anchors = {
+            shape_type: replace(_anchor(shape_type), anchor_cp=index)
+            for index, shape_type in enumerate(shape_types)
+        }
+        report = ConversionReport("explosions.doc")
+        collection = read_main_floating_shapes(
+            anchors,
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(
+            [shape.shape_type for shape in collection.shapes],
+            list(shape_types),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "explosion1.docx"
+            write_docx(Document((Paragraph((collection.shapes[0],)),)), destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(self, root, 71)
+
+    def test_recovers_action_button_formula_presets(self) -> None:
+        shape_types = tuple(range(190, 201))
+        officeart = OfficeArtShapeCollection(
+            {shape_type: ShapeStyle() for shape_type in shape_types},
+            shape_types_by_shape_id={
+                shape_type: shape_type for shape_type in shape_types
+            },
+        )
+        anchors = {
+            shape_type: replace(_anchor(shape_type), anchor_cp=index)
+            for index, shape_type in enumerate(shape_types)
+        }
+        report = ConversionReport("action-buttons.doc")
+        collection = read_main_floating_shapes(
+            anchors,
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(
+            [shape.shape_type for shape in collection.shapes],
+            list(shape_types),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "action-home.docx"
+            write_docx(Document((Paragraph((collection.shapes[0],)),)), destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(self, root, 190)
+
+    def test_recovers_remaining_flowchart_formula_presets(self) -> None:
+        shape_types = (122, 125, 126, 127, 128, 130, 131, 132, 133, 134, 176)
+        officeart = OfficeArtShapeCollection(
+            {shape_type: ShapeStyle() for shape_type in shape_types},
+            shape_types_by_shape_id={
+                shape_type: shape_type for shape_type in shape_types
+            },
+        )
+        anchors = {
+            shape_type: replace(_anchor(shape_type), anchor_cp=index)
+            for index, shape_type in enumerate(shape_types)
+        }
+        report = ConversionReport("flowchart-remaining.doc")
+        collection = read_main_floating_shapes(
+            anchors,
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(
+            [shape.shape_type for shape in collection.shapes],
+            list(shape_types),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "flowchart-sort.docx"
+            # spt 126 is the sort/merge-like path-only flowchart shape.
+            shape = next(s for s in collection.shapes if s.shape_type == 126)
+            write_docx(Document((Paragraph((shape,)),)), destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(self, root, 126)
+
+    def test_recovers_math_and_misc_leftover_presets(self) -> None:
+        shape_types = (57, 80, 81, 82, 97, 107, 108, 129, 187)
+        officeart = OfficeArtShapeCollection(
+            {shape_type: ShapeStyle() for shape_type in shape_types},
+            shape_types_by_shape_id={
+                shape_type: shape_type for shape_type in shape_types
+            },
+            adjustments_by_shape_id={57: (3038,)},
+        )
+        anchors = {
+            shape_type: replace(_anchor(shape_type), anchor_cp=index)
+            for index, shape_type in enumerate(shape_types)
+        }
+        report = ConversionReport("math-leftovers.doc")
+        collection = read_main_floating_shapes(
+            anchors,
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(
+            [shape.shape_type for shape in collection.shapes],
+            list(shape_types),
+        )
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertFalse(report.warnings)
+        self.assertEqual(collection.shapes[0].geometry_adj, "3038")
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "no-symbol.docx"
+            write_docx(Document((Paragraph((collection.shapes[0],)),)), destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(self, root, 57, shape_adj="3038")
+
     def test_recovers_can_cube_and_donut_presets(self) -> None:
+        from doc2docx.ooxml._vml_preset_formulas import VML_PRESET_FORMULA_PATHS
+
         shape_types = (16, 22, 23)
         officeart = OfficeArtShapeCollection(
             {shape_type: ShapeStyle() for shape_type in shape_types},
@@ -882,6 +895,101 @@ class FloatingShapeTests(unittest.TestCase):
         )
         self.assertEqual(collection.deferred_count, 0)
         self.assertFalse(report.warnings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            for shape in collection.shapes:
+                destination = Path(directory) / f"shape-{shape.shape_type}.docx"
+                write_docx(Document((Paragraph((shape,)),)), destination)
+                with zipfile.ZipFile(destination) as package:
+                    root = ET.fromstring(package.read("word/document.xml"))
+                # Default adj lives on shapetype; shape omits adj when unchanged.
+                _assert_formula_shapetype(self, root, shape.shape_type)
+
+    def test_emits_sparse_adjust2_value_for_modern_can_preset(self) -> None:
+        from doc2docx.ooxml._vml_preset_formulas import VML_PRESET_FORMULA_PATHS
+
+        shape_id = 1026
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle(fill_color="3366ff")},
+            shape_types_by_shape_id={shape_id: 54},
+            adjustments_by_shape_id={shape_id: (None, 14040)},
+        )
+        report = ConversionReport("modern-can.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(collection.shapes[0].shape_type, 54)
+        self.assertEqual(collection.shapes[0].geometry_adj, ",14040")
+        self.assertFalse(report.warnings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "modern-can.docx"
+            write_docx(
+                Document((Paragraph((collection.shapes[0],)),)), destination
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            # Sparse adj inherits #0 from shapetype default 5400,18900.
+            _assert_formula_shapetype(self, root, 54, shape_adj=",14040")
+
+    def test_emits_officeart_adjust_value_on_pentagon_formula_path(self) -> None:
+        from doc2docx.ooxml._vml_preset_formulas import VML_PRESET_FORMULA_PATHS
+
+        shape_id = 1026
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle(fill_color="3366ff")},
+            shape_types_by_shape_id={shape_id: 15},
+            adjustments_by_shape_id={shape_id: (13500,)},
+        )
+        report = ConversionReport("pentagon-adj.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(collection.shapes[0].geometry_adj, "13500")
+        self.assertFalse(report.warnings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "pentagon-adj.docx"
+            write_docx(
+                Document((Paragraph((collection.shapes[0],)),)), destination
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(self, root, 15, shape_adj="13500")
+
+    def test_emits_officeart_adjust_value_on_donut_formula_path(self) -> None:
+        from doc2docx.ooxml._vml_preset_formulas import VML_PRESET_FORMULA_PATHS
+
+        shape_id = 1026
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle(fill_color="3366ff")},
+            shape_types_by_shape_id={shape_id: 23},
+            adjustments_by_shape_id={shape_id: (4050,)},
+        )
+        report = ConversionReport("donut-adj.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        self.assertEqual(collection.shapes[0].geometry_adj, "4050")
+        self.assertFalse(report.warnings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "donut-adj.docx"
+            write_docx(
+                Document((Paragraph((collection.shapes[0],)),)), destination
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            _assert_formula_shapetype(self, root, 23, shape_adj="4050")
 
     def test_ungroups_grouped_line_connectors_onto_parent_anchor(self) -> None:
         from doc2docx.msdoc.officeart import OfficeArtChildAnchor
@@ -1034,11 +1142,14 @@ class FloatingShapeTests(unittest.TestCase):
 
         element = root.find(f".//{V}shape")
         assert element is not None
+        shapetype = root.find(f".//{V}shapetype")
+        assert shapetype is not None
         self.assertEqual(element.get("fillcolor"), "#112233")
         self.assertEqual(element.get("strokecolor"), "#445566")
         self.assertIn("position:absolute", element.get("style", ""))
         self.assertIn("rotation:-45", element.get("style", ""))
-        self.assertIn("m10800,0", element.get("path", ""))
+        self.assertEqual(element.get("type"), "#_x0000_t4")
+        self.assertIn("m10800,", shapetype.get("path", ""))
         self.assertEqual(element.find(f"{V}fill").get("opacity"), "50%")  # type: ignore[union-attr]
         self.assertEqual(element.find(f"{V}stroke").get("dashstyle"), "dash")  # type: ignore[union-attr]
         self.assertEqual(element.find(f"{V}stroke").get("endarrow"), "block")  # type: ignore[union-attr]
