@@ -25,6 +25,7 @@ from doc2docx.ooxml import write_docx
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 V = "{urn:schemas-microsoft-com:vml}"
+O = "{urn:schemas-microsoft-com:office:office}"
 W10 = "{urn:schemas-microsoft-com:office:word}"
 
 
@@ -400,6 +401,51 @@ class FloatingShapeTests(unittest.TestCase):
             shape.get("path"),
             "m3475,qx,10800,3475,21600l18125,21600qx21600,10800,18125,xe",
         )
+
+    def test_recovers_flowchart_predefined_process_preset(self) -> None:
+        shape_id = 112
+        officeart = OfficeArtShapeCollection(
+            {shape_id: ShapeStyle(fill_color="FF6633", line_color="993300")},
+            shape_types_by_shape_id={shape_id: shape_id},
+        )
+        report = ConversionReport("flowchart-predefined-process.doc")
+        collection = read_main_floating_shapes(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(collection.deferred_count, 0)
+        self.assertEqual(collection.shapes[0].shape_type, shape_id)
+        self.assertFalse(report.warnings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "flowchart-predefined-process.docx"
+            write_docx(
+                Document((Paragraph((collection.shapes[0],)),)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        shapetype = root.find(f".//{V}shapetype")
+        shape = root.find(f".//{V}shape")
+        assert shapetype is not None and shape is not None
+        self.assertEqual(
+            shapetype.get(f"{O}spt"),
+            "112",
+        )
+        self.assertEqual(
+            shapetype.get("path"),
+            "m,l,21600r21600,l21600,xem2610,nfl2610,21600em18990,nfl18990,21600e",
+        )
+        self.assertEqual(shape.get("type"), "#_x0000_t112")
+        path = shapetype.find(f"{V}path")
+        assert path is not None
+        self.assertEqual(path.get(f"{O}extrusionok"), "f")
+        self.assertEqual(path.get(f"{O}connecttype"), "rect")
+        self.assertEqual(path.get("textboxrect"), "2610,0,18990,21600")
 
     def test_recovers_chevron_preset_shape(self) -> None:
         shape_id = 55

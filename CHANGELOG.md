@@ -50,6 +50,9 @@ current capabilities without release-by-release notes.
 - Preserve the MS-ODRAW flowchart terminator preset (`msosptFlowChartTerminator`,
   `0x74` / 116) as an editable native VML shape instead of deferring and
   dropping its object anchor.
+- Preserve the MS-ODRAW predefined-process flowchart preset
+  (`msosptFlowChartPredefinedProcess`, `0x70` / 112) as an editable native VML
+  shape instead of deferring and dropping its object anchor.
 
 ## 0.36.4 - 2026-07-22
 

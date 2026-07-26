@@ -245,6 +245,11 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
     109: ("shape", "m0,0l0,21600,21600,21600,21600,0xe"),
     110: ("shape", "m10800,0l0,10800,10800,21600,21600,10800xe"),
     111: ("shape", "m4321,0l21600,0,17204,21600,0,21600xe"),
+    # MS-ODRAW msosptFlowChartPredefinedProcess (0x70), from Word SaveAs VML.
+    112: (
+        "shape",
+        "m,l,21600r21600,l21600,xem2610,nfl2610,21600em18990,nfl18990,21600e",
+    ),
     114: (
         "shape",
         "m0,20172v945,400,1887,628,2795,913c3587,21312,4342,21370,5060,21597"
@@ -1735,16 +1740,46 @@ def _append_floating_shape(
         shape_attributes["strokeweight"] = (
             f"{_emus_as_points(shape_style.line_width_emu)}pt"
         )
-    if floating_shape.geometry_path is not None:
+    use_predefined_process_shapetype = (
+        floating_shape.geometry_path is None
+        and floating_shape.shape_type == 112
+    )
+    if use_predefined_process_shapetype:
+        element_name, path = _VML_PRESET_SHAPES[floating_shape.shape_type]
+        assert element_name == "shape" and path is not None
+        shapetype_id = "_x0000_t112"
+        shapetype = ET.SubElement(
+            pict,
+            _qn(VML_NS, "shapetype"),
+            {
+                "id": shapetype_id,
+                "coordsize": "21600,21600",
+                _qn(OFFICE_NS, "spt"): "112",
+                "path": path,
+            },
+        )
+        ET.SubElement(shapetype, _qn(VML_NS, "stroke"), {"joinstyle": "miter"})
+        ET.SubElement(
+            shapetype,
+            _qn(VML_NS, "path"),
+            {
+                _qn(OFFICE_NS, "extrusionok"): "f",
+                "gradientshapeok": "t",
+                _qn(OFFICE_NS, "connecttype"): "rect",
+                "textboxrect": "2610,0,18990,21600",
+            },
+        )
+        shape_attributes["type"] = f"#{shapetype_id}"
+    elif floating_shape.geometry_path is not None:
         element_name, path = "shape", floating_shape.geometry_path
     elif floating_shape.shape_type in VML_PRESET_FORMULA_PATHS:
         element_name, path = "shape", VML_PRESET_FORMULA_PATHS[floating_shape.shape_type]
     else:
         element_name, path = _VML_PRESET_SHAPES[floating_shape.shape_type]
-    if path is not None:
+    if path is not None and not use_predefined_process_shapetype:
         shape_attributes["coordsize"] = "21600,21600"
         shape_attributes["path"] = path
-    if element_name == "shape":
+    if element_name == "shape" and not use_predefined_process_shapetype:
         shape_attributes[_qn(OFFICE_NS, "spt")] = str(
             floating_shape.shape_type
         )
