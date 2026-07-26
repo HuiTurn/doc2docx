@@ -60,6 +60,10 @@ current capabilities without release-by-release notes.
   (`msosptFlowChartMultidocument`, `0x73` / 115) through its Word-native
   multi-subpath VML shapetype and custom connection locations instead of
   deferring and dropping its object anchor.
+- Preserve the MS-ODRAW preparation flowchart preset
+  (`msosptFlowChartPreparation`, `0x75` / 117) through its Word-native VML
+  shapetype and text/connection rectangle instead of deferring and dropping its
+  object anchor.
 
 ## 0.36.4 - 2026-07-22
 

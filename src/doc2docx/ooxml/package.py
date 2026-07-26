@@ -281,6 +281,11 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
         "shape",
         "m3475,qx,10800,3475,21600l18125,21600qx21600,10800,18125,xe",
     ),
+    # MS-ODRAW msosptFlowChartPreparation (0x75), from Word SaveAs VML.
+    117: (
+        "shape",
+        "m4353,l17214,r4386,10800l17214,21600r-12861,l,10800xe",
+    ),
 }
 
 # Word emits these verified multi-subpath presets through an independent
@@ -304,6 +309,11 @@ _VML_NATIVE_SHAPETYPE_PATH_ATTRIBUTES: dict[int, dict[str, str]] = {
         "o:connecttype": "custom",
         "o:connectlocs": "10800,0;0,10800;10800,19890;21600,10800",
         "textboxrect": "0,3675,18595,18022",
+    },
+    117: {
+        "gradientshapeok": "t",
+        "o:connecttype": "rect",
+        "textboxrect": "4353,0,17214,21600",
     },
 }
 
