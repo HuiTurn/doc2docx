@@ -250,6 +250,11 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
         "shape",
         "m,l,21600r21600,l21600,xem2610,nfl2610,21600em18990,nfl18990,21600e",
     ),
+    # MS-ODRAW msosptFlowChartInternalStorage (0x71), from Word SaveAs VML.
+    113: (
+        "shape",
+        "m,l,21600r21600,l21600,xem4236,nfl4236,21600em,4236nfl21600,4236e",
+    ),
     114: (
         "shape",
         "m0,20172v945,400,1887,628,2795,913c3587,21312,4342,21370,5060,21597"
@@ -264,6 +269,14 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
         "shape",
         "m3475,qx,10800,3475,21600l18125,21600qx21600,10800,18125,xe",
     ),
+}
+
+# Word emits these verified multi-subpath presets through an independent
+# <v:shapetype>. Keeping that structure avoids edge-pixel changes from inlining
+# their path directly on <v:shape>.
+_VML_NATIVE_RECT_SHAPETYPE_TEXTBOX_RECTS: dict[int, str] = {
+    112: "2610,0,18990,21600",
+    113: "4236,4236,21600,21600",
 }
 
 ET.register_namespace("w", W_NS)
@@ -1740,21 +1753,23 @@ def _append_floating_shape(
         shape_attributes["strokeweight"] = (
             f"{_emus_as_points(shape_style.line_width_emu)}pt"
         )
-    use_predefined_process_shapetype = (
-        floating_shape.geometry_path is None
-        and floating_shape.shape_type == 112
+    native_shapetype_textbox_rect = (
+        _VML_NATIVE_RECT_SHAPETYPE_TEXTBOX_RECTS.get(floating_shape.shape_type)
+        if floating_shape.geometry_path is None
+        else None
     )
-    if use_predefined_process_shapetype:
+    use_native_shapetype = native_shapetype_textbox_rect is not None
+    if use_native_shapetype:
         element_name, path = _VML_PRESET_SHAPES[floating_shape.shape_type]
         assert element_name == "shape" and path is not None
-        shapetype_id = "_x0000_t112"
+        shapetype_id = f"_x0000_t{floating_shape.shape_type}"
         shapetype = ET.SubElement(
             pict,
             _qn(VML_NS, "shapetype"),
             {
                 "id": shapetype_id,
                 "coordsize": "21600,21600",
-                _qn(OFFICE_NS, "spt"): "112",
+                _qn(OFFICE_NS, "spt"): str(floating_shape.shape_type),
                 "path": path,
             },
         )
@@ -1766,7 +1781,7 @@ def _append_floating_shape(
                 _qn(OFFICE_NS, "extrusionok"): "f",
                 "gradientshapeok": "t",
                 _qn(OFFICE_NS, "connecttype"): "rect",
-                "textboxrect": "2610,0,18990,21600",
+                "textboxrect": native_shapetype_textbox_rect,
             },
         )
         shape_attributes["type"] = f"#{shapetype_id}"
@@ -1776,10 +1791,10 @@ def _append_floating_shape(
         element_name, path = "shape", VML_PRESET_FORMULA_PATHS[floating_shape.shape_type]
     else:
         element_name, path = _VML_PRESET_SHAPES[floating_shape.shape_type]
-    if path is not None and not use_predefined_process_shapetype:
+    if path is not None and not use_native_shapetype:
         shape_attributes["coordsize"] = "21600,21600"
         shape_attributes["path"] = path
-    if element_name == "shape" and not use_predefined_process_shapetype:
+    if element_name == "shape" and not use_native_shapetype:
         shape_attributes[_qn(OFFICE_NS, "spt")] = str(
             floating_shape.shape_type
         )
