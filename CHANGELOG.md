@@ -68,6 +68,10 @@ current capabilities without release-by-release notes.
   (`msosptFlowChartManualInput`, `0x76` / 118) through its Word-native VML
   shapetype, custom connection locations, and text rectangle instead of
   deferring and dropping its object anchor.
+- Preserve the MS-ODRAW manual-operation flowchart preset
+  (`msosptFlowChartManualOperation`, `0x77` / 119) through its Word-native VML
+  shapetype, custom connection locations, and text rectangle instead of
+  deferring and dropping its object anchor.
 
 ## 0.36.4 - 2026-07-22
 
