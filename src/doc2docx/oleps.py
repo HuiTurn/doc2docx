@@ -130,10 +130,34 @@ def _read_string(
     byte_count = character_count * (2 if wide else 1)
     _require_range(data, start + 8, byte_count, limit=end, label=f"{label} text")
     raw = data[start + 8 : start + 8 + byte_count]
-    terminator = b"\0\0" if wide else b"\0"
-    if character_count and not raw.endswith(terminator):
-        raise InvalidWordDocument(f"{label} is not null-terminated")
-    payload = raw[: -len(terminator)] if character_count else raw
+    if character_count == 0:
+        return None
+    # Word often includes 4-byte alignment padding after the terminator inside
+    # the declared byte count. Truncate at the first NUL so padding zeros are
+    # not decoded into U+0000/U+FFFD that Word later rejects in core.xml.
+    if wide:
+        terminator_at = None
+        for index in range(0, len(raw) - 1, 2):
+            if raw[index : index + 2] == b"\0\0":
+                terminator_at = index
+                break
+        if terminator_at is None:
+            raise InvalidWordDocument(f"{label} is not null-terminated")
+        payload = raw[:terminator_at]
+        padding = raw[terminator_at + 2 :]
+    else:
+        terminator_at = raw.find(b"\0")
+        if terminator_at < 0:
+            raise InvalidWordDocument(f"{label} is not null-terminated")
+        payload = raw[:terminator_at]
+        padding = raw[terminator_at + 1 :]
+    if padding and any(padding):
+        report.warning(
+            "SUMMARY_INFORMATION_TEXT_REPAIRED",
+            "non-zero padding after a core property string terminator was ignored",
+            location=SourceLocation(stream="\\x05SummaryInformation"),
+            property_id=f"0x{property_id:08X}",
+        )
     codec = "utf-16le" if value_type == _VT_LPWSTR else _codec_for_codepage(codepage)
     try:
         value = payload.decode(codec)
@@ -154,18 +178,28 @@ def _read_string(
             codepage=codepage,
         )
         value = payload.decode(codec, errors="replace")
+    # Drop characters illegal in XML instead of emitting U+FFFD, which Word
+    # treats as a corrupt core-properties part.
     repaired = "".join(
-        character if _is_xml_character(character) else "\uFFFD"
-        for character in value
+        character for character in value if _is_xml_character(character)
     )
     if repaired != value:
         report.warning(
             "SUMMARY_INFORMATION_TEXT_REPAIRED",
-            "characters that are invalid in XML were replaced in a core property",
+            "characters that are invalid in XML were omitted from a core property",
             location=SourceLocation(stream="\\x05SummaryInformation"),
             property_id=f"0x{property_id:08X}",
         )
         value = repaired
+    if "\uFFFD" in value:
+        cleaned = value.replace("\uFFFD", "")
+        report.warning(
+            "SUMMARY_INFORMATION_TEXT_REPAIRED",
+            "Unicode replacement characters were omitted from a core property",
+            location=SourceLocation(stream="\\x05SummaryInformation"),
+            property_id=f"0x{property_id:08X}",
+        )
+        value = cleaned
     return value or None
 
 
