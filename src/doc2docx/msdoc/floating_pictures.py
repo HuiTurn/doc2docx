@@ -11,6 +11,9 @@ from ..model import CharacterProperties, FloatingPicture
 from .header_textboxes import ShapeAnchor
 from .officeart import OfficeArtShapeCollection
 
+# Word's UI default left/right wrap distance when OfficeArt omits dxWrapDist*.
+_DEFAULT_WRAP_DIST_LR_EMU = 9 * 12700
+
 
 @dataclass(slots=True, frozen=True)
 class FloatingPictureCollection:
@@ -84,6 +87,20 @@ def _read_floating_pictures(
         wrap_polygon = officeart.wrap_polygon_at(anchor.shape_id)
         if anchor.wrap_type in ("tight", "through") and not wrap_polygon:
             approximated_wrap_count += 1
+        wrap_distances = officeart.wrap_distances_at(anchor.shape_id)
+        if wrap_distances is None:
+            if anchor.wrap_type in ("square", "tight", "through"):
+                wrap_dist_left = wrap_dist_right = _DEFAULT_WRAP_DIST_LR_EMU
+            else:
+                wrap_dist_left = wrap_dist_right = 0
+            wrap_dist_top = wrap_dist_bottom = 0
+        else:
+            (
+                wrap_dist_left,
+                wrap_dist_top,
+                wrap_dist_right,
+                wrap_dist_bottom,
+            ) = wrap_distances
         picture = FloatingPicture(
             picture_id=first_picture_id + len(pictures),
             shape_id=anchor.shape_id,
@@ -102,6 +119,10 @@ def _read_floating_pictures(
             behind_text=anchor.behind_text,
             anchor_locked=anchor.anchor_locked,
             wrap_polygon=wrap_polygon,
+            wrap_dist_top_emu=wrap_dist_top,
+            wrap_dist_bottom_emu=wrap_dist_bottom,
+            wrap_dist_left_emu=wrap_dist_left,
+            wrap_dist_right_emu=wrap_dist_right,
             flip_horizontal=officeart.is_horizontally_flipped(anchor.shape_id),
             flip_vertical=officeart.is_vertically_flipped(anchor.shape_id),
             rotation_degrees=officeart.rotation_at(anchor.shape_id),

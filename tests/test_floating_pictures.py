@@ -249,6 +249,40 @@ class FloatingPictureTests(unittest.TestCase):
             [(str(x), str(y)) for x, y in polygon],
         )
 
+    def test_default_wrap_distances_match_word_ui_when_officeart_omits_them(
+        self,
+    ) -> None:
+        report = ConversionReport("wrap-dist.doc")
+        collection = read_main_floating_pictures(
+            {100: _anchor(100, wrap_type="tight")},
+            OfficeArtShapeCollection(
+                {},
+                {100: OfficeArtRasterImage(_PNG, "png", "image/png", 1)},
+            ),
+            report=report,
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+        picture = collection.pictures[0]
+        self.assertEqual(picture.wrap_dist_left_emu, 9 * 12700)
+        self.assertEqual(picture.wrap_dist_right_emu, 9 * 12700)
+        self.assertEqual(picture.wrap_dist_top_emu, 0)
+        self.assertEqual(picture.wrap_dist_bottom_emu, 0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "wrap-dist.docx"
+            write_docx(
+                Document((Paragraph((picture,)),), pictures=(picture,)),
+                destination,
+            )
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+            anchor = root.find(f".//{WP}anchor")
+            assert anchor is not None
+            self.assertEqual(anchor.get("distL"), str(9 * 12700))
+            self.assertEqual(anchor.get("distR"), str(9 * 12700))
+            self.assertEqual(anchor.get("distT"), "0")
+            self.assertEqual(anchor.get("distB"), "0")
+
     def test_scopes_image_relationships_to_document_and_header_parts(self) -> None:
         main_picture = FloatingPicture(
             picture_id=1,

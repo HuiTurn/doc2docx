@@ -37,6 +37,9 @@ current capabilities without release-by-release notes.
   instead of an approximated literal path. This clears
   `FLOATING_SHAPE_TYPES_DEFERRED` (and the accompanying dropped shape) for
   these presets.
+- Preserve OfficeArt wrap distances (`dxWrapDist*` / `dyWrapDist*`) on floating
+  pictures, and when they are absent apply Word's UI default of 9pt left/right
+  (0 top/bottom) for square/tight/through wraps instead of emitting `dist*=0`.
 
 ## 0.36.4 - 2026-07-22
 

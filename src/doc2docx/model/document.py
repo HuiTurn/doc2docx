@@ -788,6 +788,11 @@ class FloatingPicture:
     behind_text: bool
     anchor_locked: bool
     wrap_polygon: tuple[tuple[int, int], ...] = ()
+    # OOXML wp:anchor dist* values in EMUs.
+    wrap_dist_top_emu: int = 0
+    wrap_dist_bottom_emu: int = 0
+    wrap_dist_left_emu: int = 0
+    wrap_dist_right_emu: int = 0
     name: str | None = None
     properties: CharacterProperties = field(default_factory=CharacterProperties)
     flip_horizontal: bool = False

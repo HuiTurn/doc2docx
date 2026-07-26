@@ -97,6 +97,9 @@ class OfficeArtShapeCollection:
         default_factory=dict
     )
     geometry_paths_by_shape_id: Mapping[int, str] = field(default_factory=dict)
+    wrap_distances_by_shape_id: Mapping[int, tuple[int, int, int, int]] = field(
+        default_factory=dict
+    )
     shape_types_by_shape_id: Mapping[int, int] = field(default_factory=dict)
     horizontally_flipped_shape_ids: frozenset[int] = frozenset()
     vertically_flipped_shape_ids: frozenset[int] = frozenset()
@@ -131,6 +134,9 @@ class OfficeArtShapeCollection:
 
     def geometry_path_at(self, shape_id: int) -> str | None:
         return self.geometry_paths_by_shape_id.get(shape_id)
+
+    def wrap_distances_at(self, shape_id: int) -> tuple[int, int, int, int] | None:
+        return self.wrap_distances_by_shape_id.get(shape_id)
 
     def child_anchor_at(self, shape_id: int) -> OfficeArtChildAnchor | None:
         return self.child_anchors_by_shape_id.get(shape_id)
@@ -338,6 +344,30 @@ def _rotation_property(properties: Mapping[int, _Property]) -> float:
     if value & 0x80000000:
         value -= 0x100000000
     return value / 0x10000
+
+
+# MS-ODRAW dxWrapDistLeft / dyWrapDistTop / dxWrapDistRight / dyWrapDistBottom.
+_WRAP_DISTANCE_PROPERTY_IDS = (0x0390, 0x0391, 0x0392, 0x0393)
+
+
+def _wrap_distances(
+    properties: Mapping[int, _Property],
+) -> tuple[int, int, int, int] | None:
+    """Return left/top/right/bottom wrap distances in EMUs when any are present."""
+
+    if not any(identifier in properties for identifier in _WRAP_DISTANCE_PROPERTY_IDS):
+        return None
+    values: list[int] = []
+    for identifier in _WRAP_DISTANCE_PROPERTY_IDS:
+        entry = properties.get(identifier)
+        if entry is None or entry.is_complex:
+            values.append(0)
+            continue
+        value = entry.value
+        if value & 0x80000000:
+            value -= 0x100000000
+        values.append(max(value, 0))
+    return values[0], values[1], values[2], values[3]
 
 
 def _imso_point_array(
@@ -969,6 +999,7 @@ def read_officeart_shapes(
     unsupported_image_types_by_shape_id: dict[int, int] = {}
     wrap_polygons_by_shape_id: dict[int, tuple[tuple[int, int], ...]] = {}
     geometry_paths_by_shape_id: dict[int, str] = {}
+    wrap_distances_by_shape_id: dict[int, tuple[int, int, int, int]] = {}
     child_anchors_by_shape_id: dict[int, OfficeArtChildAnchor] = {}
     for drawing_label, drawing in drawings:
         _collect_group_child_anchors(
@@ -1015,6 +1046,9 @@ def read_officeart_shapes(
             geometry_path = _custom_geometry_path(properties)
             if geometry_path is not None:
                 geometry_paths_by_shape_id[shape_id] = geometry_path
+            wrap_distances = _wrap_distances(properties)
+            if wrap_distances is not None:
+                wrap_distances_by_shape_id[shape_id] = wrap_distances
             image_entry = _shape_image(properties, blips)
             if image_entry.image is not None:
                 images_by_shape_id[shape_id] = image_entry.image
@@ -1038,5 +1072,6 @@ def read_officeart_shapes(
         ),
         wrap_polygons_by_shape_id=wrap_polygons_by_shape_id,
         geometry_paths_by_shape_id=geometry_paths_by_shape_id,
+        wrap_distances_by_shape_id=wrap_distances_by_shape_id,
         child_anchors_by_shape_id=child_anchors_by_shape_id,
     )
