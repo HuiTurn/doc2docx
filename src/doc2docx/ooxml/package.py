@@ -296,6 +296,11 @@ _VML_PRESET_SHAPES: dict[int, tuple[str, str | None]] = {
         "shape",
         "m,l21600,,17240,21600r-12880,xe",
     ),
+    # MS-ODRAW msosptFlowChartConnector (0x78), from Word SaveAs VML.
+    120: (
+        "shape",
+        "m10800,qx,10800,10800,21600,21600,10800,10800,xe",
+    ),
 }
 
 # Word emits these verified multi-subpath presets through an independent
@@ -337,7 +342,18 @@ _VML_NATIVE_SHAPETYPE_PATH_ATTRIBUTES: dict[int, dict[str, str]] = {
         "o:connectlocs": "10800,0;2180,10800;10800,21600;19420,10800",
         "textboxrect": "4321,0,17204,21600",
     },
+    120: {
+        "gradientshapeok": "t",
+        "o:connecttype": "custom",
+        "o:connectlocs": (
+            "10800,0;3163,3163;0,10800;3163,18437;10800,21600;"
+            "18437,18437;21600,10800;18437,3163"
+        ),
+        "textboxrect": "3163,3163,18437,18437",
+    },
 }
+
+_VML_NATIVE_SHAPETYPE_MITER_STROKE = frozenset((112, 113, 115, 117, 118, 119))
 
 ET.register_namespace("w", W_NS)
 ET.register_namespace("r", R_NS)
@@ -1833,7 +1849,12 @@ def _append_floating_shape(
                 "path": path,
             },
         )
-        ET.SubElement(shapetype, _qn(VML_NS, "stroke"), {"joinstyle": "miter"})
+        if floating_shape.shape_type in _VML_NATIVE_SHAPETYPE_MITER_STROKE:
+            ET.SubElement(
+                shapetype,
+                _qn(VML_NS, "stroke"),
+                {"joinstyle": "miter"},
+            )
         assert native_shapetype_path_attributes is not None
         path_attributes = {
             (
