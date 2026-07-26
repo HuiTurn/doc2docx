@@ -76,6 +76,10 @@ current capabilities without release-by-release notes.
   (`msosptFlowChartConnector`, `0x78` / 120) through its Word-native quadratic
   VML shapetype, eight custom connection locations, and text rectangle instead
   of deferring and dropping its object anchor.
+- Preserve the MS-ODRAW off-page flowchart connector preset
+  (`msosptFlowChartOffpageConnector`, `0xB1` / 177) through its Word-native VML
+  shapetype and text/connection rectangle instead of deferring and dropping its
+  object anchor.
 
 ## 0.36.4 - 2026-07-22
 

@@ -56,6 +56,7 @@ _SUPPORTED_SHAPE_TYPES = frozenset(
         118,
         119,
         120,
+        177,
         183,
         184,
     )
