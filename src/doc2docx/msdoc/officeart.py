@@ -96,6 +96,7 @@ class OfficeArtShapeCollection:
     wrap_polygons_by_shape_id: Mapping[int, tuple[tuple[int, int], ...]] = field(
         default_factory=dict
     )
+    geometry_paths_by_shape_id: Mapping[int, str] = field(default_factory=dict)
     shape_types_by_shape_id: Mapping[int, int] = field(default_factory=dict)
     horizontally_flipped_shape_ids: frozenset[int] = frozenset()
     vertically_flipped_shape_ids: frozenset[int] = frozenset()
@@ -127,6 +128,9 @@ class OfficeArtShapeCollection:
 
     def wrap_polygon_at(self, shape_id: int) -> tuple[tuple[int, int], ...]:
         return self.wrap_polygons_by_shape_id.get(shape_id, ())
+
+    def geometry_path_at(self, shape_id: int) -> str | None:
+        return self.geometry_paths_by_shape_id.get(shape_id)
 
     def child_anchor_at(self, shape_id: int) -> OfficeArtChildAnchor | None:
         return self.child_anchors_by_shape_id.get(shape_id)
@@ -336,6 +340,42 @@ def _rotation_property(properties: Mapping[int, _Property]) -> float:
     return value / 0x10000
 
 
+def _imso_point_array(
+    payload: bytes,
+    *,
+    label: str,
+) -> tuple[tuple[int, int], ...]:
+    if len(payload) < 6:
+        raise InvalidWordDocument(f"OfficeArt {label} IMsoArray is truncated")
+    count, allocated, element_size = struct.unpack_from("<HHH", payload)
+    if count < 1 or allocated < count or count > 4096:
+        raise InvalidWordDocument(f"OfficeArt {label} has an invalid point count")
+    if element_size == 8:
+        stored_size = 8
+        point_format = "<ii"
+    elif element_size == 0xFFF0:
+        stored_size = 4
+        point_format = "<hh"
+    else:
+        raise InvalidWordDocument(
+            f"OfficeArt {label} has unsupported point size 0x{element_size:04X}"
+        )
+    if len(payload) != 6 + count * stored_size:
+        raise InvalidWordDocument(
+            f"OfficeArt {label} point data does not match its IMsoArray header"
+        )
+    points: list[tuple[int, int]] = []
+    for index in range(count):
+        x, y = struct.unpack_from(point_format, payload, 6 + index * stored_size)
+        if (0x80000000 <= (x & 0xFFFFFFFF) <= 0x8000007F) or (
+            0x80000000 <= (y & 0xFFFFFFFF) <= 0x8000007F
+        ):
+            # Guide-indexed coordinates need pGuides; defer instead of guessing.
+            return ()
+        points.append((x, y))
+    return tuple(points)
+
+
 def _wrap_polygon(
     properties: Mapping[int, _Property],
 ) -> tuple[tuple[int, int], ...]:
@@ -346,26 +386,9 @@ def _wrap_polygon(
         raise InvalidWordDocument(
             "OfficeArt pWrapPolygonVertices has no complex point array"
         )
-    payload = entry.complex_data
-    if len(payload) < 6:
-        raise InvalidWordDocument("OfficeArt wrap polygon IMsoArray is truncated")
-    count, allocated, element_size = struct.unpack_from("<HHH", payload)
-    if count < 3 or allocated < count or count > 4096:
-        raise InvalidWordDocument("OfficeArt wrap polygon has an invalid point count")
-    if element_size == 8:
-        stored_size = 8
-        point_format = "<ii"
-    elif element_size == 0xFFF0:
-        stored_size = 4
-        point_format = "<hh"
-    else:
-        raise InvalidWordDocument(
-            f"OfficeArt wrap polygon has unsupported point size 0x{element_size:04X}"
-        )
-    if len(payload) != 6 + count * stored_size:
-        raise InvalidWordDocument(
-            "OfficeArt wrap polygon point data does not match its IMsoArray header"
-        )
+    points = _imso_point_array(entry.complex_data, label="wrap polygon")
+    if not points or len(points) < 3:
+        return ()
 
     left, _ = _simple_property(properties, 0x0140, 0)
     top, _ = _simple_property(properties, 0x0141, 0)
@@ -374,13 +397,131 @@ def _wrap_polygon(
     if right <= left or bottom <= top:
         raise InvalidWordDocument("OfficeArt wrap polygon geometry bounds are invalid")
 
-    points: list[tuple[int, int]] = []
-    for index in range(count):
-        x, y = struct.unpack_from(point_format, payload, 6 + index * stored_size)
-        normalized_x = round((x - left) * 21600 / (right - left))
-        normalized_y = round((y - top) * 21600 / (bottom - top))
-        points.append((normalized_x, normalized_y))
-    return tuple(points)
+    return tuple(
+        (
+            round((x - left) * 21600 / (right - left)),
+            round((y - top) * 21600 / (bottom - top)),
+        )
+        for x, y in points
+    )
+
+
+_PATH_MOVE = 0x4000
+_PATH_LINE = 0x0000
+_PATH_CURVE = 0x2000
+_PATH_CLOSE = 0x6000
+_PATH_END = 0x8000
+_PATH_ESCAPE = 0xA000
+_PATH_CLIENT_ESCAPE = 0xC000
+_PATH_TYPE_MASK = 0xE000
+_PATH_COUNT_MASK = 0x1FFF
+
+
+def _custom_geometry_path(properties: Mapping[int, _Property]) -> str | None:
+    """Build a VML path from OfficeArt pVertices + pSegmentInfo when present."""
+
+    vertices_entry = properties.get(0x0145)
+    segments_entry = properties.get(0x0146)
+    if vertices_entry is None or segments_entry is None:
+        return None
+    if (
+        not vertices_entry.is_complex
+        or vertices_entry.complex_data is None
+        or not segments_entry.is_complex
+        or segments_entry.complex_data is None
+    ):
+        return None
+
+    points = _imso_point_array(vertices_entry.complex_data, label="pVertices")
+    if not points:
+        return None
+
+    segment_payload = segments_entry.complex_data
+    if len(segment_payload) < 6:
+        return None
+    count, allocated, element_size = struct.unpack_from("<HHH", segment_payload)
+    if (
+        count < 1
+        or allocated < count
+        or count > 4096
+        or element_size != 2
+        or len(segment_payload) != 6 + count * 2
+    ):
+        return None
+    segments = [
+        struct.unpack_from("<H", segment_payload, 6 + index * 2)[0]
+        for index in range(count)
+    ]
+
+    left, _ = _simple_property(properties, 0x0140, 0)
+    top, _ = _simple_property(properties, 0x0141, 0)
+    right, _ = _simple_property(properties, 0x0142, 21600)
+    bottom, _ = _simple_property(properties, 0x0143, 21600)
+    if right <= left or bottom <= top:
+        return None
+
+    def normalize(point: tuple[int, int]) -> tuple[int, int]:
+        x, y = point
+        return (
+            round((x - left) * 21600 / (right - left)),
+            round((y - top) * 21600 / (bottom - top)),
+        )
+
+    point_index = 0
+    commands: list[str] = []
+
+    def take(count_points: int) -> list[tuple[int, int]] | None:
+        nonlocal point_index
+        if point_index + count_points > len(points):
+            return None
+        taken = [
+            normalize(points[index])
+            for index in range(point_index, point_index + count_points)
+        ]
+        point_index += count_points
+        return taken
+
+    for segment in segments:
+        kind = segment & _PATH_TYPE_MASK
+        repeat = segment & _PATH_COUNT_MASK
+        if kind == _PATH_MOVE:
+            taken = take(1)
+            if taken is None:
+                return None
+            x, y = taken[0]
+            commands.append(f"m{x},{y}")
+        elif kind == _PATH_LINE:
+            line_count = repeat if repeat else 1
+            taken = take(line_count)
+            if taken is None:
+                return None
+            commands.append("l" + ",".join(f"{x},{y}" for x, y in taken))
+        elif kind == _PATH_CURVE:
+            curve_count = repeat if repeat else 1
+            taken = take(curve_count * 3)
+            if taken is None:
+                return None
+            for index in range(0, len(taken), 3):
+                x1, y1 = taken[index]
+                x2, y2 = taken[index + 1]
+                x3, y3 = taken[index + 2]
+                commands.append(f"c{x1},{y1},{x2},{y2},{x3},{y3}")
+        elif kind == _PATH_CLOSE:
+            commands.append("x")
+        elif kind == _PATH_END:
+            commands.append("e")
+        elif kind in (_PATH_ESCAPE, _PATH_CLIENT_ESCAPE):
+            continue
+        else:
+            return None
+
+    if point_index != len(points):
+        return None
+    if not commands:
+        return None
+    if commands[-1] != "e":
+        commands.append("e")
+    return "".join(commands)
 
 
 def _shape_style(properties: Mapping[int, _Property]) -> ShapeStyle:
@@ -827,6 +968,7 @@ def read_officeart_shapes(
     images_by_shape_id: dict[int, OfficeArtImage] = {}
     unsupported_image_types_by_shape_id: dict[int, int] = {}
     wrap_polygons_by_shape_id: dict[int, tuple[tuple[int, int], ...]] = {}
+    geometry_paths_by_shape_id: dict[int, str] = {}
     child_anchors_by_shape_id: dict[int, OfficeArtChildAnchor] = {}
     for drawing_label, drawing in drawings:
         _collect_group_child_anchors(
@@ -870,6 +1012,9 @@ def read_officeart_shapes(
             wrap_polygon = _wrap_polygon(properties)
             if wrap_polygon:
                 wrap_polygons_by_shape_id[shape_id] = wrap_polygon
+            geometry_path = _custom_geometry_path(properties)
+            if geometry_path is not None:
+                geometry_paths_by_shape_id[shape_id] = geometry_path
             image_entry = _shape_image(properties, blips)
             if image_entry.image is not None:
                 images_by_shape_id[shape_id] = image_entry.image
@@ -892,5 +1037,6 @@ def read_officeart_shapes(
             unsupported_image_types_by_shape_id
         ),
         wrap_polygons_by_shape_id=wrap_polygons_by_shape_id,
+        geometry_paths_by_shape_id=geometry_paths_by_shape_id,
         child_anchors_by_shape_id=child_anchors_by_shape_id,
     )
