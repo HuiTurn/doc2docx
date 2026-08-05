@@ -159,6 +159,13 @@ current capabilities without release-by-release notes.
   variants (80–82), math pie/chord-like shapes (97/107/108), callout (129), and
   4-point star (187) — as Word-style `<v:shapetype>` floating shapes. SSIM 1.0;
   only pVertices parse failures (`mso_180`–`182`) remain in that corpus.
+
+## 0.36.5 - 2026-08-06
+
+- Add Python 3.10 support through a standard-library-only `StrEnum`
+  compatibility implementation and lower the package's declared minimum
+  Python version accordingly.
+- Validate the complete 270-test suite on Python 3.10 and Python 3.13.
 ## 0.36.4 - 2026-07-22
 
 - Reconstruct grouped OfficeArt line connectors (flowchart arrows) from child

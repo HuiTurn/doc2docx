@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from enum import StrEnum
 import json
 import os
 from pathlib import Path
 import tempfile
 from typing import Any
+
+from ._compat import StrEnum
 
 
 def write_json_file(path: str | Path, value: Any) -> None:
