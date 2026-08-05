@@ -43,7 +43,7 @@ faithful conversion.
 python -m pip install msdoc2docx
 ```
 
-Python 3.11 or newer is required.
+Python 3.10 or newer is required.
 
 ## Command line
 

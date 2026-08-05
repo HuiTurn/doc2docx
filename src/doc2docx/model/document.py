@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field, replace
-from enum import StrEnum
 from urllib.parse import urlsplit
 
+from .._compat import StrEnum
 from ..diagnostics import ConversionReport, SourceLocation
 
 
