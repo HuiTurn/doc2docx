@@ -146,6 +146,18 @@ class CompoundFileTests(unittest.TestCase):
             {"", "WordDocument", "1Table"},
         )
 
+    def test_stream_names_are_case_insensitive(self) -> None:
+        source = bytearray(build_word_cfb())
+        directory_offset = (16 + 1) * 512
+        stream_name = "worddocument".encode("utf-16le")
+        source[
+            directory_offset + 128 : directory_offset + 128 + len(stream_name)
+        ] = stream_name
+
+        compound = CompoundFile(source)
+
+        self.assertEqual(len(compound.open_stream("WordDocument")), 4096)
+
     def test_reads_stream_from_mini_fat(self) -> None:
         payload = b"hello mini"
         compound = CompoundFile(build_mini_stream_cfb(payload))

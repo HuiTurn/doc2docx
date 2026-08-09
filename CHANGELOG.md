@@ -5,6 +5,13 @@ current capabilities without release-by-release notes.
 
 ## Unreleased
 
+## 0.36.6 - 2026-08-09
+
+- Treat CFB directory paths case-insensitively, omit malformed optional
+  bookmarks, styles, numbering, OfficeArt, text boxes, and header/footer
+  stories with explicit diagnostics, and remove illegal XML characters before
+  serialization. Source distributions now include the shared test fixtures so
+  their bundled tests can run independently.
 - Add a Windows Word COM bilateral visual compare pipeline under
   `scripts/word_bilateral_compare.py` for source `.doc` versus converted
   `.docx` page images, including PDF export, fixed-DPI rasterization,

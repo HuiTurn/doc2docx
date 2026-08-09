@@ -115,6 +115,8 @@ def parse_grpprl(
 
 
 _CHARACTER_TOGGLES = {
+    0x0800: "revision_deleted",
+    0x0801: "revision_inserted",
     0x0835: "bold",
     0x0836: "italic",
     0x0837: "strike",
@@ -1366,6 +1368,16 @@ def apply_character_modifiers(
                 highlight=properties.highlight,
                 revision_format_id=properties.revision_format_id,
                 revision_text_id=properties.revision_text_id,
+                revision_inserted=properties.revision_inserted,
+                revision_deleted=properties.revision_deleted,
+                revision_inserted_author_index=(
+                    properties.revision_inserted_author_index
+                ),
+                revision_inserted_date=properties.revision_inserted_date,
+                revision_deleted_author_index=(
+                    properties.revision_deleted_author_index
+                ),
+                revision_deleted_date=properties.revision_deleted_date,
                 symbol_font=properties.symbol_font,
                 symbol_character_code=properties.symbol_character_code,
             )
@@ -1387,6 +1399,16 @@ def apply_character_modifiers(
                 highlight=properties.highlight,
                 revision_format_id=properties.revision_format_id,
                 revision_text_id=properties.revision_text_id,
+                revision_inserted=properties.revision_inserted,
+                revision_deleted=properties.revision_deleted,
+                revision_inserted_author_index=(
+                    properties.revision_inserted_author_index
+                ),
+                revision_inserted_date=properties.revision_inserted_date,
+                revision_deleted_author_index=(
+                    properties.revision_deleted_author_index
+                ),
+                revision_deleted_date=properties.revision_deleted_date,
                 symbol_font=properties.symbol_font,
                 symbol_character_code=properties.symbol_character_code,
             )
@@ -1603,6 +1625,34 @@ def apply_character_modifiers(
             properties = replace(
                 properties,
                 revision_text_id=struct.unpack("<I", operand)[0],
+            )
+        elif opcode == 0x4804:  # sprmCIbstRMark
+            author_index = struct.unpack("<h", operand)[0]
+            if author_index < 0:
+                unsupported.add(opcode)
+            else:
+                properties = replace(
+                    properties,
+                    revision_inserted_author_index=author_index,
+                )
+        elif opcode == 0x6805:  # sprmCDttmRMark
+            properties = replace(
+                properties,
+                revision_inserted_date=struct.unpack("<I", operand)[0],
+            )
+        elif opcode == 0x4863:  # sprmCIbstRMarkDel
+            author_index = struct.unpack("<h", operand)[0]
+            if author_index < 0:
+                unsupported.add(opcode)
+            else:
+                properties = replace(
+                    properties,
+                    revision_deleted_author_index=author_index,
+                )
+        elif opcode == 0x6864:  # sprmCDttmRMarkDel
+            properties = replace(
+                properties,
+                revision_deleted_date=struct.unpack("<I", operand)[0],
             )
         elif opcode == 0x2A0C:
             highlight = _ICO_HIGHLIGHT.get(operand[0])

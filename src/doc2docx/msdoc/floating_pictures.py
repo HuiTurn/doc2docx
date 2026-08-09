@@ -126,7 +126,10 @@ def _read_floating_pictures(
             width_twips=max(anchor.right - anchor.left, 1),
             height_twips=max(anchor.bottom - anchor.top, 1),
             horizontal_relative=anchor.horizontal_relative,
-            vertical_relative=anchor.vertical_relative,
+            vertical_relative=(
+                officeart.vertical_relative_at(anchor.shape_id)
+                or anchor.vertical_relative
+            ),
             wrap_type=anchor.wrap_type,
             wrap_side=anchor.wrap_side,
             behind_text=anchor.behind_text,

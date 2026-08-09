@@ -242,6 +242,12 @@ class CharacterProperties:
     complex_script_language: str | None = None
     revision_format_id: int | None = None
     revision_text_id: int | None = None
+    revision_inserted: bool | None = None
+    revision_deleted: bool | None = None
+    revision_inserted_author_index: int | None = None
+    revision_inserted_date: int | None = None
+    revision_deleted_author_index: int | None = None
+    revision_deleted_date: int | None = None
     symbol_font: str | None = None
     symbol_character_code: int | None = None
 

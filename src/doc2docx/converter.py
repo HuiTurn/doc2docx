@@ -24,14 +24,20 @@ from .model import (
     EmbeddedObject,
     Field,
     FloatingTextBox,
+    NumberingDefinitions,
     Paragraph,
+    StyleSheet,
     Symbol,
     Table,
     parse_main_story,
 )
 from .oleps import read_summary_information
 from .msdoc import (
+    BookmarkCollection,
     FileInformationBlock,
+    HeaderFooterCollection,
+    OfficeArtShapeCollection,
+    TextBoxCollection,
     read_bookmarks,
     read_comments,
     read_document_settings,
@@ -229,31 +235,47 @@ def convert(
         report=report,
     )
     style_table = fib.stshf
-    style_sheet = read_style_sheet(
-        table_stream,
-        offset=style_table.fc,
-        size=style_table.lcb,
-        fonts=fonts,
-        report=report,
-    )
+    try:
+        style_sheet = read_style_sheet(
+            table_stream,
+            offset=style_table.fc,
+            size=style_table.lcb,
+            fonts=fonts,
+            report=report,
+        )
+    except InvalidWordDocument as exc:
+        style_sheet = StyleSheet()
+        report.warning(
+            "STYLE_TABLE_MALFORMED",
+            "malformed optional style definitions were omitted",
+            reason=str(exc),
+        )
     available_style_names = frozenset(
         style.name for style in style_sheet.styles if style is not None
     )
     list_table = fib.plf_lst
     list_override_table = fib.plf_lfo
     list_name_table = fib.sttb_list_names
-    numbering = read_numbering(
-        table_stream,
-        list_offset=list_table.fc,
-        list_size=list_table.lcb,
-        lfo_offset=list_override_table.fc,
-        lfo_size=list_override_table.lcb,
-        ccp_text=fib.ccp_text,
-        fonts=fonts,
-        report=report,
-        list_names_offset=list_name_table.fc,
-        list_names_size=list_name_table.lcb,
-    )
+    try:
+        numbering = read_numbering(
+            table_stream,
+            list_offset=list_table.fc,
+            list_size=list_table.lcb,
+            lfo_offset=list_override_table.fc,
+            lfo_size=list_override_table.lcb,
+            ccp_text=fib.ccp_text,
+            fonts=fonts,
+            report=report,
+            list_names_offset=list_name_table.fc,
+            list_names_size=list_name_table.lcb,
+        )
+    except InvalidWordDocument as exc:
+        numbering = NumberingDefinitions()
+        report.warning(
+            "NUMBERING_TABLE_MALFORMED",
+            "malformed optional list definitions were omitted",
+            reason=str(exc),
+        )
     available_list_names = frozenset(
         abstract.name
         for abstract in numbering.abstracts
@@ -295,36 +317,44 @@ def convert(
     bookmark_names = fib.sttbf_bkmk
     bookmark_starts = fib.plcf_bkf
     bookmark_ends = fib.plcf_bkl
-    bookmarks = read_bookmarks(
-        table_stream,
-        names_offset=bookmark_names.fc,
-        names_size=bookmark_names.lcb,
-        starts_offset=bookmark_starts.fc,
-        starts_size=bookmark_starts.lcb,
-        ends_offset=bookmark_ends.fc,
-        ends_size=bookmark_ends.lcb,
-        main_story_length=fib.ccp_text,
-        total_story_length=fib.total_story_cp_count,
-        maximum_bookmark_cp=piece_table.cp_end,
-        report=report,
-        supported_story_ranges=tuple(
-            (name, start, start + length)
-            for name, start, length in (
-                ("main", 0, fib.ccp_text),
-                ("footnotes", fib.ccp_text, fib.ccp_footnotes),
-                ("headers", fib.header_story_cp_start, fib.ccp_headers),
-                ("comments", fib.comment_story_cp_start, fib.ccp_comments),
-                ("endnotes", fib.endnote_story_cp_start, fib.ccp_endnotes),
-                ("textboxes", fib.textbox_story_cp_start, fib.ccp_textboxes),
-                (
-                    "header-textboxes",
-                    fib.header_textbox_story_cp_start,
-                    fib.ccp_header_textboxes,
-                ),
-            )
-            if length or name == "main"
-        ),
-    )
+    try:
+        bookmarks = read_bookmarks(
+            table_stream,
+            names_offset=bookmark_names.fc,
+            names_size=bookmark_names.lcb,
+            starts_offset=bookmark_starts.fc,
+            starts_size=bookmark_starts.lcb,
+            ends_offset=bookmark_ends.fc,
+            ends_size=bookmark_ends.lcb,
+            main_story_length=fib.ccp_text,
+            total_story_length=fib.total_story_cp_count,
+            maximum_bookmark_cp=piece_table.cp_end,
+            report=report,
+            supported_story_ranges=tuple(
+                (name, start, start + length)
+                for name, start, length in (
+                    ("main", 0, fib.ccp_text),
+                    ("footnotes", fib.ccp_text, fib.ccp_footnotes),
+                    ("headers", fib.header_story_cp_start, fib.ccp_headers),
+                    ("comments", fib.comment_story_cp_start, fib.ccp_comments),
+                    ("endnotes", fib.endnote_story_cp_start, fib.ccp_endnotes),
+                    ("textboxes", fib.textbox_story_cp_start, fib.ccp_textboxes),
+                    (
+                        "header-textboxes",
+                        fib.header_textbox_story_cp_start,
+                        fib.ccp_header_textboxes,
+                    ),
+                )
+                if length or name == "main"
+            ),
+        )
+    except InvalidWordDocument as exc:
+        bookmarks = BookmarkCollection({})
+        report.warning(
+            "BOOKMARK_TABLE_MALFORMED",
+            "malformed optional bookmark tables were omitted",
+            reason=str(exc),
+        )
     main_field_table = fib.plcf_fld_mom
     main_fields = read_field_table(
         table_stream,
@@ -466,12 +496,20 @@ def convert(
     )
     spa_headers = fib.plc_spa_hdr
     dgg_info = fib.dgg_info
-    officeart_shapes = read_officeart_shapes(
-        table_stream,
-        offset=dgg_info.fc,
-        size=dgg_info.lcb,
-        delay_stream=word_document,
-    )
+    try:
+        officeart_shapes = read_officeart_shapes(
+            table_stream,
+            offset=dgg_info.fc,
+            size=dgg_info.lcb,
+            delay_stream=word_document,
+        )
+    except InvalidWordDocument as exc:
+        officeart_shapes = OfficeArtShapeCollection({})
+        report.warning(
+            "OFFICEART_MALFORMED",
+            "malformed optional drawing data was omitted",
+            reason=str(exc),
+        )
     main_shape_table = fib.plc_spa_mom
     main_shape_anchors = read_shape_anchors(
         table_stream,
@@ -562,35 +600,47 @@ def convert(
     main_textbox_table = fib.plcf_txbx_txt
     main_textbox_fields = fib.plcf_fld_txbx
     main_textbox_breaks = fib.plcf_txbx_bkd
-    main_textboxes = read_main_textboxes(
-        table_stream,
-        piece_table,
-        ccp_text=fib.ccp_text,
-        ccp_textboxes=fib.ccp_textboxes,
-        textbox_cp_start=fib.textbox_story_cp_start,
-        spa_offset=main_shape_table.fc,
-        spa_size=main_shape_table.lcb,
-        text_offset=main_textbox_table.fc,
-        text_size=main_textbox_table.lcb,
-        field_offset=main_textbox_fields.fc,
-        field_size=main_textbox_fields.lcb,
-        break_offset=main_textbox_breaks.fc,
-        break_size=main_textbox_breaks.lcb,
-        report=report,
-        character_properties_at=formatting.character_properties_at,
-        paragraph_properties_at=formatting.paragraph_properties_at,
-        shape_style_at=officeart_shapes.style_at,
-        shape_child_anchor_at=officeart_shapes.child_anchor_at,
-        shape_rotation_at=officeart_shapes.rotation_at,
-        shape_horizontally_flipped_at=officeart_shapes.is_horizontally_flipped,
-        shape_vertically_flipped_at=officeart_shapes.is_vertically_flipped,
-        bookmark_boundaries_at=bookmarks.boundaries_at,
-        bookmark_names=bookmarks.names,
-        style_names=available_style_names,
-        list_names=available_list_names,
-        inline_picture_at=main_textbox_inline_pictures.picture_at,
-        embedded_object_at=embedded_objects.object_at,
-    )
+    try:
+        main_textboxes = read_main_textboxes(
+            table_stream,
+            piece_table,
+            ccp_text=fib.ccp_text,
+            ccp_textboxes=fib.ccp_textboxes,
+            textbox_cp_start=fib.textbox_story_cp_start,
+            spa_offset=main_shape_table.fc,
+            spa_size=main_shape_table.lcb,
+            text_offset=main_textbox_table.fc,
+            text_size=main_textbox_table.lcb,
+            field_offset=main_textbox_fields.fc,
+            field_size=main_textbox_fields.lcb,
+            break_offset=main_textbox_breaks.fc,
+            break_size=main_textbox_breaks.lcb,
+            report=report,
+            character_properties_at=formatting.character_properties_at,
+            paragraph_properties_at=formatting.paragraph_properties_at,
+            shape_style_at=officeart_shapes.style_at,
+            shape_child_anchor_at=officeart_shapes.child_anchor_at,
+            shape_rotation_at=officeart_shapes.rotation_at,
+            shape_horizontally_flipped_at=(
+                officeart_shapes.is_horizontally_flipped
+            ),
+            shape_vertically_flipped_at=(
+                officeart_shapes.is_vertically_flipped
+            ),
+            bookmark_boundaries_at=bookmarks.boundaries_at,
+            bookmark_names=bookmarks.names,
+            style_names=available_style_names,
+            list_names=available_list_names,
+            inline_picture_at=main_textbox_inline_pictures.picture_at,
+            embedded_object_at=embedded_objects.object_at,
+        )
+    except InvalidWordDocument as exc:
+        main_textboxes = TextBoxCollection({})
+        report.warning(
+            "MAIN_TEXTBOX_TABLE_MALFORMED",
+            "malformed optional main-story text boxes were omitted",
+            reason=str(exc),
+        )
     header_textbox_table = fib.plcf_hdr_txbx_txt
     header_textbox_fields = fib.plcf_fld_hdr_txbx
     header_textbox_breaks = fib.plcf_txbx_hdr_bkd
@@ -671,30 +721,38 @@ def convert(
         character_properties_at=formatting.character_properties_at,
     )
     header_table = fib.plcf_hdd
-    header_footers = read_header_footer_stories(
-        table_stream,
-        piece_table,
-        sections,
-        offset=header_table.fc,
-        size=header_table.lcb,
-        ccp_headers=fib.ccp_headers,
-        header_story_cp_start=fib.header_story_cp_start,
-        report=report,
-        character_properties_at=formatting.character_properties_at,
-        paragraph_properties_at=formatting.paragraph_properties_at,
-        floating_textbox_at=header_textboxes.textboxes_at,
-        inline_picture_at=header_inline_pictures.picture_at,
-        floating_picture_at=header_floating_pictures.picture_at,
-        floating_shape_at=header_floating_shapes.shapes_at,
-        field_end_properties_at=header_fields.end_properties_at,
-        bookmark_boundaries_at=bookmarks.boundaries_at,
-        bookmark_names=bookmarks.names,
-        style_names=available_style_names,
-        list_names=available_list_names,
-        ignored_character_cps=(
-            header_inline_pictures.consumed_binary_data_cps
-        ),
-    )
+    try:
+        header_footers = read_header_footer_stories(
+            table_stream,
+            piece_table,
+            sections,
+            offset=header_table.fc,
+            size=header_table.lcb,
+            ccp_headers=fib.ccp_headers,
+            header_story_cp_start=fib.header_story_cp_start,
+            report=report,
+            character_properties_at=formatting.character_properties_at,
+            paragraph_properties_at=formatting.paragraph_properties_at,
+            floating_textbox_at=header_textboxes.textboxes_at,
+            inline_picture_at=header_inline_pictures.picture_at,
+            floating_picture_at=header_floating_pictures.picture_at,
+            floating_shape_at=header_floating_shapes.shapes_at,
+            field_end_properties_at=header_fields.end_properties_at,
+            bookmark_boundaries_at=bookmarks.boundaries_at,
+            bookmark_names=bookmarks.names,
+            style_names=available_style_names,
+            list_names=available_list_names,
+            ignored_character_cps=(
+                header_inline_pictures.consumed_binary_data_cps
+            ),
+        )
+    except InvalidWordDocument as exc:
+        header_footers = HeaderFooterCollection(tuple(sections))
+        report.warning(
+            "HEADER_FOOTER_TABLE_MALFORMED",
+            "malformed optional header and footer stories were omitted",
+            reason=str(exc),
+        )
     sections = header_footers.sections
     parsed_document = parse_main_story(
         main_characters,

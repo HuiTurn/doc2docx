@@ -128,6 +128,22 @@ be approximated in WordprocessingML and is called out in the conversion report.
 
 See [CHANGELOG.md](CHANGELOG.md) for milestone and release details.
 
+## Related projects
+
+`doc2docx` follows the same package and command conventions as
+[xls2xlsx](https://github.com/HuiTurn/xls2xlsx) and
+[ppt2pptx](https://github.com/HuiTurn/ppt2pptx):
+
+| Distribution | Python package / CLI | Conversion |
+| --- | --- | --- |
+| `msdoc2docx` | `doc2docx` | DOC to DOCX |
+| `msxls2xlsx` | `xls2xlsx` | XLS to XLSX/XLSM |
+| `ppt2pptx` | `ppt2pptx` | PPT to PPTX |
+
+The projects share a consistent API, CLI structure, report format, and exit
+status conventions. Their conversion engines remain separate because the Word,
+Excel, and PowerPoint binary formats use different data models.
+
 ## Development
 
 Run the standard-library test suite from a source checkout:
