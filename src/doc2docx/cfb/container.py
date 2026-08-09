@@ -74,6 +74,16 @@ class CompoundFile:
         self._fat = self._load_fat()
         self._directory_entries = self._load_directory()
         self._entries_by_path = self._index_directory_tree()
+        self._entries_by_casefold_path: dict[str, DirectoryEntry] = {}
+        for path, entry in self._entries_by_path.items():
+            folded = path.casefold()
+            existing = self._entries_by_casefold_path.get(folded)
+            if existing is not None and existing.path != path:
+                raise InvalidCompoundFile(
+                    "compound-file directory contains names that differ only by case: "
+                    f"{existing.path!r} and {path!r}"
+                )
+            self._entries_by_casefold_path[folded] = entry
         self._mini_fat = self._load_mini_fat()
         self._mini_stream: bytes | None = None
 
@@ -373,7 +383,7 @@ class CompoundFile:
     def get_entry(self, path: str) -> DirectoryEntry:
         normalized = path.strip("/")
         try:
-            return self._entries_by_path[normalized]
+            return self._entries_by_casefold_path[normalized.casefold()]
         except KeyError as exc:
             raise StreamNotFound(f"compound-file entry {path!r} was not found") from exc
 

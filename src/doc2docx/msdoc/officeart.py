@@ -111,6 +111,9 @@ class OfficeArtShapeCollection:
     child_anchors_by_shape_id: Mapping[int, OfficeArtChildAnchor] = field(
         default_factory=dict
     )
+    vertical_relatives_by_shape_id: Mapping[int, str] = field(
+        default_factory=dict
+    )
 
     def style_at(self, shape_id: int) -> ShapeStyle | None:
         return self.by_shape_id.get(shape_id)
@@ -150,6 +153,9 @@ class OfficeArtShapeCollection:
 
     def child_anchor_at(self, shape_id: int) -> OfficeArtChildAnchor | None:
         return self.child_anchors_by_shape_id.get(shape_id)
+
+    def vertical_relative_at(self, shape_id: int) -> str | None:
+        return self.vertical_relatives_by_shape_id.get(shape_id)
 
 
 @dataclass(slots=True, frozen=True)
@@ -1068,6 +1074,7 @@ def read_officeart_shapes(
     adjustments_by_shape_id: dict[int, tuple[int | None, ...]] = {}
     wrap_distances_by_shape_id: dict[int, tuple[int, int, int, int]] = {}
     child_anchors_by_shape_id: dict[int, OfficeArtChildAnchor] = {}
+    vertical_relatives_by_shape_id: dict[int, str] = {}
     for drawing_label, drawing in drawings:
         _collect_group_child_anchors(
             data,
@@ -1100,6 +1107,19 @@ def read_officeart_shapes(
             properties.update(_option_properties(data, container.children))
             by_shape_id[shape_id] = _shape_style(properties)
             shape_types_by_shape_id[shape_id] = shape_record.instance
+            posrelv = properties.get(0x0392)
+            if posrelv is not None and not posrelv.is_complex:
+                # MS-ODRAW posrelv is the authoritative vertical reference
+                # for the OfficeArt shape.  PlcSpa.by is retained as the
+                # fallback for files that do not materialize this property.
+                vertical_relative = {
+                    1: "margin",
+                    2: "page",
+                    3: "paragraph",
+                    4: "line",
+                }.get(posrelv.value)
+                if vertical_relative is not None:
+                    vertical_relatives_by_shape_id[shape_id] = vertical_relative
             if flags & 0x00000040:
                 horizontally_flipped_shape_ids.add(shape_id)
             if flags & 0x00000080:
@@ -1148,4 +1168,5 @@ def read_officeart_shapes(
         adjustments_by_shape_id=adjustments_by_shape_id,
         wrap_distances_by_shape_id=wrap_distances_by_shape_id,
         child_anchors_by_shape_id=child_anchors_by_shape_id,
+        vertical_relatives_by_shape_id=vertical_relatives_by_shape_id,
     )

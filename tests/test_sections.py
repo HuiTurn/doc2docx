@@ -182,6 +182,7 @@ class SectionParsingTests(unittest.TestCase):
             [
                 f"{W}footnotePr",
                 f"{W}endnotePr",
+                f"{W}type",
                 f"{W}pgSz",
                 f"{W}pgMar",
                 f"{W}paperSrc",
@@ -195,6 +196,10 @@ class SectionParsingTests(unittest.TestCase):
                 f"{W}bidi",
                 f"{W}rtlGutter",
             ],
+        )
+        self.assertEqual(
+            section_element.find(f"{W}type").get(f"{W}val"),  # type: ignore[union-attr]
+            "nextPage",
         )
         self.assertEqual(
             section_element.find(f"{W}footnotePr/{W}pos").get(f"{W}val"),  # type: ignore[union-attr]

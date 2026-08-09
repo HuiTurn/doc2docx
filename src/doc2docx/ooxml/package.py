@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+import re
 import struct
 import zipfile
 from xml.etree import ElementTree as ET
@@ -282,7 +283,29 @@ def _qn(namespace: str, local_name: str) -> str:
     return f"{{{namespace}}}{local_name}"
 
 
+_ILLEGAL_XML_CHARACTER_RE = re.compile(
+    r"[\x00-\x08\x0B\x0C\x0E-\x1F\uD800-\uDFFF\uFFFE\uFFFF]"
+)
+
+
+def _sanitize_xml_text(value: str) -> str:
+    return _ILLEGAL_XML_CHARACTER_RE.sub("", value)
+
+
+def _sanitize_xml_tree(root: ET.Element) -> None:
+    for element in root.iter():
+        if element.text:
+            element.text = _sanitize_xml_text(element.text)
+        if element.tail:
+            element.tail = _sanitize_xml_text(element.tail)
+        for name, value in tuple(element.attrib.items()):
+            sanitized = _sanitize_xml_text(value)
+            if sanitized != value:
+                element.set(name, sanitized)
+
+
 def _xml_bytes(root: ET.Element) -> bytes:
+    _sanitize_xml_tree(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
@@ -635,6 +658,12 @@ def _has_character_properties(properties: CharacterProperties) -> bool:
         line_break_clear=None,
         revision_format_id=None,
         revision_text_id=None,
+        revision_inserted=None,
+        revision_deleted=None,
+        revision_inserted_author_index=None,
+        revision_inserted_date=None,
+        revision_deleted_author_index=None,
+        revision_deleted_date=None,
     ) != CharacterProperties()
 
 
@@ -1231,9 +1260,42 @@ def _append_text_run(
     *,
     valid_style_ids: set[int],
 ) -> None:
-    run = ET.SubElement(paragraph_element, _qn(W_NS, "r"))
+    revision_parent = paragraph_element
+    revision_name: str | None = None
+    revision_author_index: int | None = None
+    revision_date: int | None = None
+    if properties.revision_deleted:
+        revision_name = "del"
+        revision_author_index = properties.revision_deleted_author_index
+        revision_date = properties.revision_deleted_date
+    elif properties.revision_inserted:
+        revision_name = "ins"
+        revision_author_index = properties.revision_inserted_author_index
+        revision_date = properties.revision_inserted_date
+    if revision_name is not None:
+        revision_attributes = {
+            _qn(W_NS, "id"): str(
+                revision_date
+                if revision_date is not None
+                else (revision_author_index or 0)
+            ),
+            _qn(W_NS, "author"): (
+                "Unknown"
+                if revision_author_index is None
+                else f"Author {revision_author_index}"
+            ),
+        }
+        revision_parent = ET.SubElement(
+            paragraph_element,
+            _qn(W_NS, revision_name),
+            revision_attributes,
+        )
+    run = ET.SubElement(revision_parent, _qn(W_NS, "r"))
     _append_run_properties(run, properties, valid_style_ids=valid_style_ids)
-    text_element = ET.SubElement(run, _qn(W_NS, "t"))
+    text_element = ET.SubElement(
+        run,
+        _qn(W_NS, "delText" if revision_name == "del" else "t"),
+    )
     if text[:1].isspace() or text[-1:].isspace() or "  " in text:
         text_element.set(_qn(XML_NS, "space"), "preserve")
     text_element.text = text
@@ -3188,7 +3250,7 @@ def _document_xml(
         _append_section_properties(
             body,
             document.sections[-1],
-            include_break_type=False,
+            include_break_type=True,
             header_footer_parts=section_references.get(
                 (
                     document.sections[-1].cp_start,

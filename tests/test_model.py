@@ -33,6 +33,19 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class DocumentModelTests(unittest.TestCase):
+    def test_illegal_xml_characters_are_removed_from_output(self) -> None:
+        document = Document(
+            (Paragraph((TextRun("A\x01B\ud800C\ufffeD"),)),)
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "sanitized.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        self.assertEqual("".join(root.itertext()), "ABCD")
+
     def test_paragraph_frame_and_shading_are_written_in_schema_order(self) -> None:
         properties = ParagraphProperties(
             keep_lines=True,
@@ -301,6 +314,50 @@ class DocumentModelTests(unittest.TestCase):
         assert run is not None
         self.assertEqual(run.get(f"{W}rsidRPr"), "12345678")
         self.assertEqual(run.get(f"{W}rsidR"), "90ABCDEF")
+
+    def test_tracked_insertions_and_deletions_are_written_as_redlines(self) -> None:
+        document = Document(
+            (
+                Paragraph(
+                    (
+                        TextRun(
+                            "old",
+                            CharacterProperties(
+                                revision_deleted=True,
+                                revision_deleted_author_index=2,
+                                revision_deleted_date=10,
+                            ),
+                        ),
+                        TextRun(
+                            "new",
+                            CharacterProperties(
+                                revision_inserted=True,
+                                revision_inserted_author_index=3,
+                                revision_inserted_date=11,
+                            ),
+                        ),
+                    )
+                ),
+            ),
+            track_revisions=True,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "tracked-revisions.docx"
+            write_docx(document, destination)
+            with zipfile.ZipFile(destination) as package:
+                root = ET.fromstring(package.read("word/document.xml"))
+
+        deleted = root.find(f"./{W}body/{W}p/{W}del")
+        inserted = root.find(f"./{W}body/{W}p/{W}ins")
+        assert deleted is not None
+        assert inserted is not None
+        self.assertEqual(deleted.get(f"{W}id"), "10")
+        self.assertEqual(deleted.get(f"{W}author"), "Author 2")
+        self.assertEqual(deleted.find(f"{W}r/{W}delText").text, "old")  # type: ignore[union-attr]
+        self.assertEqual(inserted.get(f"{W}id"), "11")
+        self.assertEqual(inserted.get(f"{W}author"), "Author 3")
+        self.assertEqual(inserted.find(f"{W}r/{W}t").text, "new")  # type: ignore[union-attr]
 
     def test_story_control_characters_map_to_ir(self) -> None:
         report = ConversionReport("fixture.doc")

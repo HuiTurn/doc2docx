@@ -29,7 +29,12 @@ def _record(
     ) + payload
 
 
-def _floating_picture_officeart(*, complex_pib: bool = False, pib_index: int = 1):
+def _floating_picture_officeart(
+    *,
+    complex_pib: bool = False,
+    pib_index: int = 1,
+    extra_properties: tuple[tuple[int, int], ...] = (),
+):
     blip = _record(
         0xF01E,
         b"\0" * 16 + b"\xFF" + _PNG,
@@ -57,11 +62,15 @@ def _floating_picture_officeart(*, complex_pib: bool = False, pib_index: int = 1
         delay_stream = b"\0" * 32 + blip
     dgg = _record(0xF000, dgg_payload, version=0xF)
     fsp = _record(0xF00A, struct.pack("<II", 1026, 0), version=2, instance=75)
+    properties = struct.pack("<HI", property_id, property_value) + b"".join(
+        struct.pack("<HI", property_id, property_value)
+        for property_id, property_value in extra_properties
+    )
     fopt = _record(
         0xF00B,
-        struct.pack("<HI", property_id, property_value) + complex_data,
+        properties + complex_data,
         version=3,
-        instance=1,
+        instance=1 + len(extra_properties),
     )
     shape = _record(0xF004, fsp + fopt, version=0xF)
     drawing = _record(0xF002, shape, version=0xF)
@@ -69,6 +78,20 @@ def _floating_picture_officeart(*, complex_pib: bool = False, pib_index: int = 1
 
 
 class OfficeArtParsingTests(unittest.TestCase):
+    def test_reads_officeart_vertical_position_reference(self) -> None:
+        data, delay_stream = _floating_picture_officeart(
+            extra_properties=((0x0392, 1),),
+        )
+
+        shapes = read_officeart_shapes(
+            data,
+            offset=0,
+            size=len(data),
+            delay_stream=delay_stream,
+        )
+
+        self.assertEqual(shapes.vertical_relative_at(1026), "margin")
+
     def test_reads_group_child_coordinate_mapping(self) -> None:
         group_shape = _record(
             0xF004,

@@ -1,21 +1,57 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "msdoc2docx"
-version = "0.36.5"
-description = "A specification-driven, pure-Python Word binary .doc to .docx converter"
-readme = "README.md"
+version = "0.36.6"
+description = "A pure-Python, zero-dependency converter from legacy Microsoft Word .doc files to Office Open XML .docx"
+readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
 license = "MIT"
-authors = [{name = "doc2docx contributors"}]
+license-files = ["LICENSE"]
+authors = [{name = "HuiTurn"}]
+maintainers = [{name = "HuiTurn"}]
+keywords = [
+    "microsoft-word",
+    "word",
+    "doc",
+    "docx",
+    "word-97-2003",
+    "ms-doc",
+    "wordprocessingml",
+    "office-open-xml",
+    "ooxml",
+    "ole",
+    "cfb",
+    "document-conversion",
+    "file-conversion",
+    "pure-python",
+    "doc2docx",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Office/Business",
+    "Topic :: Office/Business :: Office Suites",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing",
+    "Topic :: Utilities",
+]
 dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/HuiTurn/doc2docx"
 Repository = "https://github.com/HuiTurn/doc2docx"
 Issues = "https://github.com/HuiTurn/doc2docx/issues"
+Changelog = "https://github.com/HuiTurn/doc2docx/blob/main/CHANGELOG.md"
 
 [project.scripts]
 doc2docx = "doc2docx.cli:main"

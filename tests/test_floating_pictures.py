@@ -116,6 +116,30 @@ class FloatingPictureTests(unittest.TestCase):
         self.assertIs(collection.picture_at(7), picture)
         self.assertFalse(report.warnings)
 
+    def test_officeart_vertical_reference_overrides_spa_fallback(self) -> None:
+        shape_id = 1026
+        officeart = OfficeArtShapeCollection(
+            {},
+            {
+                shape_id: OfficeArtRasterImage(
+                    _PNG,
+                    "png",
+                    "image/png",
+                    1,
+                )
+            },
+            vertical_relatives_by_shape_id={shape_id: "margin"},
+        )
+
+        collection = read_main_floating_pictures(
+            {shape_id: _anchor(shape_id)},
+            officeart,
+            report=ConversionReport("floating-picture-posrelv.doc"),
+            character_properties_at=lambda _cp: CharacterProperties(special=True),
+        )
+
+        self.assertEqual(collection.pictures[0].vertical_relative, "margin")
+
     def test_tight_wrap_is_diagnosed_and_textbox_shape_is_excluded(self) -> None:
         images = {
             shape_id: OfficeArtRasterImage(_PNG, "png", "image/png", 1)

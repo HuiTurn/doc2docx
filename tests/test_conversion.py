@@ -2,6 +2,7 @@ from pathlib import Path
 import stat
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 from xml.etree import ElementTree as ET
 
@@ -43,6 +44,63 @@ V = "{urn:schemas-microsoft-com:vml}"
 
 
 class ConversionTests(unittest.TestCase):
+    def test_malformed_optional_bookmarks_are_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "malformed-bookmarks.doc"
+            destination = Path(directory) / "malformed-bookmarks.docx"
+            source.write_bytes(build_word_cfb())
+
+            with patch(
+                "doc2docx.converter.read_bookmarks",
+                side_effect=InvalidWordDocument("invalid terminal CP"),
+            ):
+                result = convert(source, destination)
+
+            self.assertTrue(destination.is_file())
+            self.assertIn(
+                "BOOKMARK_TABLE_MALFORMED",
+                [warning.code for warning in result.report.warnings],
+            )
+
+    def test_malformed_optional_officeart_is_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "malformed-officeart.doc"
+            destination = Path(directory) / "malformed-officeart.docx"
+            source.write_bytes(build_word_cfb())
+
+            with patch(
+                "doc2docx.converter.read_officeart_shapes",
+                side_effect=InvalidWordDocument("invalid BStore count"),
+            ):
+                result = convert(source, destination)
+
+            self.assertTrue(destination.is_file())
+            self.assertIn(
+                "OFFICEART_MALFORMED",
+                [warning.code for warning in result.report.warnings],
+            )
+
+    def test_malformed_optional_styles_and_numbering_are_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "malformed-formatting-tables.doc"
+            destination = Path(directory) / "malformed-formatting-tables.docx"
+            source.write_bytes(build_word_cfb())
+
+            with patch(
+                "doc2docx.converter.read_style_sheet",
+                side_effect=InvalidWordDocument("invalid style table"),
+            ), patch(
+                "doc2docx.converter.read_numbering",
+                side_effect=InvalidWordDocument("invalid numbering table"),
+            ):
+                result = convert(source, destination)
+
+            self.assertTrue(destination.is_file())
+            self.assertGreaterEqual(
+                {warning.code for warning in result.report.warnings},
+                {"STYLE_TABLE_MALFORMED", "NUMBERING_TABLE_MALFORMED"},
+            )
+
     def test_standard_bookmark_and_ref_field_are_packaged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
@@ -132,17 +190,25 @@ class ConversionTests(unittest.TestCase):
             self.assertEqual("".join(rectangles[0].itertext()), "Inside textbox")
 
     def test_malformed_main_story_textboxes_are_rejected(self) -> None:
-        fixtures = (
-            build_main_textbox_word_cfb(malformed_anchor=True),
-            build_main_textbox_word_cfb(missing_break_table=True),
-        )
         with tempfile.TemporaryDirectory() as directory:
-            for index, payload in enumerate(fixtures):
-                with self.subTest(index=index):
-                    source = Path(directory) / f"bad-main-textbox-{index}.doc"
-                    source.write_bytes(payload)
-                    with self.assertRaises(InvalidWordDocument):
-                        convert(source)
+            source = Path(directory) / "bad-main-textbox-anchor.doc"
+            source.write_bytes(build_main_textbox_word_cfb(malformed_anchor=True))
+            with self.assertRaises(InvalidWordDocument):
+                convert(source)
+
+    def test_malformed_optional_main_textbox_table_is_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "bad-main-textbox-breaks.doc"
+            destination = Path(directory) / "bad-main-textbox-breaks.docx"
+            source.write_bytes(build_main_textbox_word_cfb(missing_break_table=True))
+
+            result = convert(source, destination)
+
+            self.assertTrue(destination.is_file())
+            self.assertIn(
+                "MAIN_TEXTBOX_TABLE_MALFORMED",
+                [warning.code for warning in result.report.warnings],
+            )
 
     def test_grouped_officeart_child_textbox_is_deferred(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -623,12 +689,19 @@ class ConversionTests(unittest.TestCase):
             self.assertIn("1", "".join(footer_root.itertext()))
             self.assertNotIn("\uFFFC", "".join(footer_root.itertext()))
 
-    def test_header_footer_story_without_guard_is_rejected(self) -> None:
+    def test_header_footer_story_without_guard_is_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "bad-header.doc"
+            destination = Path(directory) / "bad-header.docx"
             source.write_bytes(build_header_footer_word_cfb(malformed_guard=True))
-            with self.assertRaises(InvalidWordDocument):
-                convert(source)
+
+            result = convert(source, destination)
+
+            self.assertTrue(destination.is_file())
+            self.assertIn(
+                "HEADER_FOOTER_TABLE_MALFORMED",
+                [warning.code for warning in result.report.warnings],
+            )
 
     def test_header_footer_stories_are_packaged_and_referenced(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -745,6 +818,10 @@ class ConversionTests(unittest.TestCase):
 
             final_section = body.find(f"{W}sectPr")
             assert final_section is not None
+            self.assertEqual(
+                final_section.find(f"{W}type").get(f"{W}val"),  # type: ignore[union-attr]
+                "nextPage",
+            )
             final_page = final_section.find(f"{W}pgSz")
             final_margins = final_section.find(f"{W}pgMar")
             assert final_page is not None

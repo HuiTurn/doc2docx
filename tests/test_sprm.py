@@ -534,6 +534,27 @@ class SprmTests(unittest.TestCase):
         self.assertFalse(unsupported)
         self.assertEqual(paragraph.revision_save_id, 0x13572468)
 
+    def test_inserted_and_deleted_revision_marks_are_parsed(self) -> None:
+        character, unsupported, _ = apply_character_modifiers(
+            parse_grpprl(
+                struct.pack("<HB", 0x0800, 1)
+                + struct.pack("<HB", 0x0801, 0)
+                + struct.pack("<Hh", 0x4804, 2)
+                + struct.pack("<HI", 0x6805, 0x12345678)
+                + struct.pack("<Hh", 0x4863, 3)
+                + struct.pack("<HI", 0x6864, 0x90ABCDEF),
+                label="tracked-revisions.grpprl",
+            )
+        )
+
+        self.assertFalse(unsupported)
+        self.assertTrue(character.revision_deleted)
+        self.assertFalse(character.revision_inserted)
+        self.assertEqual(character.revision_inserted_author_index, 2)
+        self.assertEqual(character.revision_inserted_date, 0x12345678)
+        self.assertEqual(character.revision_deleted_author_index, 3)
+        self.assertEqual(character.revision_deleted_date, 0x90ABCDEF)
+
     def test_table_layout_and_style_look_are_parsed(self) -> None:
         properties, unsupported = apply_paragraph_modifiers(
             parse_grpprl(
